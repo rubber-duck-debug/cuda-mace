@@ -58,61 +58,12 @@ for i in range(num_irreps):
     if (idx2.shape[0] > 0):
         sparseU2w_indexes[i, 0:idx2.shape[0]] = idx2
         sparseU2w_nvals[i] = idx2.shape[0]
-        
-t1 = torch.zeros(int(sparseU2w_nvals.shape[0] / 2), 2, device='cuda', dtype=torch.int)
-t2 = torch.zeros(int(sparseU2w_nvals.shape[0] / 2), 2, device='cuda', dtype=torch.int)
 
-for i in range (int(sparseU2w_nvals.shape[0] / 2)):
-    t1[i][0] = i
-    t1[i][1] = sparseU2w_nvals.shape[0] - (i + 1)
-    t2[i][0] = sparseU2w_nvals[i]
-    t2[i][1] = sparseU2w_nvals[-(i + 1)]
-    
-    # print (sparseU2w_nvals[i] + sparseU2w_nvals[-(i + 1)])
-print (t1)
-print (t2)
-       
 print (sparseU2w_indexes)
 print (sparseU2w_nvals)
 
 total_nonsparse_elements = sparseU2w_nvals.sum()
 nwork_per_block = torch.ceil((total_nonsparse_elements / 16)).int().item()  # 75
-
-block_work_ids_i = torch.zeros(16, nwork_per_block, device='cuda', dtype=torch.int).fill_(-1)
-block_work_ids_j = torch.zeros(16, nwork_per_block, device='cuda', dtype=torch.int).fill_(-1)
-block_nwork = torch.zeros(16, device='cuda', dtype=torch.int).fill_(-1)
-
-nelem = 0
-count_i = 0  # indexes the i in num_irreps (:, j)
-count_j = 0  # indexes the j in num_irreps (i, :)
-
-for i in range(0, 16):
-    nwork = 0
-    
-    for j in range(nwork_per_block):
-        block_work_ids_i[i, j] = count_i
-        block_work_ids_j[i, j] = sparseU2w_indexes[count_i, count_j]
-        
-        # print (count_i, count_j, block_work_ids_j[i, j].item(), sparseU2w_nvals[count_i].item())
-        
-        count_j += 1
-        nelem += 1
-        nwork += 1
-        
-        if (count_j == sparseU2w_nvals[count_i]):
-            count_i += 1
-            count_j = 0
-            
-        if (nelem == total_nonsparse_elements.item() - 1):
-            break
-            
-    block_nwork [i] = nwork
-    nwork = 0
-
-print (nwork_per_block)
-print (block_nwork)
-print (block_work_ids_i)
-print (block_work_ids_j)
 
 weights = {3: torch.randn((1270, num_features), device='cuda', requires_grad=True),
            2:torch.randn((24, num_features), device='cuda', requires_grad=True),
