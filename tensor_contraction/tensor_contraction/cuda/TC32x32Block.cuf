@@ -1,0 +1,100 @@
+#include "cuf_macros.CUF"
+
+module m
+  integer, parameter :: wmma_m = 16
+  integer, parameter :: wmma_n = 16
+  integer, parameter :: wmma_k = 16
+
+  ! tile_r, tile_c are size of submatrix of C that
+  !   gets calculated per block
+  integer, parameter :: tile_r = 32, tile_c = 32 
+
+contains
+
+  ! kernel where each block performs gemm for a 32x32 submatrix of C
+  ! launch with four warps per block with blocksize of dim3(64,2)
+  
+  attributes(global) subroutine wmma_32x32(a, b, c, m, n, k)
+    use wmma
+    use cudadevice
+    implicit none
+    real(2), intent(in) :: a(m,*), b(k,*)
+    real(4) :: c(m,*)
+    integer, value :: m, n, k
+
+    WMMASubMatrix(WMMAMatrixA, 16, 16, 16, Real, WMMAColMajor) :: sa
+    WMMASubMatrix(WMMAMatrixB, 16, 16, 16, Real, WMMAColMajor) :: sb
+    WMMASubMatrix(WMMAMatrixC, 16, 16, 16, Real, WMMAKind4)   :: sc
+    integer :: lda, ldb, ldc
+    type(dim3) :: warpIdx
+    integer :: i, row_t, col_t    
+
+    lda = m  
+    ldb = k
+    ldc = m  
+    
+    warpIdx%x = (threadIdx%x - 1)/warpsize + 1
+    warpIdx%y = threadIdx%y
+    
+    row_t = (blockIdx%x-1)*tile_r + (warpIdx%x - 1)*wmma_m + 1
+    col_t = (blockIdx%y-1)*tile_c + (warpIdx%y - 1)*wmma_n + 1
+    
+    sc = 0.0_4
+
+    do i = 1, k, wmma_k
+       call wmmaLoadMatrix(sa, a(row_t,i), lda)
+       call wmmaLoadMatrix(sb, b(i,col_t), ldb)
+       call wmmaMatMul(sc, sa, sb, sc)
+    enddo
+    
+    call wmmaStoreMatrix(c(row_t,col_t), sc, ldc)
+
+  end subroutine wmma_32x32
+
+end module m
+
+
+
+program main
+  use m
+  use cudafor
+
+  implicit none
+
+  ! for this problem m=n=k=32
+  integer, parameter :: m = tile_r, n = tile_c, k = 2*wmma_k
+
+  real(4) :: a(m,k), b(k,n), c(m,n), cref(m,n)
+  real(4), device :: c_d(m,n) 
+  real(2), device :: ah_d(m,k), bh_d(k,n) 
+  type(dim3) :: tpb, grid
+  real :: err
+  integer :: i
+
+  call random_number(a)
+  a = int(3.*a)
+  ah_d = a
+  
+  call random_number(b)
+  b = int(3.*b)
+  bh_d = b
+
+  cref = matmul(a, b)
+
+  c = 0.0
+  c_d = c
+
+  tpb = dim3(64,2,1)
+  grid = dim3((m-1)/tile_r+1, (n-1)/tile_c+1, 1)
+  call wmma_32x32<<<grid,tpb>>>(ah_d, bh_d, c_d, m, n, k)
+
+  c = c_d
+
+  err = sum(abs(c-cref))
+  if (err /= 0.0) then
+     write(*,*) 'L1 error = ', err
+  else
+     write(*,*) 'Test Passed'
+  end if
+
+end program main
