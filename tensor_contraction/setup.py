@@ -44,16 +44,6 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
     
     ext_modules.append(tensor_contraction)
     
-    tests = CUDAExtension(
-        '.cuda.tests', [
-            'tensor_contraction/cuda/tests.cpp',
-            'tensor_contraction/cuda/tests_kernel.cu'
-        ],
-         extra_compile_args={'cxx': [optimisation_level_host],
-                            'nvcc': [optimisation_level_device]})
-
-    ext_modules.append(tests)
-    
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")
     exit()
