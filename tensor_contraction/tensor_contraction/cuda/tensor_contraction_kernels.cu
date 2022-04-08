@@ -643,7 +643,7 @@ void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
 
 	dim3 blocks(1);
 
-	dim3 grid(12, 8);
+	dim3 grid(4, 8);
 
 	multiwarp_test<<<blocks, grid, NWARPS * 256*2 + NWARPS * 256 *4>>>(
 			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
