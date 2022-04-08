@@ -565,7 +565,7 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 	cudaDeviceSynchronize();
 
 }
-#define NWARPS 1
+#define NWARPS 3
 
 __global__ void multiwarp_test(
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> A,
@@ -575,7 +575,7 @@ __global__ void multiwarp_test(
 	__shared__ half
 	sA[NWARPS * 256]; // 48x16  -> 16x16
 	__shared__ half
-	sB[NWARPS * 256]; // 16*96 ->  16x16
+	sB[256]; // 16*96 ->  16x16
 
 	__shared__
 	float sC[NWARPS * 256];  // 16x16
@@ -607,8 +607,7 @@ __global__ void multiwarp_test(
 
 				for (int k = threadIdx.x; k < 16; k += blockDim.x) {  // k
 					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // n
-						sB[start_idx + k * 16 + n] = __float2half(
-								B[K + k][N + n]);
+						sB[k * 16 + n] = __float2half(B[K + k][N + n]);
 					}
 				}
 
@@ -646,7 +645,7 @@ void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
 
 	dim3 blocks(1);
 
-	dim3 grid(4, 8);
+	dim3 grid(12, 8);
 
 	multiwarp_test<<<blocks, grid, NWARPS * 256*2 + NWARPS * 256 *4>>>(
 			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
