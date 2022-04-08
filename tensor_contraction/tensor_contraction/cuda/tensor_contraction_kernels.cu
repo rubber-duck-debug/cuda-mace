@@ -606,7 +606,7 @@ __global__ void multiwarp_test(
 			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
 
 				for (int k = threadIdx.x; k < 16; k += blockDim.x) {  // k
-					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // m
+					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // n
 						sB[start_idx + k * 16 + n] = __float2half(
 								B[K + k][N + n]);
 					}
@@ -634,7 +634,7 @@ __global__ void multiwarp_test(
 				for (int m = tidx; m < 16; m += blockDim.x) {  // m
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
-						C[M + m][N + n] = sC[start_idx + m * 16 + n];
+						atomicAdd(&C[M + m][N + n], sC[start_idx + m * 16 + n]);
 					}
 				}
 			}
