@@ -573,14 +573,14 @@ __global__ void multiwarp_test(
 		const int NWARPS) {
 
 	__shared__ half
-	sA[3][16][16]; // 48x16  -> 16x16
+	sA[3 * 256]; // 48x16  -> 16x16
 	__shared__ half
-	sB[3][16][16]; // 16*96 ->  16x16
+	sB[3 * 256]; // 16*96 ->  16x16
 
 	__shared__
-	float sC[3][16][16];  // 16x16
+	float sC[3 * 256];  // 16x16
 
-	int startIdx = threadIdx.x * 256;
+	int start_idx = threadIdx.x * 256;
 	int tidx = threadIdx.y;
 	int tidy = threadIdx.z;
 
