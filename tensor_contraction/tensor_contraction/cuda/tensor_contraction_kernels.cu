@@ -632,6 +632,10 @@ __global__ void multiwarp_test(
 				for (int m = threadIdx.y; m < 16; m += blockDim.y) {  // m
 					for (int n = threadIdx.z; n < 16; n += blockDim.z) {  // n
 
+						if (threadIdx.x == 2) {
+							printf("%i %i %i %i %f\n", threadIdx.y, threadIdx.z,
+									m, n, sC[threadIdx.x][m][n]);
+						}
 						atomicAdd(&C[M + m][N + n], sC[threadIdx.x][m][n]);
 					}
 				}
