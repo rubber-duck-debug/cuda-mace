@@ -17,13 +17,14 @@ end.record()
 torch.cuda.synchronize()
 print("torch matmul", start.elapsed_time(end), "ms")
 
+print (C)
+
 start.record()
 c_cuda_1 = tensor_contraction.get_multiwarp_matmul(A, B, 1)
 end.record()
 torch.cuda.synchronize()
 print("cuda matmul 1 warp", start.elapsed_time(end), "ms")
 
-print (C)
 print (c_cuda_1)
 
 start.record()
@@ -32,6 +33,5 @@ end.record()
 torch.cuda.synchronize()
 print("cuda matmul 3 warps", start.elapsed_time(end), "ms")
 
-print (C)
 print (c_cuda_3)
 
