@@ -575,7 +575,7 @@ __global__ void multiwarp_test(
 	__shared__ half
 	sA[NWARPS * 256]; // 48x16  -> 16x16
 	__shared__ half
-	sB[256]; // 16*96 ->  16x16
+	sB[NWARPS * 256]; // 16*96 ->  16x16
 
 	__shared__
 	float sC[NWARPS * 256];  // 16x16
@@ -584,6 +584,7 @@ __global__ void multiwarp_test(
 	int tidy = threadIdx.y;
 
 	int warpid = tidx / 4;
+	int laneid = tidx % 4;
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major
 			> a_frag[NWARPS];
@@ -597,7 +598,7 @@ __global__ void multiwarp_test(
 
 		for (int M = warpid * 16; M < A.size(0); M += NWARPS * 16) { // m -> NWARPS loop
 
-			for (int m = threadIdx.x; m < 16; m += blockDim.x) { // m
+			for (int m = laneid; m < 16; m += 4) { // m
 				for (int k = threadIdx.y; k < 16; k += blockDim.y) { // k
 					sA[start_idx + m * 16 + k] = __float2half(A[M + m][K + k]);
 				}
@@ -605,9 +606,10 @@ __global__ void multiwarp_test(
 
 			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
 
-				for (int k = threadIdx.x; k < 16; k += blockDim.x) {  // k
+				for (int k = laneid; k < 16; k += 4) {  // k
 					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // n
-						sB[k * 16 + n] = __float2half(B[K + k][N + n]);
+						sB[start_idx + k * 16 + n] = __float2half(
+								B[K + k][N + n]);
 					}
 				}
 
@@ -630,7 +632,7 @@ __global__ void multiwarp_test(
 
 				__syncthreads();
 
-				for (int m = tidx; m < 16; m += blockDim.x) {  // m
+				for (int m = laneid; m < 16; m += 4) {  // m
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
 						atomicAdd(&C[M + m][N + n], sC[start_idx + m * 16 + n]);
