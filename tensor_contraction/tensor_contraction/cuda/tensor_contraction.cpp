@@ -134,4 +134,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 	m.def("get_Uw3_sparse_contraction", &get_Uw3_sparse_contraction, "");
 	m.def("get_UwN3_sparse", &get_UwN3_sparse, "");
 	m.def("get_UwN2_dense_contraction", &get_UwN2_dense_contraction, "");
+	m.def("get_multiwarp_matmul", &get_multiwarp_matmul, "");
+
 }
