@@ -600,6 +600,8 @@ __global__ void multiwarp_test(
 				}
 			}
 
+			__syncthreads();
+
 			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
 
 				for (int k = threadIdx.y; k < 16; k += blockDim.y) {  // k
