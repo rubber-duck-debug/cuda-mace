@@ -10,8 +10,10 @@ using namespace nvcuda;
 #define WARP_SIZE_Y 4
 #define WARP_SIZE_Z 8
 
-__global__ void Uw3_wmma_dense_contraction_tensorcore_kernel_16x16_f32(const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> U,
-		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights, torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
+__global__ void Uw3_wmma_dense_contraction_tensorcore_kernel_16x16_f32(
+		const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> U,
+		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights,
+		torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major > a_frag;
 	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::row_major > b_frag;
@@ -37,7 +39,8 @@ __global__ void Uw3_wmma_dense_contraction_tensorcore_kernel_16x16_f32(const tor
 
 				for (int k = tidy; k < 16; k += blockDim.y) { // k
 
-					su[i][k] = __float2half(U[blockIdx.x][blockIdx.y][x + i][k]);
+					su[i][k] = __float2half(
+							U[blockIdx.x][blockIdx.y][x + i][k]);
 
 					sw[k][i] = __float2half(weights[k][y + i]);
 				}
@@ -66,7 +69,8 @@ __global__ void Uw3_wmma_dense_contraction_tensorcore_kernel_16x16_f32(const tor
 	}
 }
 
-void Uw3_dense_contraction_tensorcore(torch::Tensor U, torch::Tensor W, torch::Tensor C) {
+void Uw3_dense_contraction_tensorcore(torch::Tensor U, torch::Tensor W,
+		torch::Tensor C) {
 
 	const int nthreadsx = 4;
 	const int nthreadsy = 8;
@@ -84,11 +88,13 @@ void Uw3_dense_contraction_tensorcore(torch::Tensor U, torch::Tensor W, torch::T
 
 }
 
-__global__ void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> U_values,
+__global__ void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(
+		const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> U_values,
 		const torch::PackedTensorAccessor32<int, 4, torch::RestrictPtrTraits> U_indices,
 		const torch::PackedTensorAccessor32<int, 3, torch::RestrictPtrTraits> U_nvals,
 		const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> Uw_nvals,
-		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights, torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
+		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights,
+		torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
 
 	/***
 	 *
@@ -164,7 +170,8 @@ __global__ void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(const to
 
 								int lidx = U_indices[i][j][x + m][k];
 
-								product += U_values[i][j][x + m][k] * weights[lidx][y + n];
+								product += U_values[i][j][x + m][k]
+										* weights[lidx][y + n];
 
 								//product += su[m * 16 + k] * sw[k * 16 + n];
 							}
@@ -198,8 +205,9 @@ __global__ void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(const to
 	}
 }
 
-void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(torch::Tensor U_values, torch::Tensor U_indices, torch::Tensor U_nvals, torch::Tensor Uw_nvals,
-		torch::Tensor W, torch::Tensor C) {
+void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(
+		torch::Tensor U_values, torch::Tensor U_indices, torch::Tensor U_nvals,
+		torch::Tensor Uw_nvals, torch::Tensor W, torch::Tensor C) {
 
 	const int nthreadsx = 3;
 	const int nthreadsy = 32;
@@ -220,12 +228,14 @@ void Uw3_wmma_sparse_contraction_tensorcore_kernel_16x16_f32(torch::Tensor U_val
 
 }
 
-__global__ void Uw3_sparse_contraction_kernel_f32(const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> U_values,
+__global__ void Uw3_sparse_contraction_kernel_f32(
+		const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> U_values,
 		const torch::PackedTensorAccessor32<int, 4, torch::RestrictPtrTraits> U_indices,
 		const torch::PackedTensorAccessor32<int, 3, torch::RestrictPtrTraits> U_nvals,
 		const torch::PackedTensorAccessor32<int, 3, torch::RestrictPtrTraits> Uw_indices,
 		const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> Uw_nvals,
-		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights, torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
+		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights,
+		torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
 
 	/***
 	 *
@@ -282,8 +292,10 @@ __global__ void Uw3_sparse_contraction_kernel_f32(const torch::PackedTensorAcces
 	}
 }
 
-void Uw3_sparse_contraction_kernel_16x16_f32(torch::Tensor U_values, torch::Tensor U_indices, torch::Tensor U_nvals, torch::Tensor Uw_indices,
-		torch::Tensor Uw_nvals, torch::Tensor W, torch::Tensor C) {
+void Uw3_sparse_contraction_kernel_16x16_f32(torch::Tensor U_values,
+		torch::Tensor U_indices, torch::Tensor U_nvals,
+		torch::Tensor Uw_indices, torch::Tensor Uw_nvals, torch::Tensor W,
+		torch::Tensor C) {
 
 	const int nthreadsx = 3;
 	const int nthreadsy = 32;
@@ -306,10 +318,12 @@ void Uw3_sparse_contraction_kernel_16x16_f32(torch::Tensor U_values, torch::Tens
 }
 
 __global__
-void UwN3_sparse_contraction_kernel(const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> Uw_dense,
+void UwN3_sparse_contraction_kernel(
+		const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> Uw_dense,
 		const torch::PackedTensorAccessor32<int, 3, torch::RestrictPtrTraits> Uw_indexes,
 		const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> Uw_nvals,
-		const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> features, torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
+		const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> features,
+		torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
 	// Uw Shape: torch.Size([48, 48, 48, 96])
 	// node features:           120, 48, 96
 
@@ -356,8 +370,10 @@ void UwN3_sparse_contraction_kernel(const torch::PackedTensorAccessor32<float, 4
 	}
 }
 
-void UwN3_sparse_contraction(torch::Tensor Uw_dense, torch::Tensor Uw_indexes, torch::Tensor Uw_nvals, torch::Tensor features, torch::Tensor C,
-		const int nblocksx, const int nblocksy, const int nblocksz, const int nthreadsx, const int nthreadsy) {
+void UwN3_sparse_contraction(torch::Tensor Uw_dense, torch::Tensor Uw_indexes,
+		torch::Tensor Uw_nvals, torch::Tensor features, torch::Tensor C,
+		const int nblocksx, const int nblocksy, const int nblocksz,
+		const int nthreadsx, const int nthreadsy) {
 
 	dim3 blocks(nblocksx, nblocksy, nblocksz);
 
@@ -440,8 +456,10 @@ void UwN3_sparse_contraction(torch::Tensor Uw_dense, torch::Tensor Uw_indexes, t
  }*/
 
 __global__
-void UwN2_dense_contraction_tc_kernel(const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> Uw,
-		const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> features, torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> C) {
+void UwN2_dense_contraction_tc_kernel(
+		const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> Uw,
+		const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> features,
+		torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> C) {
 
 	__shared__ half
 	su[16][16]; // 48x16  -> 16x16
@@ -471,8 +489,10 @@ void UwN2_dense_contraction_tc_kernel(const torch::PackedTensorAccessor32<float,
 	for (int a = blockIdx.x; a < Uw.size(0); a += gridDim.x) { // natoms
 		for (int b = blockIdx.y; b < Uw.size(1); b += gridDim.y) { // nfeatures
 
-			wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major > a_frag;
-			wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::col_major > b_frag;
+			wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major
+					> a_frag;
+			wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::col_major
+					> b_frag;
 			wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
 
 			if (threadIdx.x == 0) {
@@ -505,7 +525,8 @@ void UwN2_dense_contraction_tc_kernel(const torch::PackedTensorAccessor32<float,
 					// Perform the matrix multiplication
 					wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
 
-					wmma::store_matrix_sync(&so[0][0], c_frag, 16, wmma::mem_row_major);
+					wmma::store_matrix_sync(&so[0][0], c_frag, 16,
+							wmma::mem_row_major);
 
 					//copy so to global memory
 
@@ -529,8 +550,9 @@ void UwN2_dense_contraction_tc_kernel(const torch::PackedTensorAccessor32<float,
 	}
 }
 
-void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features, torch::Tensor C, const int nblocksx, const int nblocksy, const int nthreadsx,
-		const int nthreadsy) {
+void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
+		torch::Tensor C, const int nblocksx, const int nblocksy,
+		const int nthreadsx, const int nthreadsy) {
 
 	dim3 blocks(nblocksx, nblocksy);
 
@@ -540,6 +562,92 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features, tor
 			Uw3_dense.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
 			features.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
 			C.packed_accessor32<float, 3, torch::RestrictPtrTraits>());
+
+	cudaDeviceSynchronize();
+
+}
+
+__global__ void multiwarp_test(
+		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> A,
+		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> B,
+		torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> C) {
+
+	const int NWARPS = 3;
+
+	__shared__ half
+	sA[NWARPS * 256]; // 48x16  -> 16x16
+	__shared__ half
+	sB[NWARPS * 256]; // 16*96 ->  16x16
+
+	__shared__
+	float sC[NWARPS * 256];  // 16x16
+
+	int tidx = threadIdx.x; //nwarp identifier also
+	int tidy = threadIdx.y;
+
+	int warpid = tidx / 4;
+
+	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major
+			> a_frag[NWARPS];
+	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::row_major
+			> b_frag[NWARPS];
+	wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[NWARPS];
+
+	int start_idx = warpid * 256;
+
+	for (int x = 0; x < 48; x += 16) { // m -> NWARPS loop
+
+		for (int y = 0; y < 48; y += 16) { // k
+
+			for (int m = tidx; m < 16; m += blockDim.x) {  // m
+				for (int k = tidy; k < 16; k += blockDim.y) {  // k
+
+					sA[start_idx + m * 16 + k] = __float2half(A[x + m][y + k]);
+					sB[start_idx + k * 16 + m] = __float2half(B[y + k][x + m]);
+					sC[start_idx + m * 16 + k] = 0.0;
+				}
+			}
+
+			__syncthreads();
+
+			// Initialize the output to zero
+			wmma::fill_fragment(c_frag[warpid], 0.0f);
+
+			wmma::load_matrix_sync(a_frag[warpid], &sA[start_idx], 16);
+			wmma::load_matrix_sync(b_frag[warpid], &sB[start_idx], 16);
+
+			// Perform the matrix multiplication
+			wmma::mma_sync(c_frag[warpid], a_frag[warpid], b_frag[warpid],
+					c_frag[warpid]);
+
+			wmma::store_matrix_sync(&sC[start_idx], c_frag[warpid], 16,
+					wmma::mem_row_major);
+
+			//copy sC to global memory
+
+			__syncthreads();
+
+			for (int m = tidx; m < 16; m += blockDim.x) {  // m
+				for (int n = tidy; n < 16; n += blockDim.y) {  // n
+
+					C[x + m][y + n] = sC[start_idx + m * 16 + n];
+				}
+			}
+
+		}
+	}
+}
+
+void UwN2_dense_contraction(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
+
+	dim3 blocks(1);
+
+	dim3 grid(12, 8);
+
+	multiwarp_test<<<blocks, grid>>>(
+			A.packed_accessor32<float, 2 torch::RestrictPtrTraits>(),
+			B.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+			C.packed_accessor32<float, 2, torch::RestrictPtrTraits>());
 
 	cudaDeviceSynchronize();
 
