@@ -6,7 +6,6 @@
 using namespace std;
 using namespace nvcuda;
 
-
 #define WARP_SIZE_Y 4
 #define WARP_SIZE_Z 8
 
@@ -596,13 +595,13 @@ __global__ void multiwarp_test(
 
 	for (int x = warpid * 16; x < 48; x += NWARPS * 16) { // m -> NWARPS loop
 
-		for (int m = tidx; m < 16; m += blockDim.x) {  // m
-			for (int k = tidy; k < 16; k += blockDim.y) {  // k
-				sA[start_idx + m * 16 + k] = __float2half(A[x + m][y + k]);
-			}
-		}
-
 		for (int y = 0; y < 48; y += 16) { // k
+
+			for (int m = tidx; m < 16; m += blockDim.x) {  // m
+				for (int k = tidy; k < 16; k += blockDim.y) {  // k
+					sA[start_idx + m * 16 + k] = __float2half(A[x + m][y + k]);
+				}
+			}
 
 			for (int k = tidx; k < 16; k += blockDim.x) {  // k
 				for (int n = tidy; n < 16; n += blockDim.y) {  // n
@@ -639,8 +638,6 @@ __global__ void multiwarp_test(
 		}
 	}
 }
-
-
 
 void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
 
