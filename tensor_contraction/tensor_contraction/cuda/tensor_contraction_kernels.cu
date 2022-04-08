@@ -608,7 +608,7 @@ __global__ void multiwarp_test(
 				for (int k = threadIdx.x; k < 16; k += blockDim.x) {  // k
 					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // m
 						sB[start_idx + k * 16 + n] = __float2half(
-								A[K + k][N + n]);
+								B[K + k][N + n]);
 					}
 				}
 
