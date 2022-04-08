@@ -6,6 +6,8 @@ from tensor_contraction.cuda import  tensor_contraction
 start = torch.cuda.Event(enable_timing=True)
 end = torch.cuda.Event(enable_timing=True)
 
+torch.matmul(torch.rand(1024, 1024, dtype=torch.float, device='cuda'), torch.rand(1024, 1024, dtype=torch.float, device='cuda'))
+
 A = torch.rand(48, 48, dtype=torch.float, device='cuda')
 B = torch.rand(48, 48, dtype=torch.float, device='cuda')
 
