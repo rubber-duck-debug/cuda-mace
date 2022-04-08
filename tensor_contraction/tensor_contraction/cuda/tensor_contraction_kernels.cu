@@ -584,7 +584,7 @@ __global__ void multiwarp_test(
 	int tidy = threadIdx.y;
 
 	int warpid = tidx / 4;
-	int laneid = tidx % 4;
+	int laneid = tidx % NWARPS;
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major
 			> a_frag[NWARPS];
