@@ -593,48 +593,51 @@ __global__ void multiwarp_test(
 
 	int start_idx = warpid * 256;
 
-	for (int x = warpid * 16; x < 48; x += NWARPS * 16) { // m -> NWARPS loop
+	for (int K = 0; K < A.size(1); K += 16) {
 
-		for (int y = 0; y < 48; y += 16) { // k
+		for (int M = warpid * 16; M < A.size(0); M += NWARPS * 16) { // m -> NWARPS loop
 
-			for (int m = tidx; m < 16; m += blockDim.x) {  // m
-				for (int k = tidy; k < 16; k += blockDim.y) {  // k
-					sA[start_idx + m * 16 + k] = __float2half(A[x + m][y + k]);
+			for (int m = threadIdx.x; m < 16; m += blockDim.x) { // m
+				for (int k = threadIdx.y; k < 16; k += blockDim.y) { // k
+					sA[start_idx + m * 16 + k] = __float2half(A[M + m][K + k]);
 				}
 			}
 
-			for (int k = tidx; k < 16; k += blockDim.x) {  // k
-				for (int n = tidy; n < 16; n += blockDim.y) {  // n
-					sB[start_idx + k * 16 + n] = __float2half(B[x + k][y + n]);
+			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
+
+				for (int k = threadIdx.x; k < 16; k += blockDim.x) {  // k
+					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // m
+						sB[start_idx + k * 16 + n] = __float2half(
+								A[K + k][N + n]);
+					}
+				}
+
+				__syncthreads();
+
+				// Initialize the output to zero
+				wmma::fill_fragment(c_frag[warpid], 0.0f);
+
+				wmma::load_matrix_sync(a_frag[warpid], &sA[start_idx], 16);
+				wmma::load_matrix_sync(b_frag[warpid], &sB[start_idx], 16);
+
+				// Perform the matrix multiplication
+				wmma::mma_sync(c_frag[warpid], a_frag[warpid], b_frag[warpid],
+						c_frag[warpid]);
+
+				wmma::store_matrix_sync(&sC[start_idx], c_frag[warpid], 16,
+						wmma::mem_row_major);
+
+				//copy sC to global memory
+
+				__syncthreads();
+
+				for (int m = tidx; m < 16; m += blockDim.x) {  // m
+					for (int n = tidy; n < 16; n += blockDim.y) {  // n
+
+						C[M + m][N + n] = sC[start_idx + m * 16 + n];
+					}
 				}
 			}
-
-			__syncthreads();
-
-			// Initialize the output to zero
-			wmma::fill_fragment(c_frag[warpid], 0.0f);
-
-			wmma::load_matrix_sync(a_frag[warpid], &sA[start_idx], 16);
-			wmma::load_matrix_sync(b_frag[warpid], &sB[start_idx], 16);
-
-			// Perform the matrix multiplication
-			wmma::mma_sync(c_frag[warpid], a_frag[warpid], b_frag[warpid],
-					c_frag[warpid]);
-
-			wmma::store_matrix_sync(&sC[start_idx], c_frag[warpid], 16,
-					wmma::mem_row_major);
-
-			//copy sC to global memory
-
-			__syncthreads();
-
-			for (int m = tidx; m < 16; m += blockDim.x) {  // m
-				for (int n = tidy; n < 16; n += blockDim.y) {  // n
-
-					C[x + m][y + n] = sC[start_idx + m * 16 + n];
-				}
-			}
-
 		}
 	}
 }
