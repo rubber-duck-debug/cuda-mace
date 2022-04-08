@@ -565,51 +565,46 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 	cudaDeviceSynchronize();
 
 }
-#define NWARPS 3
 
 __global__ void multiwarp_test(
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> A,
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> B,
-		torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> C) {
+		torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> C,
+		const int NWARPS) {
 
 	__shared__ half
-	sA[NWARPS * 256]; // 48x16  -> 16x16
+	sA[3][16][16]; // 48x16  -> 16x16
 	__shared__ half
-	sB[NWARPS * 256]; // 16*96 ->  16x16
+	sB[3][16][16]; // 16*96 ->  16x16
 
 	__shared__
-	float sC[NWARPS * 256];  // 16x16
+	float sC[3][16][16];  // 16x16
 
-	int tidx = threadIdx.x; //nwarp identifier also
-	int tidy = threadIdx.y;
-
-	int warpid = tidx / 4; // 4 threads in blockDim per NWARP -> 0 0 0 0 | 1 1 1 1 | 2 2 2 2
-	int laneid = tidx % 4; // 0 - 11 -> 0 1 2 3 | 0 1 2 3 | 0 1 2 3
+	int warpid = threadIdx.x;
+	int tidx = threadIdx.y;
+	int tidy = threadIdx.z;
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major
-			> a_frag[NWARPS];
+			> a_frag[3];
 	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::row_major
-			> b_frag[NWARPS];
-	wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[NWARPS];
-
-	int start_idx = warpid * 256;
+			> b_frag[3];
+	wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[3];
 
 	for (int K = 0; K < A.size(1); K += 16) {
 
-		for (int M = warpid * 16; M < A.size(0); M += NWARPS * 16) { // m -> NWARPS loop
+		for (int M = threadIdx.x * 16; M < A.size(0); M += blockDim.x * 16) { // m -> NWARPS loop
 
-			for (int m = laneid; m < 16; m += 4) { // m
-				for (int k = threadIdx.y; k < 16; k += blockDim.y) { // k
-					sA[start_idx + m * 16 + k] = __float2half(A[M + m][K + k]);
+			for (int m = threadIdx.y; m < 16; m += blockDim.y) { // m
+				for (int k = threadIdx.z; k < 16; k += blockDim.z) { // k
+					sA[threadIdx.x][m][k] = __float2half(A[M + m][K + k]);
 				}
 			}
 
 			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
 
-				for (int k = laneid; k < 16; k += 4) {  // k
-					for (int n = threadIdx.y; n < 16; n += blockDim.y) {  // n
-						sB[start_idx + k * 16 + n] = __float2half(
-								B[K + k][N + n]);
+				for (int k = threadIdx.y; k < 16; k += blockDim.y) {  // k
+					for (int n = threadIdx.z; n < 16; n += blockDim.z) {  // n
+						sB[threadIdx.x][k][n] = __float2half(B[K + k][N + n]);
 					}
 				}
 
@@ -618,24 +613,26 @@ __global__ void multiwarp_test(
 				// Initialize the output to zero
 				wmma::fill_fragment(c_frag[warpid], 0.0f);
 
-				wmma::load_matrix_sync(a_frag[warpid], &sA[start_idx], 16);
-				wmma::load_matrix_sync(b_frag[warpid], &sB[start_idx], 16);
+				wmma::load_matrix_sync(a_frag[warpid], &sA[threadIdx.x][0][0],
+						16);
+				wmma::load_matrix_sync(b_frag[warpid], &sB[threadIdx.x][0][0],
+						16);
 
 				// Perform the matrix multiplication
 				wmma::mma_sync(c_frag[warpid], a_frag[warpid], b_frag[warpid],
 						c_frag[warpid]);
 
-				wmma::store_matrix_sync(&sC[start_idx], c_frag[warpid], 16,
-						wmma::mem_row_major);
+				wmma::store_matrix_sync(&sC[threadIdx.x][0][0], c_frag[warpid],
+						16, wmma::mem_row_major);
 
 				//copy sC to global memory
 
 				__syncthreads();
 
-				for (int m = laneid; m < 16; m += 4) {  // m
-					for (int n = tidy; n < 16; n += blockDim.y) {  // n
+				for (int m = threadIdx.y; m < 16; m += blockDim.y) {  // m
+					for (int n = threadIdx.z; n < 16; n += blockDim.z) {  // n
 
-						atomicAdd(&C[M + m][N + n], sC[start_idx + m * 16 + n]);
+						atomicAdd(&C[M + m][N + n], sC[threadIdx.x][m][n]);
 					}
 				}
 			}
@@ -643,16 +640,17 @@ __global__ void multiwarp_test(
 	}
 }
 
-void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
+void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C,
+		const int NWARPS) {
 
 	dim3 blocks(1);
 
-	dim3 grid(12, 8);
+	dim3 grid(NWARPS, 4, 8);
 
-	multiwarp_test<<<blocks, grid, NWARPS * 256*2 + NWARPS * 256 *4>>>(
+	multiwarp_test<<<blocks, grid>>>(
 			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
 			B.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-			C.packed_accessor32<float, 2, torch::RestrictPtrTraits>());
+			C.packed_accessor32<float, 2, torch::RestrictPtrTraits>(), NWARPS);
 
 	cudaDeviceSynchronize();
 

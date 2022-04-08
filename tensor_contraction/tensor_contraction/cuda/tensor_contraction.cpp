@@ -23,16 +23,18 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 		torch::Tensor C, const int nblocksx, const int nblocksy,
 		const int nthreadsx, const int nthreadsy);
 
-void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C);
+void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C,
+		const int nwarps);
 
-torch::Tensor get_multiwarp_matmul(torch::Tensor A, torch::Tensor B) {
+torch::Tensor get_multiwarp_matmul(torch::Tensor A, torch::Tensor B,
+		const int nwarps) {
 
 	auto options = torch::TensorOptions().dtype(torch::kFloat32).layout(
 			torch::kStrided).device(torch::kCUDA);
 
 	torch::Tensor output = torch::zeros( { A.size(0), B.size(1) }, options);
 
-	multiwarp_matmul(A, B, output);
+	multiwarp_matmul(A, B, output, nwarps);
 
 	return output;
 }
