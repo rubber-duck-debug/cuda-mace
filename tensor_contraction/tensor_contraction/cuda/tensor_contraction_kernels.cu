@@ -6,7 +6,7 @@
 using namespace std;
 using namespace nvcuda;
 
-#define NWARPS 6
+#define NWARPS 3
 #define WARP_SIZE_Y 4
 #define WARP_SIZE_Z 8
 
@@ -567,12 +567,12 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 
 }
 
+
+
 __global__ void multiwarp_test(
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> A,
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> B,
 		torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> C) {
-
-	const int NWARPS = 3;
 
 	__shared__ half
 	sA[NWARPS * 256]; // 48x16  -> 16x16
@@ -595,7 +595,7 @@ __global__ void multiwarp_test(
 
 	int start_idx = warpid * 256;
 
-	for (int x = 0; x < 48; x += 16) { // m -> NWARPS loop
+	for (int x = warpid * 16; x < 48; x += NWARPS * 16) { // m -> NWARPS loop
 
 		for (int y = 0; y < 48; y += 16) { // k
 

@@ -25,7 +25,7 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 
 void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C);
 
-torch::Tensor get_multiwarp_matmul(torch::Tensor A, torch::TensorB) {
+torch::Tensor get_multiwarp_matmul(torch::Tensor A, torch::Tensor B) {
 
 	auto options = torch::TensorOptions().dtype(torch::kFloat32).layout(
 			torch::kStrided).device(torch::kCUDA);
