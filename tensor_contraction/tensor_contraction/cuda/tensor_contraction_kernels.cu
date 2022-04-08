@@ -638,7 +638,7 @@ __global__ void multiwarp_test(
 	}
 }
 
-void UwN2_dense_contraction(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
+void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
 
 	dim3 blocks(1);
 
