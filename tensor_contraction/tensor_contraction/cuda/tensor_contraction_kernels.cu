@@ -631,7 +631,7 @@ __global__ void multiwarp_test(
 			for (int m = tidx; m < 16; m += blockDim.x) {  // m
 				for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
-					C[x + m][y + n] = sC[start_idx + m * 16 + n];
+					C[x + m][x + n] = sC[start_idx + m * 16 + n];
 				}
 			}
 
