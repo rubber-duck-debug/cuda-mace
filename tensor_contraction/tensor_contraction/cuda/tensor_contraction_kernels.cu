@@ -567,8 +567,6 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 
 }
 
-
-
 __global__ void multiwarp_test(
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> A,
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> B,
@@ -644,8 +642,8 @@ void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C) {
 
 	dim3 grid(12, 8);
 
-	multiwarp_test<<<blocks, grid>>>(
-			A.packed_accessor32<float, 2 torch::RestrictPtrTraits>(),
+	multiwarp_test<<<blocks, grid, NWARPS * 256*2 + NWARPS * 256 *4>>>(
+			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
 			B.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
 			C.packed_accessor32<float, 2, torch::RestrictPtrTraits>());
 
