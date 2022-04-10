@@ -580,9 +580,12 @@ __global__ void multiwarp_test(
 	__shared__
 	float sC[3 * 256];  // 16x16
 
-	int start_idx = threadIdx.x * 256;
-	int tidx = threadIdx.y;
-	int tidy = threadIdx.z;
+	int warp_group = threadIdx.x / 32;
+
+	int tidx = threadIdx.x % 4;
+	int tidy = threadidx.x % 8;
+
+	int start_idx = warp_group * 256;
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major > a_frag;
 	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::row_major > b_frag;
@@ -592,16 +595,16 @@ __global__ void multiwarp_test(
 
 		for (int M = threadIdx.x * 16; M < A.size(0); M += blockDim.x * 16) { // m -> NWARPS loop
 
-			for (int m = threadIdx.y; m < 16; m += blockDim.y) { // m
-				for (int k = threadIdx.z; k < 16; k += blockDim.z) { // k
+			for (int m = tidx; m < 16; m += 4) { // m
+				for (int k = tidy; k < 16; k += 8) { // k
 					sA[start_idx + m * 16 + k] = __float2half(A[M + m][K + k]);
 				}
 			}
 
 			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
 
-				for (int k = threadIdx.y; k < 16; k += blockDim.y) {  // k
-					for (int n = threadIdx.z; n < 16; n += blockDim.z) {  // n
+				for (int k = tidx; k < 16; k += 4) {  // k
+					for (int n = tidy; n < 16; n += 8) {  // n
 						sB[start_idx + k * 16 + n] = __float2half(
 								B[K + k][N + n]);
 					}
