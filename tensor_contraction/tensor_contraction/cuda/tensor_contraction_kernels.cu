@@ -578,7 +578,7 @@ __global__ void multiwarp_test(
 	sB[3 * 256]; // 16*96 ->  16x16
 
 	__shared__
-	float sC[3 * 256];  // 16x16
+	float sC[3 * 256];  // 3x16x16
 
 	int warp_group = threadIdx.z;
 
@@ -628,6 +628,8 @@ __global__ void multiwarp_test(
 
 				__syncthreads();
 
+				//could further reduce sC in shared memory here
+
 				for (int m = tidx; m < 16; m += blockDim.x) {  // m
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
@@ -644,7 +646,7 @@ void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C,
 
 	dim3 blocks(1);
 
-	dim3 grid(8, 4, NWARPS);
+	dim3 grid(16, 2, NWARPS);
 
 	multiwarp_test<<<blocks, grid>>>(
 			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
