@@ -6,6 +6,7 @@
 using namespace std;
 using namespace nvcuda;
 
+#define OFFSET 8
 #define WARP_SIZE_Y 4
 #define WARP_SIZE_Z 8
 
@@ -573,12 +574,12 @@ __global__ void multiwarp_test(
 		const int NWARPS) {
 
 	__shared__ half
-	sA[3 * 256]; // 48x16  -> 16x16
+	sA[3 * 256 + OFFSET]; // 48x16  -> 16x16
 	__shared__ half
-	sB[3 * 256]; // 16*48 ->  16x16
+	sB[3 * 256 + OFFSET]; // 16*48 ->  16x16
 
 	__shared__
-	float sC[3 * 256];  // 3x16x16
+	float sC[3 * 256 + OFFSET];  // 3x16x16
 
 	int warp_group = threadIdx.z;
 
@@ -599,7 +600,8 @@ __global__ void multiwarp_test(
 
 			for (int m = tidx; m < 16; m += blockDim.x) { // m
 				for (int k = tidy; k < 16; k += blockDim.y) { // k
-					sA[start_idx + m * 16 + k] = __float2half(A[M + m][K + k]);
+					sA[start_idx + m * 16 + k + OFFSET] = __float2half(
+							A[M + m][K + k]);
 				}
 			}
 
@@ -607,7 +609,7 @@ __global__ void multiwarp_test(
 
 				for (int k = tidx; k < 16; k += blockDim.x) {  // k
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
-						sB[start_idx + k * 16 + n] = __float2half(
+						sB[start_idx + k * 16 + n + OFFSET] = __float2half(
 								B[K + k][N + n]);
 					}
 				}
@@ -617,13 +619,13 @@ __global__ void multiwarp_test(
 				// Initialize the output to zero
 				wmma::fill_fragment(c_frag, 0.0f);
 
-				wmma::load_matrix_sync(a_frag, &sA[start_idx], 16);
-				wmma::load_matrix_sync(b_frag, &sB[start_idx], 16);
+				wmma::load_matrix_sync(a_frag, &sA[start_idx + OFFSET], 16);
+				wmma::load_matrix_sync(b_frag, &sB[start_idx + OFFSET], 16);
 
 				// Perform the matrix multiplication
 				wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
 
-				wmma::store_matrix_sync(&sC[start_idx], c_frag, 16,
+				wmma::store_matrix_sync(&sC[start_idx + OFFSET], c_frag, 16,
 						wmma::mem_row_major);
 
 				//copy sC to global memory
@@ -635,7 +637,8 @@ __global__ void multiwarp_test(
 				for (int m = tidx; m < 16; m += blockDim.x) {  // m
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
-						atomicAdd(&C[M + m][N + n], sC[start_idx + m * 16 + n]);
+						atomicAdd(&C[M + m][N + n],
+								sC[start_idx + m * 16 + n + OFFSET]);
 					}
 				}
 			}
