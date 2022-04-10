@@ -580,10 +580,10 @@ __global__ void multiwarp_test(
 	__shared__
 	float sC[3 * 256];  // 16x16
 
-	int warp_group = threadIdx.x / 32;
+	int warp_group = threadIdx.z;
 
-	int tidx = threadIdx.x % 4;
-	int tidy = threadidx.x % 8;
+	int tidx = threadIdx.x;
+	int tidy = threadIdx.y;
 
 	int start_idx = warp_group * 256;
 
@@ -593,18 +593,18 @@ __global__ void multiwarp_test(
 
 	for (int K = 0; K < A.size(1); K += 16) {
 
-		for (int M = threadIdx.x * 16; M < A.size(0); M += blockDim.x * 16) { // m -> NWARPS loop
+		for (int M = warp_group * 16; M < A.size(0); M += blockDim.z * 16) { // m -> NWARPS loop
 
-			for (int m = tidx; m < 16; m += 4) { // m
-				for (int k = tidy; k < 16; k += 8) { // k
+			for (int m = tidx; m < 16; m += blockDim.x) { // m
+				for (int k = tidy; k < 16; k += blockDim.y) { // k
 					sA[start_idx + m * 16 + k] = __float2half(A[M + m][K + k]);
 				}
 			}
 
 			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
 
-				for (int k = tidx; k < 16; k += 4) {  // k
-					for (int n = tidy; n < 16; n += 8) {  // n
+				for (int k = tidx; k < 16; k += blockDim.x) {  // k
+					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 						sB[start_idx + k * 16 + n] = __float2half(
 								B[K + k][N + n]);
 					}
@@ -628,8 +628,8 @@ __global__ void multiwarp_test(
 
 				__syncthreads();
 
-				for (int m = threadIdx.y; m < 16; m += blockDim.y) {  // m
-					for (int n = threadIdx.z; n < 16; n += blockDim.z) {  // n
+				for (int m = tidx; m < 16; m += blockDim.x) {  // m
+					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
 						atomicAdd(&C[M + m][N + n], sC[start_idx + m * 16 + n]);
 					}
@@ -644,7 +644,7 @@ void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C,
 
 	dim3 blocks(1);
 
-	dim3 grid(NWARPS, 4, 8);
+	dim3 grid(8, 4, NWARPS);
 
 	multiwarp_test<<<blocks, grid>>>(
 			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
