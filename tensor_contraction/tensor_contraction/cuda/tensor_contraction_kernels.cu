@@ -575,7 +575,7 @@ __global__ void multiwarp_test(
 	__shared__ half
 	sA[3 * 256]; // 48x16  -> 16x16
 	__shared__ half
-	sB[3 * 256]; // 16*96 ->  16x16
+	sB[3 * 256]; // 16*48 ->  16x16
 
 	__shared__
 	float sC[3 * 256];  // 3x16x16
@@ -586,6 +586,8 @@ __global__ void multiwarp_test(
 	int tidy = threadIdx.y;
 
 	int start_idx = warp_group * 256;
+
+	//todo - bank conflicts
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major > a_frag;
 	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::row_major > b_frag;
@@ -646,7 +648,7 @@ void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C,
 
 	dim3 blocks(1);
 
-	dim3 grid(4, 16, NWARPS);
+	dim3 grid(8, 4, NWARPS);
 
 	multiwarp_test<<<blocks, grid>>>(
 			A.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),

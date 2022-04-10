@@ -8,8 +8,8 @@ end = torch.cuda.Event(enable_timing=True)
 
 torch.matmul(torch.rand(1024, 1024, dtype=torch.float, device='cuda'), torch.rand(1024, 1024, dtype=torch.float, device='cuda'))
 
-A = torch.rand(48, 16, dtype=torch.float, device='cuda')
-B = torch.rand(16, 48, dtype=torch.float, device='cuda')
+A = torch.rand(48, 48, dtype=torch.float, device='cuda')
+B = torch.rand(48, 48, dtype=torch.float, device='cuda')
 
 start.record()
 C = torch.matmul(A, B)
