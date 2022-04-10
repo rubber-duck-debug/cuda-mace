@@ -579,14 +579,17 @@ __global__ void multiwarp_test(
 	sB[3 * 256 + OFFSET]; // 16*48 ->  16x16
 
 	__shared__
-	float sC[3 * 256 + OFFSET];  // 3x16x16
+	float sC[6 * 256 + OFFSET];  // 3x16x16
 
-	int warp_group = threadIdx.z;
+	int warp_group_x = threadIdx.z / 2;
+	int warp_group_y = threadIdx.z % 2;
 
 	int tidx = threadIdx.x;
 	int tidy = threadIdx.y;
 
-	int start_idx = warp_group * 256;
+	int start_idx_x = warp_group_x * 256; // 0 0 1 1 2 2
+	int start_idx_y = warp_group_y * 256; // 0 1 0 1 0 1
+	int start_idx_output = (warp_group_x * 2 + warp_group_y) * 256;
 
 	//todo - bank conflicts
 
@@ -596,20 +599,20 @@ __global__ void multiwarp_test(
 
 	for (int K = 0; K < A.size(1); K += 16) {
 
-		for (int M = warp_group * 16; M < A.size(0); M += blockDim.z * 16) { // m -> NWARPS loop
+		for (int M = warp_group_x * 16; M < A.size(0); M += 3 * 16) { // m -> NWARPS loop
 
 			for (int m = tidx; m < 16; m += blockDim.x) { // m
 				for (int k = tidy; k < 16; k += blockDim.y) { // k
-					sA[start_idx + m * 16 + k + OFFSET] = __float2half(
+					sA[start_idx_x + m * 16 + k + OFFSET] = __float2half(
 							A[M + m][K + k]);
 				}
 			}
 
-			for (int N = 0; N < B.size(1); N += 16) { // m -> NWARPS loop
+			for (int N = warp_group_y * 16; N < B.size(1); N += 3 * 16) { // m -> NWARPS loop
 
 				for (int k = tidx; k < 16; k += blockDim.x) {  // k
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
-						sB[start_idx + k * 16 + n + OFFSET] = __float2half(
+						sB[start_idx_y + k * 16 + n + OFFSET] = __float2half(
 								B[K + k][N + n]);
 					}
 				}
@@ -619,14 +622,14 @@ __global__ void multiwarp_test(
 				// Initialize the output to zero
 				wmma::fill_fragment(c_frag, 0.0f);
 
-				wmma::load_matrix_sync(a_frag, &sA[start_idx + OFFSET], 16);
-				wmma::load_matrix_sync(b_frag, &sB[start_idx + OFFSET], 16);
+				wmma::load_matrix_sync(a_frag, &sA[start_idx_x + OFFSET], 16);
+				wmma::load_matrix_sync(b_frag, &sB[start_idx_y + OFFSET], 16);
 
 				// Perform the matrix multiplication
 				wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
 
-				wmma::store_matrix_sync(&sC[start_idx + OFFSET], c_frag, 16,
-						wmma::mem_row_major);
+				wmma::store_matrix_sync(&sC[start_idx_output + OFFSET], c_frag,
+						16, wmma::mem_row_major);
 
 				//copy sC to global memory
 
@@ -638,7 +641,7 @@ __global__ void multiwarp_test(
 					for (int n = tidy; n < 16; n += blockDim.y) {  // n
 
 						atomicAdd(&C[M + m][N + n],
-								sC[start_idx + m * 16 + n + OFFSET]);
+								sC[start_idx_output + m * 16 + n + OFFSET]);
 					}
 				}
 			}
