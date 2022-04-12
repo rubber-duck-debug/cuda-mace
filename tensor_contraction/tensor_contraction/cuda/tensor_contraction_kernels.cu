@@ -597,7 +597,7 @@ __global__ void UwN2_dense_contraction_multiwarp_kernel(
 	//todo - bank conflicts
 
 	wmma::fragment < wmma::matrix_a, 16, 16, 16, half, wmma::row_major > a_frag;
-	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::row_major > b_frag;
+	wmma::fragment < wmma::matrix_b, 16, 16, 16, half, wmma::col_major > b_frag;
 	wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag;
 
 	for (int a = blockIdx.x; a < Uw.size(0); a += gridDim.x) { // natoms
