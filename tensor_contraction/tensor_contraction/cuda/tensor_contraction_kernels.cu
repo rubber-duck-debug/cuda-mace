@@ -605,12 +605,8 @@ __global__ void UwN2_dense_contraction_multiwarp_kernel(
 
 			for (int K = warp_group_y * 16; K < Uw.size(2); K += 3 * 16) {
 
-				if (tidx == 0) {
-					for (int k = tidy; k < 16; k += blockDim.y) { // k
-						sB[start_idx_y + k] = __float2half(
-								features[a][b][K + k]);
-					}
-
+				for (int k = tidy; k < 16; k += blockDim.y) { // k
+					sB[start_idx_y + k] = __float2half(features[a][b][K + k]);
 				}
 
 				for (int M = warp_group_x * 16; M < Uw.size(3); M += 3 * 16) { // m -> NWARPS loop
@@ -642,12 +638,10 @@ __global__ void UwN2_dense_contraction_multiwarp_kernel(
 
 					//could further reduce sC in shared memory here
 
-					if (tidx == 0) {
-						for (int m = tidy; m < 16; m += blockDim.y) {
-							atomicAdd(&dots[M + m], sC[start_idx_output + m]);
-						}
-
+					for (int m = tidy; m < 16; m += blockDim.y) {
+						atomicAdd(&dots[M + m], sC[start_idx_output + m]);
 					}
+
 				}
 			}
 
