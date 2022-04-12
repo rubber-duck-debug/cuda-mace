@@ -23,6 +23,10 @@ void UwN2_dense_contraction(torch::Tensor Uw3_dense, torch::Tensor features,
 		torch::Tensor C, const int nblocksx, const int nblocksy,
 		const int nthreadsx, const int nthreadsy);
 
+
+void UwN2_dense_contraction_multiwarp(torch::Tensor Uw, torch::Tensor features,
+		torch::Tensor C, const int NWARPS);
+
 void multiwarp_matmul(torch::Tensor A, torch::Tensor B, torch::Tensor C,
 		const int nwarps);
 
@@ -129,6 +133,26 @@ torch::Tensor get_UwN2_dense_contraction(torch::Tensor Uw2,
 	return output;
 }
 
+
+torch::Tensor get_UwN2_dense_contraction_multiwarp(torch::Tensor Uw2,
+		torch::Tensor features, const int nwarps) {
+
+	auto options = torch::TensorOptions().dtype(torch::kFloat32).layout(
+			torch::kStrided).device(torch::kCUDA);
+
+	int natoms = features.size(0);
+	int nfeatures = features.size(1);
+	int nirreps = features.size(2);
+
+	torch::Tensor output = torch::zeros( { natoms, nfeatures, nirreps },
+			options);
+
+	UwN2_dense_contraction_multiwarp(Uw2, features, output, nwarps);
+
+	return output;
+}
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
 	m.def("get_Uw3_dense_tensorcore", &get_Uw3_dense_tensorcore, "");
@@ -136,6 +160,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 	m.def("get_Uw3_sparse_contraction", &get_Uw3_sparse_contraction, "");
 	m.def("get_UwN3_sparse", &get_UwN3_sparse, "");
 	m.def("get_UwN2_dense_contraction", &get_UwN2_dense_contraction, "");
+	m.def("get_UwN2_dense_contraction_multiwarp", &get_UwN2_dense_contraction_multiwarp, "");
 	m.def("get_multiwarp_matmul", &get_multiwarp_matmul, "");
 
 }
