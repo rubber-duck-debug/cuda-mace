@@ -650,6 +650,11 @@ __global__ void UwN2_dense_contraction_multiwarp_kernel(
 					}
 				}
 			}
+
+			for (int k = threadIdx.y; k < 48; k += blockDim.y) {
+				C[a][b][k] = dots[k];
+			}
+
 		}
 	}
 }
@@ -659,7 +664,7 @@ void UwN2_dense_contraction_multiwarp(torch::Tensor Uw, torch::Tensor features,
 
 	dim3 blocks(Uw.size(0), Uw.size(1));
 
-	dim3 grid(8, 4, NWARPS);
+	dim3 grid(4, 8, NWARPS);
 
 	UwN2_dense_contraction_multiwarp_kernel<<<blocks, grid>>>(
 			Uw.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
