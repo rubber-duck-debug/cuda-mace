@@ -136,7 +136,7 @@ print (out.shape)
 print("U2W2N einsum", start.elapsed_time(end), "ms, output: ", out.shape) 
 
 start.record() 
-out_cuda = tensor_contraction.get_UwN2_dense_contraction(c_tensor, node_feats.transpose(-1, -2).contiguous(), 32, 32, 4,
+out_cuda = tensor_contraction.get_UwN2_dense_contraction(c_tensor, node_feats.transpose(-1, -2).contiguous(), c_tensor.shape[0], c_tensor.shape[1], 4,
        8)
 end.record()
 torch.cuda.synchronize()
@@ -145,7 +145,7 @@ print("U2W2N cuda", start.elapsed_time(end), "ms, output: ", out_cuda.shape)
 print ("tensorcore - einsum norm diff: ", torch.linalg.norm(out - out_cuda))
 
 start.record() 
-out_cuda2 = tensor_contraction.get_UwN2_dense_contraction_multiwarp(c_tensor, node_feats.transpose(-1, -2).contiguous(), 6)
+out_cuda2 = tensor_contraction.get_UwN2_dense_contraction_multiwarp(c_tensor, node_feats.transpose(-1, -2).contiguous(), 3)
 end.record()
 torch.cuda.synchronize()
 
