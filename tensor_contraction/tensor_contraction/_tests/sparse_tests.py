@@ -11,10 +11,12 @@ num_atoms = 120
 
 print ("num_irreps: ", num_irreps)
 #  nirreps, nirreps, nirreps, 96
-U_tensors = torch.load("U_tensors_n_s_fp32.pt")
+U_tensors = torch.load("U_tensors.pt")
 
 for key in U_tensors.keys():
     U_tensors[key] = U_tensors[key].cuda().float()
+    
+    print (U_tensors[key].shape)
 
 start = torch.cuda.Event(enable_timing=True)
 end = torch.cuda.Event(enable_timing=True)

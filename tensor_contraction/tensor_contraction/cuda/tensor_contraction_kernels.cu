@@ -227,28 +227,6 @@ __global__ void Uw3_sparse_contraction_kernel_f32(const torch::PackedTensorAcces
 		const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> Uw_nvals,
 		const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> weights, torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> C) {
 
-	/***
-	 *
-	 * computes the matrix product U[i,j, :, :] \times w[:, :]
-	 *
-	 * U_values are the zero-padded non-sparse values of U with shape [48,48,48,16], with corresponding U_indices: [48,48,48,16]
-	 *
-	 * U_values actually stored as [48,48,16,48] as this allows for better contiguous memory access across threads.
-	 *
-	 * Exploits sparsity in U[i,j] as only 50% of these are non-zero. Also exploits sparsity in U[i,j,:, k] (6/48 sparsity).
-	 *
-	 *
-	 * ***/
-
-	//__shared__
-	//float su[16][16]; // 48x16  -> 16x16
-	//__shared__
-	//float sw[16][16]; // 16*96 ->  16x16
-	//extern __shared__ float buffer[];
-	//float *su = &buffer[0];
-	//float *sw = &buffer[16 * 16];
-	//int nvals = Uw_nvals[i][j] -> can skip here as many U[i, j,:, :] are all zero, U[x, y, i, :] contains at most 6 non-zero vectors
-	//50% of these blocks are doing matmuls on zero-valued matrices otherwise!
 	for (int i = blockIdx.x; i < U_values.size(0); i += gridDim.x) {
 
 		for (int j = blockIdx.y; j < U_values.size(1); j += gridDim.y) {
@@ -257,7 +235,7 @@ __global__ void Uw3_sparse_contraction_kernel_f32(const torch::PackedTensorAcces
 				continue;
 			}
 
-			//sparsity over Uw_indices[i][j][x] is at most 6/48
+			//sparsity over Uw_indices[i][j][x] is at most 3/48
 			for (int x = threadIdx.x; x < Uw_nvals[i][j]; x += blockDim.x) {
 
 				int Uw_idx = Uw_indices[i][j][x];
@@ -285,10 +263,10 @@ __global__ void Uw3_sparse_contraction_kernel_f32(const torch::PackedTensorAcces
 void Uw3_sparse_contraction_kernel_16x16_f32(torch::Tensor U_values, torch::Tensor U_indices, torch::Tensor U_nvals, torch::Tensor Uw_indices,
 		torch::Tensor Uw_nvals, torch::Tensor W, torch::Tensor C) {
 
-	const int nthreadsx = 3;
-	const int nthreadsy = 32;
+	const int nthreadsx = 16;
+	const int nthreadsy = 2;
 
-	dim3 blocks(U_values.size(0), U_values.size(1) / 4); // 48,12
+	dim3 blocks(U_values.size(0), U_values.size(1)); // 48,12
 
 	dim3 grid(nthreadsx, nthreadsy);
 
