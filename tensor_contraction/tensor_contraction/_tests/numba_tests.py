@@ -36,18 +36,11 @@ W1_torch =  torch.from_numpy(W1).cuda()
 X_torch = torch.from_numpy(X.reshape(21, 128, 16)).float().cuda()
 Y_torch = torch.from_numpy(Y).float().cuda()
 
-indices = torch.where(U3_torch !=0)
-U3_sparse = U3_torch[indices].cpu().numpy()
-U3_sparse_indices = torch.nonzero(U3_torch).cpu().numpy()
-
-U3_sparse = cuda.to_device(U3_sparse)
-U3_sparse_indices = cuda.to_device(U3_sparse_indices)
-
-W3 = cuda.to_device(W3)
+atom_types = np.array([1,1,1,1,1,1,1,2,2,2,1,1,2,0,0,0,0,0,0,0,0])
 X = cuda.to_device(X.reshape(21, 16, 128))
 
-U3_non_sparse = np.zeros((3, U3.shape[0], U3.shape[1]), dtype=np.float32)
-U3_non_sparse_indices = np.zeros((2, 3, U3.shape[0], U3.shape[1]), dtype=np.int32)
+U3_non_sparse = np.zeros((U3.shape[0], U3.shape[1], 3), dtype=np.float32)
+U3_non_sparse_indices = np.zeros((U3.shape[0], U3.shape[1], 2, 3), dtype=np.int32)
 
 for i in range(U3.shape[0]):
     for j in range(U3.shape[1]):
@@ -55,17 +48,50 @@ for i in range(U3.shape[0]):
         idx1, idx2 = np.where(U3[i, j] != 0.0)
 
         #print (idx1, idx2, U3[i, j, idx1, idx2])
-        
-        if (i == 1 and j == 1):
-            print (idx1, idx2)
             
         if (idx1.shape[0] > 0):
             #print (idx1, idx2)
             for k in range(idx1.shape[0]):
-                U3_non_sparse[k, i,j] = U3[i, j, idx1[k], idx2[k]]
-                U3_non_sparse_indices[0, k, i, j] = idx1[k]
-                U3_non_sparse_indices[1, k, i, j] = idx2[k]
-        
+                U3_non_sparse[i, j, k] = U3[i, j, idx1[k], idx2[k]]
+                U3_non_sparse_indices[i, j, 0, k] = idx1[k]
+                U3_non_sparse_indices[i, j, 1, k] = idx2[k]
+
+
+u3w3x = np.zeros((21, 128, 16, 16))
+
+
+U_tensors = {3: U3_torch.float(), 2:  U2_torch.float(), 1: U1_torch.float()}
+W_tensors = {3: W3_torch.float(), 2: W2_torch.float(), 1: W1_torch.float()}
+
+print (U_tensors[3].shape)
+print (W_tensors[3].shape)
+
+UW_torch = contract('...ik, ekc -> ...iec', U_tensors[3],W_tensors[3])
+print (UW_torch.shape)
+
+equation_main = "...ik,ekc,bci,be -> bc..."
+equation_weighting = "...k,ekc,be->bc..."
+equation_contract = "bc...i,bci->bc..."
+
+out_contract = contract(equation_main, U_tensors[3], W_tensors[3], X_torch, Y_torch)
+
+out = torch.zeros(out_contract.shape, device=out_contract.device)
+
+print (out_contract.shape)
+
+for i in range (X.shape[0]):
+
+    element_idx = atom_types[i]
+
+    for j in range (UW_torch.shape[0]):
+
+        for k in range (UW_torch.shape[1]):
+
+            for l in range(UW_torch.shape[2]):
+
+                out [i, :, j, k] += UW_torch[j,k,l, element_idx, :] * X_torch[i, :, l]
+
+print (out[0])
 
 
 U3_non_sparse_indices = cuda.to_device(U3_non_sparse_indices)
@@ -80,20 +106,32 @@ W_dim_2 = math.ceil(W3.shape[2]/threads_per_block[1])
 out_u3w3x = np.zeros((21, 16, 16, 128))
 out_u3w3x = cuda.to_device(out_u3w3x)
 
-atom_types = np.array([1,1,1,1,1,1,1,2,2,2,1,1,2,0,0,0,0,0,0,0,0])
+
 atom_types = cuda.to_device(atom_types)
 
-U_tensors = {3: U3_torch.float(), 2:  U2_torch.float(), 1: U1_torch.float()}
-W_tensors = {3: W3_torch.float(), 2: W2_torch.float(), 1: W1_torch.float()}
 
-equation_main = "...ik,ekc,bci,be -> bc..."
-equation_weighting = "...k,ekc,be->bc..."
-equation_contract = "bc...i,bci->bc..."
+UW_torch = contract('...ik, ekc -> ...iec', U_tensors[3],W_tensors[3])
 
-UW = contract('...ik, ekc -> ...iec', U_tensors[3],W_tensors[3])
 
-UWX = contract('...iec, bci -> bec...', UW,X_torch)
+#torch.Size([16, 16, 16, 3, 128])
+# torch.Size([21, 128, 16, 16])
 
+UW = UW_torch.cpu().numpy()
+
+UW_nonzero_indices = np.zeros((3, UW.shape[0], UW.shape[1]))
+UW_num_nonzero = np.zeros((UW.shape[0], UW.shape[1]))
+
+for i in range (UW.shape[0]):
+    for j in range (UW.shape[1]):
+        idx1, idx2, idx3 = np.where(UW[i, j] != 0.0)
+
+        unique_idx = np.unique(idx1)
+
+        UW_num_nonzero[i,j] =unique_idx.shape[0]
+
+        UW_nonzero_indices[:unique_idx.shape[0], i, j] = unique_idx
+
+UWX = contract('...iec, bci -> bec...', UW_torch, X_torch)
 
 UWXY = contract('bec..., be -> bc...', UWX, Y_torch)
 
@@ -103,6 +141,8 @@ for i in range (50):
     start = time()
     out_contract = contract(equation_main, U_tensors[3], W_tensors[3], X_torch, Y_torch)
     end = time()
+
+print (out_contract.shape)
 
 print ("einsum time %.3f ms" % ((end - start) * 1000.0))
 
@@ -121,57 +161,18 @@ j_val = 3
 k_val = 8
 l_val = 11
 
-@cuda.jit
-def sparse_accumulate_U3W(U3_non_sparse, U3_non_sparse_indices, W, out):
-    
-    tx = cuda.threadIdx.x
-    ty = cuda.threadIdx.y
-    bx = cuda.blockIdx.x
 
-    U_nonsparse_shared = cuda.shared.array(shape=(3, 16,16), dtype=float32)
-    U_nonsparse_indices_shared = cuda.shared.array(shape=(2,3, 16,16), dtype=int32)
+#sparse_accumulate_U3W[16, (16,16)](U3_non_sparse, U3_non_sparse_indices, W3, out)
 
-    for i in range(3):
-        U_nonsparse_shared[i, ty,tx] = U3_non_sparse[i, ty, tx]
-        U_nonsparse_indices_shared[0, i, ty, tx] = U3_non_sparse_indices[0, i, ty, tx]
-        U_nonsparse_indices_shared[1, i, ty, tx] = U3_non_sparse_indices[1, i, ty, tx]
-    
-    cuda.syncthreads()
+#for i in range (50):
+#    start = time()
+#    sparse_accumulate_U3W[16, (16,16)](U3_non_sparse, U3_non_sparse_indices, W3, out)
+#    torch.cuda.synchronize()
+#    end = time()
 
-    for element in range(3):
-                  
-        for r in range(3):
-            
-            idx = U_nonsparse_indices_shared[0, r, bx, ty]
-            jdx = U_nonsparse_indices_shared[1, r, bx, ty]
-            
-            U_val = U_nonsparse_shared[r, bx, ty]
-        
-            if (U_val != 0.0):
-                
-                #if (tx == 0 and bx == i_val and ty == j_val and idx == k_val):
-                #    print (bx, ty, idx, jdx, U_val, W_shared[jdx,0])
-                
-                for i in range(8):
-                    idx_i = i * 16 + tx
-                    out[bx, ty, idx, element, idx_i]  =  U_val * W[element, jdx,idx_i]
-                
+#print ("kernel time %.3f ms" % ((end - start) * 1000.0))
 
-sparse_accumulate_U3W[16, (16,16)](U3_non_sparse, U3_non_sparse_indices, W3, out)
-
-for i in range (50):
-    start = time()
-    sparse_accumulate_U3W[16, (16,16)](U3_non_sparse, U3_non_sparse_indices, W3, out)
-    torch.cuda.synchronize()
-    end = time()
-
-print ("kernel time %.3f ms" % ((end - start) * 1000.0))
-
-hout = out.copy_to_host()
-
-diff= UW.cpu().numpy() - hout 
-
-sparse_accumulate_U3W3X[(21, 16), (16,16)](U3_non_sparse, U3_non_sparse_indices, W3,X, atom_types, out_u3w3x)
+W3 = cuda.to_device(W3)
 
 for i in range (50):
     start = time()
@@ -179,6 +180,11 @@ for i in range (50):
     torch.cuda.synchronize()
     end = time()
 
-print ("U3U3X kernel time %.3f ms" % ((end - start) * 1000.0))
+out_u3w3x = np.zeros((21, 16, 16, 128))
+out_u3w3x = cuda.to_device(out_u3w3x)
 
-print ("hello")
+sparse_accumulate_U3W3X[(21, 16, 16), (32)](U3_non_sparse, U3_non_sparse_indices, W3,X, atom_types, out_u3w3x)
+
+print (out_contract[0])
+#print (out_u3w3x.copy_to_host().reshape(21, 128, 16, 16)[0])
+#print ("U3U3X kernel time %.3f ms" % ((end - start) * 1000.0))
