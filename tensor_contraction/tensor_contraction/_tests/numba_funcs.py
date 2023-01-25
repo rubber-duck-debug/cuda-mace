@@ -59,7 +59,7 @@ def sparse_accumulate_U3W(U3_non_sparse, U3_non_sparse_indices, W, out):
 # iec, bic -> bc
 #out = np.zeros((21, 16, 16, 128))
 @cuda.jit
-def sparse_accumulate_U3W3X(U3_non_sparse, U3_non_sparse_indices, W, X,atom_types, out):
+def sparse_accumulate_U3W3_X(UW, U3W_non_sparse_indices, U3W_num_nonsparse, X, atom_types, out):
    
     tx = cuda.threadIdx.x
     ty = cuda.threadIdx.y
@@ -67,32 +67,44 @@ def sparse_accumulate_U3W3X(U3_non_sparse, U3_non_sparse_indices, W, X,atom_type
     by = cuda.blockIdx.y
     bz = cuda.blockIdx.z
     
-    U_nonsparse_shared = cuda.shared.array(shape=(3, 16,16), dtype=float32)
-    U_nonsparse_indices_shared = cuda.shared.array(shape=(2,3, 16,16), dtype=int32)
+    gx = cuda.gridDim.x
+    gy = cuda.gridDim.y
+    gz = cuda.gridDim.z
 
-    for i in range(3):
-        if (tx < 16):
-            U_nonsparse_shared[i, by,tx] = U3_non_sparse[i, by, tx]
-            U_nonsparse_indices_shared[0, i, by, tx] = U3_non_sparse_indices[0, i, by, tx]
-            U_nonsparse_indices_shared[1, i, by, tx] = U3_non_sparse_indices[1, i, by, tx]
-        
     cuda.syncthreads()
     
     element = atom_types[bx]
 
-    for r in range(3):
-        idx = U_nonsparse_indices_shared[0, r, by, bz]
-        jdx = U_nonsparse_indices_shared[1, r, by, bz]
-            
-        U_val = U_nonsparse_shared[r, by, bz]
+    num_threads_x = cuda.blockDim.x
+
+    #X_shared = cuda.shared.array(shape=(128), dtype=float32)
+
+    n_iter_x = 128 / num_threads_x
+
+    for y in range(by, 16, gy):
     
-        if (U_val != 0.0):
-            
-            for fi in range(4):
-                idx_i = fi * 32 + tx
-                w = W[element, jdx, idx_i]
-                x = X[bx, by, idx_i]
-                cuda.atomic.add(out, (bx, by, bz, idx_i), U_val * w * x)
+        num_non_sparse = U3W_num_nonsparse[y, ty]
+
+        #for fi in range((n_iter_x)):
+        #    idx_i = fi * num_threads_x + tx
+        #    X_shared[idx_i] = 0.0
+
+        for l in range(num_non_sparse):
+
+            ldx = U3W_non_sparse_indices[l, y,ty]
+        
+            for fi in range(n_iter_x):
+                idx_i = fi * num_threads_x + tx
+
+                uw = UW[y, ty, ldx, element, idx_i]
+
+                x = X[bx, ldx, idx_i]
+
+                numba.cuda.atomic.add(out, (bx, y, ty, idx_i),uw * x)
+
+            #for fi in range(n_iter_x):
+            #    idx_i = fi * num_threads_x + tx
+            #    out[bx, y, z, idx_i] = X_shared[idx_i]
                 
             
             #out[bx, ty, j, idx_i] +=  U_nonsparse_shared[r, j, ty]  * X[bx, idx, idx] * W_shared[jdx,idx_i]
