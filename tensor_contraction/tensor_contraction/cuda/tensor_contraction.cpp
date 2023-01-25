@@ -14,7 +14,7 @@ void U3W3_X_contraction_gpu(
 							int nblockY=16,
 							int nblockZ=1,
 							int nthreadX=32,
-							int nthreadY=1,
+							int nthreadY=16,
 							int nthreadZ=1
 							);
 
