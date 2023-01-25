@@ -12,7 +12,7 @@ void U3W3_X_contraction_gpu(
 							torch::Tensor out,
 							int nblockX=1,
 							int nblockY=16,
-							int nblockZ=16,
+							int nblockZ=1,
 							int nthreadX=32,
 							int nthreadY=1,
 							int nthreadZ=1
@@ -27,9 +27,9 @@ torch::Tensor U3W3_X_contraction(
 							torch::Tensor atom_types,
 							int nblockX=1,
 							int nblockY=16,
-							int nblockZ=16,
+							int nblockZ=1,
 							int nthreadX=32,
-							int nthreadY=1,
+							int nthreadY=16,
 							int nthreadZ=1
 							) {
 
