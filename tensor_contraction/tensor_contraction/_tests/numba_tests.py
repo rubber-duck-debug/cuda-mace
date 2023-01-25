@@ -56,7 +56,7 @@ UW_torch = contract('...ik, ekc -> ...iec', U_tensors[3],W_tensors[3])
 
 U3W3X_torch = contract(equation_main, U_tensors[3],W_tensors[3], X_torch, Y_torch)
 
-timings = np.zeros(50)
+timings = np.zeros(100)
 
 for i in range (timings.shape[0]):
     start = time()
@@ -66,7 +66,7 @@ for i in range (timings.shape[0]):
 
     timings[i] = end - start
 
-print ("opt_eimsum: %.5f ms" % (np.mean(timings[5:]) * 1000.0))
+print ("opt_eimsum: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
 print (UW_torch.shape) # torch.Size([16, 16, 16, 3, 128])
 print (U3W3X_torch.shape)
@@ -114,7 +114,6 @@ X_numba = cuda.to_device(X_torch.contiguous().cpu().numpy())
 out_u3w3x_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
 out_u3w3x_numba = cuda.to_device(out_u3w3x_numba)
 
-timings = np.zeros(50)
 for i in range (timings.shape[0]):
     start = time()
     sparse_accumulate_U3W3_X[(21, 16), (32, 16)](UW_numba, U3W_non_sparse_indices_numba ,#
@@ -124,7 +123,7 @@ for i in range (timings.shape[0]):
 
     timings[i] = end - start
 
-print ("numba kernel: %.5f ms" % (np.mean(timings[5:]) * 1000.0))
+print ("numba kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
 
 from tensor_contraction import U3W3_X_contraction
@@ -149,7 +148,7 @@ for i in range (timings.shape[0]):
 
     timings[i] = end - start
 
-print ("cuda kernel: %.5f ms" % (np.mean(timings[5:]) * 1000.0))
+print ("cuda kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
 #print (U3W3X_torch[0])
 #print (U3W3X_cuda[0].shape)
