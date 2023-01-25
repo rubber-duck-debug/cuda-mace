@@ -140,7 +140,7 @@ for i in range (timings.shape[0]):
                                     U3W_non_sparse_indices,
                                     U3W_num_nonsparse,
                                     X_torch,
-                                    atom_types_torch, 21, 16, 16, 32, 1, 1)
+                                    atom_types_torch, 21, 16, 1, 32, 16, 1)
 
 
     torch.cuda.synchronize()
