@@ -30,26 +30,38 @@ __global__ void U3W3_X_contraction_kernel(
 	int n_blocks_y = gridDim.y;
 	int n_blocks_z = gridDim.z;
 
-	int element = atom_types[bx];
+	
 
-	int n_iter_x = 128 / n_threads_x;
+	int n_iter_x = X.size(2) / n_threads_x;
+	int nblock_iter_x = X.size(0) / n_blocks_x;
+	int nblock_iter_y = UW.size(0) / n_blocks_y;
+	int nblock_iter_z = UW.size(1) / n_blocks_z;
 
-	int num_nonsparse = UW_num_nonzeros[by][bz];
+	for (int gy = by; gy < UW.size(0); gy += n_blocks_y) {
+		for (int gz = bz; gz < UW.size(1); gz += n_blocks_z) {
 
-	for (int l = 0; l < num_nonsparse; l++ ) {
+			int num_nonsparse = UW_num_nonzeros[gy][gz];
+			
+			for (int atom_idx = bx; atom_idx < X.size(0); atom_idx +=n_blocks_x){
 
-		int ldx = UW_nonsparse_indices[by][bz][l];
+				int element = atom_types[atom_idx];
 
-		for (int i = 0; i < n_iter_x; i ++){
+				for (int l = 0; l < num_nonsparse; l++ ) {
 
-			int idx_i = i * n_threads_x + tx;
+					int ldx = UW_nonsparse_indices[gy][gz][l];
 
-			float uw =  UW[by][bz][ldx][element][idx_i];
-			float x = X[bx][ldx][idx_i];
+					for (int i = 0; i < n_iter_x; i ++){
 
-			atomicAdd(&out[bx][by][bz][idx_i], uw * x);
+						int idx_i = i * n_threads_x + tx;
+
+						float uw =  UW[gy][gz][ldx][element][idx_i];
+						float x = X[atom_idx][ldx][idx_i];
+
+						atomicAdd(&out[atom_idx][gy][gz][idx_i], uw * x);
+					}
+				}
+			}
 		}
-
 	}
 }
 
@@ -59,12 +71,19 @@ void U3W3_X_contraction_gpu(
 							torch::Tensor UW_nonsparse_num_nonzeros,
 							torch::Tensor X,
 							torch::Tensor atom_types,
-							torch::Tensor out) {
+							torch::Tensor out,
+							int nblockX=1,
+							int nblockY=16,
+							int nblockZ=16,
+							int nthreadX=32,
+							int nthreadY=1,
+							int nthreadZ=1
+							) {
 
 	
-	dim3 blocks(X.size(0), UW.size(1), UW.size(2));
+	dim3 blocks(nblockX, nblockY, nblockZ);
 
-	dim3 grid(32);
+	dim3 grid(nthreadX, nthreadY, nthreadZ);
 
 	U3W3_X_contraction_kernel<<<blocks, grid>>>(
 			UW.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
