@@ -151,8 +151,8 @@ for i in range (timings.shape[0]):
 print ("cuda kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
 #print (U3W3X_torch[0])
-#print (U3W3X_cuda[0].shape)
-#print (U3W3X_cuda[0])
+print (U3W3X_cuda[0].shape)
+print (U3W3X_cuda[0] - U3W3X_torch[0])
 
 out_u3w3x_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
 out_u3w3x_numba = cuda.to_device(out_u3w3x_numba)

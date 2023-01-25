@@ -25,12 +25,10 @@ __global__ void U3W3_X_contraction_kernel(
 	int n_threads_y = blockDim.y;
 	int n_threads_z = blockDim.z;
 
-
 	int n_blocks_x = gridDim.x;
 	int n_blocks_y = gridDim.y;
 	int n_blocks_z = gridDim.z;
 
-	
 
 	int n_iter_x = X.size(2) / n_threads_x;
 	int nblock_iter_x = X.size(0) / n_blocks_x;
@@ -38,27 +36,25 @@ __global__ void U3W3_X_contraction_kernel(
 	int nblock_iter_z = UW.size(1) / n_blocks_z;
 
 	for (int gy = by; gy < UW.size(0); gy += n_blocks_y) {
-		for (int gz = bz; gz < UW.size(1); gz += n_blocks_z) {
 
-			int num_nonsparse = UW_num_nonzeros[gy][gz];
-			
-			for (int atom_idx = bx; atom_idx < X.size(0); atom_idx +=n_blocks_x){
+		int num_nonsparse = UW_num_nonzeros[gy][ty];
+		
+		for (int atom_idx = bx; atom_idx < X.size(0); atom_idx +=n_blocks_x){
 
-				int element = atom_types[atom_idx];
+			int element = atom_types[atom_idx];
 
-				for (int l = 0; l < num_nonsparse; l++ ) {
+			for (int l = 0; l < num_nonsparse; l++ ) {
 
-					int ldx = UW_nonsparse_indices[gy][gz][l];
+				int ldx = UW_nonsparse_indices[gy][ty][l];
 
-					for (int i = 0; i < n_iter_x; i ++){
+				for (int i = 0; i < n_iter_x; i ++){
 
-						int idx_i = i * n_threads_x + tx;
+					int idx_i = i * n_threads_x + tx;
 
-						float uw =  UW[gy][gz][ldx][element][idx_i];
-						float x = X[atom_idx][ldx][idx_i];
+					float uw =  UW[gy][ty][ldx][element][idx_i];
+					float x = X[atom_idx][ldx][idx_i];
 
-						atomicAdd(&out[atom_idx][gy][gz][idx_i], uw * x);
-					}
+					atomicAdd(&out[atom_idx][gy][ty][idx_i], uw * x);
 				}
 			}
 		}
