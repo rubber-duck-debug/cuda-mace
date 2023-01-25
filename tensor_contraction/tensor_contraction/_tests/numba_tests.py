@@ -39,6 +39,9 @@ X_torch = torch.from_numpy(X).float().cuda().transpose(-1, -2) # (21, 16, 128)
 Y_torch = torch.from_numpy(Y).float().cuda()
 
 atom_types = np.array([1,1,1,1,1,1,1,2,2,2,1,1,2,0,0,0,0,0,0,0,0])
+
+atom_types_torch = torch.from_numpy(atom_types).int().cuda()
+
 X = cuda.to_device(X.reshape(21, 16, 128))
 
 U_tensors = {3: U3_torch.float(), 2:  U2_torch.float(), 1: U1_torch.float()}
@@ -124,16 +127,33 @@ for i in range (timings.shape[0]):
 print ("numba kernel: %.5f ms" % (np.mean(timings[5:]) * 1000.0))
 
 
+from tensor_contraction import U3W3_X_contraction
+
+print (UW_torch.shape)
+print (U3W_non_sparse_indices.shape)
+print (U3W_num_nonsparse.shape)
+print (X_torch.shape)
+
 for i in range (timings.shape[0]):
     start = time()
-    U3W_non_sparse_indices.transpose(-1, -2).transpose(-2, -3)
+    U3W3X_cuda = U3W3_X_contraction(
+                                    UW_torch,
+                                    U3W_non_sparse_indices,
+                                    U3W_num_nonsparse,
+                                    X_torch,
+                                    atom_types_torch)
+
+
     torch.cuda.synchronize()
     end = time()
 
     timings[i] = end - start
 
-print ("test: %.5f ms" % (np.mean(timings[5:]) * 1000.0))
+print ("cuda kernel: %.5f ms" % (np.mean(timings[5:]) * 1000.0))
 
+print (U3W3X_torch[0])
+print (U3W3X_cuda[0].shape)
+print (U3W3X_cuda[0])
 
 out_u3w3x_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
 out_u3w3x_numba = cuda.to_device(out_u3w3x_numba)
