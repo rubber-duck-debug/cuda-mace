@@ -296,7 +296,7 @@ if __name__ == "__main__":
     print (out.shape)
 
     print ('----')
-    out_custom = tp_custom(X1, X2)
+    out_custom = tp_custom.forward_1(X1, X2)
     print ('----')
 
     
@@ -311,7 +311,13 @@ if __name__ == "__main__":
 
     t0 = benchmark.Timer(
          stmt='tp(X1, X2)',
-         globals={'X1': X1, 'X2': X2, "tp": tp_custom})
+         globals={'X1': X1, 'X2': X2, "tp": tp_custom.forward_1})
+
+    print(t0.timeit(1000))
+
+    t0 = benchmark.Timer(
+         stmt='tp(X1, X2)',
+         globals={'X1': X1, 'X2': X2, "tp": tp_custom.forward_2})
 
     print(t0.timeit(1000))
 
