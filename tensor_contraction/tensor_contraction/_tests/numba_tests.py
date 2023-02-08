@@ -5,8 +5,9 @@ from time import perf_counter_ns, time
 import torch
 from opt_einsum import contract
 import math
-from numba_funcs import *
+from numba_cuda import *
 import os
+from tensor_contraction.cuda.tensor_contraction import U3W3_X_contraction
 
 os.environ['NUMBA_ENABLE_CUDASIM'] = "1"
 
@@ -22,18 +23,22 @@ U2 = np.fromfile('../../data/U_2.npy').reshape(16,16, 4)
 W2 = np.fromfile('../../data/W_2.npy').reshape(3,4,128)
 
 U1 = np.fromfile('../../data/U_1.npy').reshape(16,1)
+
+print (U1)
 W1 = np.fromfile('../../data/W_1.npy').reshape(3,1,128)
 
-U3_torch = torch.from_numpy(U3).cuda()
-W3_torch =  torch.from_numpy(W3).cuda()
+U3_torch = torch.from_numpy(U3).float().cuda()
+W3_torch =  torch.from_numpy(W3).float().cuda()
 
-U2_torch = torch.from_numpy(U2).cuda()
-W2_torch =  torch.from_numpy(W2).cuda()
+U2_torch = torch.from_numpy(U2).float().cuda()
+W2_torch =  torch.from_numpy(W2).float().cuda()
 
-U1_torch = torch.from_numpy(U1).cuda()
-W1_torch =  torch.from_numpy(W1).cuda()
+U1_torch = torch.from_numpy(U1).float().cuda()
+W1_torch =  torch.from_numpy(W1).float().cuda()
 
-print (X.shape)
+#self.equation_main = "...ik,ekc,bci,be -> bc..."
+#self.equation_weighting = "...k,ekc,be->bc..."
+#self.equation_contract = "bc...i,bci->bc..."
 
 X_torch = torch.from_numpy(X).float().cuda().transpose(-1, -2) # (21, 16, 128)
 Y_torch = torch.from_numpy(Y).float().cuda()
@@ -83,6 +88,39 @@ for i in range(UW_torch.shape[0]):
             U3W_non_sparse_indices[i, j, :idx.shape[0]] = idx
             U3W_num_nonsparse[i, j] = idx.shape[0]
 
+U2_non_sparse_indices = torch.zeros((U2_torch.shape[0], 3), dtype=torch.int32).cuda()
+U2_nonsparse = torch.zeros((U2_torch.shape[0]), dtype=torch.float).cuda()
+
+count = 0
+for i in range(U2_torch.shape[0]):
+
+    for j in range (U2_torch.shape[1]):
+
+        kdx,   = torch.where(U2_torch[i, j] != 0.0)
+        
+        if (len(kdx) > 0):
+            U2_nonsparse[count] = U2_torch[i, j][kdx]
+            U2_non_sparse_indices[count, 0] = i
+            U2_non_sparse_indices[count, 1] = j
+            U2_non_sparse_indices[count, 2] = kdx
+
+            count +=1
+
+U1_non_sparse_indices = torch.zeros((1, 2), dtype=torch.int32).cuda()
+U1_nonsparse = torch.zeros(1, dtype=torch.float).cuda()
+
+count = 0
+for i in range(U2_torch.shape[0]):
+
+    kdx,   = torch.where(U1_torch[i] != 0.0)
+    
+    if (len(kdx) > 0):
+        U1_nonsparse[count] = U1_torch[i, kdx]
+        U1_non_sparse_indices[count, 0] = i
+        U2_non_sparse_indices[count, 1] = kdx
+
+        count +=1
+
 out_u3w3x = torch.zeros((21, 16, 16, 128), device='cuda', dtype=torch.float32)
 
 for i in range(X_torch.shape[0]):
@@ -109,8 +147,6 @@ U3W_non_sparse_indices_numba =  cuda.to_device(U3W_non_sparse_indices.transpose(
 U3W_num_nonsparse_numba = cuda.to_device(U3W_num_nonsparse.cpu().numpy())
 X_numba = cuda.to_device(X_torch.contiguous().cpu().numpy())
 
-
-
 out_u3w3x_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
 out_u3w3x_numba = cuda.to_device(out_u3w3x_numba)
 
@@ -126,7 +162,6 @@ for i in range (timings.shape[0]):
 print ("numba kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
 
-from tensor_contraction import U3W3_X_contraction
 
 print (UW_torch.shape)
 print (U3W_non_sparse_indices.shape)
@@ -150,10 +185,6 @@ for i in range (timings.shape[0]):
 
 print ("cuda kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
-#print (U3W3X_torch[0])
-print (U3W3X_cuda[0].shape)
-print (U3W3X_cuda[0] - U3W3X_torch[0])
-
 out_u3w3x_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
 out_u3w3x_numba = cuda.to_device(out_u3w3x_numba)
 
@@ -162,135 +193,119 @@ sparse_accumulate_U3W3_X[(21, 16,16), 64](UW_numba, U3W_non_sparse_indices_numba
                         U3W_num_nonsparse_numba, X_numba, atom_types, out_u3w3x_numba)
 
 
-out_u3w3x_numba = out_u3w3x_numba.copy_to_host()
 
-#print (out_u3w3x_numba[0])
+U2_nonsparse_numba =  cuda.to_device(U2_nonsparse.contiguous().cpu().numpy())
+U2_nonsparse_indices_numba =  cuda.to_device(U2_non_sparse_indices.contiguous().cpu().numpy())
+W2_numba = cuda.to_device(W2_torch.contiguous().cpu().numpy()) 
 
-
-""" u3w3x = np.zeros((21, 128, 16, 16))
-
-
-
-print (U_tensors[3].shape)
-print (W_tensors[3].shape)
-
-UW_torch = contract('...ik, ekc -> ...iec', U_tensors[3],W_tensors[3])
-print (UW_torch.shape)
+out_u2w2_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
+out_u2w2_numba = cuda.to_device(out_u2w2_numba)
 
 
+#U2 = np.fromfile('../../data/U_2.npy').reshape(16,16, 4)
+#W2 = np.fromfile('../../data/W_2.npy').reshape(3,4,128)
 
-out_contract = contract(equation_main, U_tensors[3], W_tensors[3], X_torch, Y_torch)
-
-out = torch.zeros(out_contract.shape, device=out_contract.device)
-
-print (out_contract.shape)
-
-for i in range (X.shape[0]):
-
-    element_idx = atom_types[i]
-
-    for j in range (UW_torch.shape[0]):
-
-        for k in range (UW_torch.shape[1]):
-
-            for l in range(UW_torch.shape[2]):
-
-                out [i, :, j, k] += UW_torch[j,k,l, element_idx, :] * X_torch[i, :, l]
-
-print (out[0])
-
-
-U3_non_sparse_indices = cuda.to_device(U3_non_sparse_indices)
-U3_non_sparse = cuda.to_device(U3_non_sparse)             
-
-blocks_per_grid = (21,1)
-threads_per_block= (16,16)
-
-W_dim_1 = math.ceil(W3.shape[1]/threads_per_block[0])
-W_dim_2 = math.ceil(W3.shape[2]/threads_per_block[1])
-
-out_u3w3x = np.zeros((21, 16, 16, 128))
-out_u3w3x = cuda.to_device(out_u3w3x)
-
-
-atom_types = cuda.to_device(atom_types)
-
-
-UW_torch = contract('...ik, ekc -> ...iec', U_tensors[3],W_tensors[3])
-
-
-#torch.Size([16, 16, 16, 3, 128])
-# torch.Size([21, 128, 16, 16])
-
-UW = UW_torch.cpu().numpy()
-
-UW_nonzero_indices = np.zeros((3, UW.shape[0], UW.shape[1]))
-UW_num_nonzero = np.zeros((UW.shape[0], UW.shape[1]))
-
-for i in range (UW.shape[0]):
-    for j in range (UW.shape[1]):
-        idx1, idx2, idx3 = np.where(UW[i, j] != 0.0)
-
-        unique_idx = np.unique(idx1)
-
-        UW_num_nonzero[i,j] =unique_idx.shape[0]
-
-        UW_nonzero_indices[:unique_idx.shape[0], i, j] = unique_idx
-
-UWX = contract('...iec, bci -> bec...', UW_torch, X_torch)
-
-UWXY = contract('bec..., be -> bc...', UWX, Y_torch)
-
-out_contract = contract(equation_main, U_tensors[3], W_tensors[3], X_torch, Y_torch)
-
-for i in range (50):
+for i in range (timings.shape[0]):
     start = time()
-    out_contract = contract(equation_main, U_tensors[3], W_tensors[3], X_torch, Y_torch)
-    end = time()
 
-print (out_contract.shape)
-
-print ("einsum time %.3f ms" % ((end - start) * 1000.0))
-
-
-# '...ik, ekc -> ...iec'                    
-#                                           i  k
-#U3 = np.fromfile('U_3.npy').reshape(16,16,16,23)
-#                                    e  k   c        
-#W3 = np.fromfile('W_3.npy').reshape(3,23,128)
-
-out = np.zeros((16, 16, 16, 3, 128))
-out = cuda.to_device(out)
-
-i_val = 3
-j_val = 3
-k_val = 8
-l_val = 11
-
-
-#sparse_accumulate_U3W[16, (16,16)](U3_non_sparse, U3_non_sparse_indices, W3, out)
-
-#for i in range (50):
-#    start = time()
-#    sparse_accumulate_U3W[16, (16,16)](U3_non_sparse, U3_non_sparse_indices, W3, out)
-#    torch.cuda.synchronize()
-#    end = time()
-
-#print ("kernel time %.3f ms" % ((end - start) * 1000.0))
-
-W3 = cuda.to_device(W3)
-
-for i in range (50):
-    start = time()
-    sparse_accumulate_U3W3X[(21, 16), (16,16)](U3_non_sparse, U3_non_sparse_indices, W3,X, atom_types, out_u3w3x)
+    c_tensor = contract("...k,ekc,be->b...c", U2_torch, W2_torch, Y_torch)
+    out = U3W3X_torch + c_tensor
+    out = contract("bi...c,bic->b...c", out, X_torch)
     torch.cuda.synchronize()
+
     end = time()
 
-out_u3w3x = np.zeros((21, 16, 16, 128))
-out_u3w3x = cuda.to_device(out_u3w3x)
+    timings[i] = end - start
 
-sparse_accumulate_U3W3X[(21, 16, 16), (32)](U3_non_sparse, U3_non_sparse_indices, W3,X, atom_types, out_u3w3x)
+print ("torch contract weighting: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
 
-print (out_contract[0])
-#print (out_u3w3x.copy_to_host().reshape(21, 128, 16, 16)[0])
-#print ("U3U3X kernel time %.3f ms" % ((end - start) * 1000.0)) """
+for i in range (timings.shape[0]):
+    start = time()
+    sparse_accumulate_U2W2_weighting[21, (32, 16)](U2_nonsparse_numba, U2_nonsparse_indices_numba, W2_numba, atom_types, out_u2w2_numba )
+    cuda.synchronize()
+    end = time()
+
+    timings[i] = end - start
+
+print ("numba U2W2 weighting kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
+
+out_u2w2_numba = np.zeros((21, 16, 16, 128),  dtype=np.float32)
+out_u2w2_numba = cuda.to_device(out_u2w2_numba)
+sparse_accumulate_U2W2_weighting[(21, 1, 1), (32, 16, 1)](U2_nonsparse_numba, U2_nonsparse_indices_numba, W2_numba, atom_types, out_u2w2_numba )
+
+out_u2w2_x = np.zeros((21, 16, 128),  dtype=np.float32)
+out_u2w2_x = cuda.to_device(out_u2w2_x)
+
+for i in range (timings.shape[0]):
+    start = time()
+    sparse_accumulate_U2W2_contract[(21, 1, 1), (32, 16, 1)](U2_nonsparse_indices_numba, out_u2w2_numba, X_numba, out_u2w2_x )
+
+    cuda.synchronize()
+    end = time()
+
+    timings[i] = end - start
+
+print ("numba U2W2 contraction kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
+
+out_u2w2_x = np.zeros((21, 16, 128),  dtype=np.float32)
+out_u2w2_x = cuda.to_device(out_u2w2_x)
+
+#out_u2w2_x = out_u2w2_numba + out_u3w3x_numba
+
+sparse_accumulate_U2W2_contract[(21, 1, 1), (32, 16, 1)](U2_nonsparse_indices_numba, out_u2w2_numba, X_numba, out_u2w2_x )
+
+
+W1_numba = cuda.to_device(W1_torch.contiguous().cpu().numpy()) 
+
+U1_nonsparse_numba =  cuda.to_device(U1_nonsparse.contiguous().cpu().numpy())
+U1_nonsparse_indices_numba =  cuda.to_device(U1_non_sparse_indices.contiguous().cpu().numpy())
+
+out_u1w1_numba = np.zeros((21, 16, 128),  dtype=np.float32)
+out_u1w1_numba = cuda.to_device(out_u1w1_numba)
+
+for i in range (timings.shape[0]):
+    start = time()
+    
+    sparse_accumulate_U1W1_weighting[(21, 1, 1), (32, 1, 1)](U1_nonsparse_numba, U1_nonsparse_indices_numba, W1_numba, atom_types, out_u1w1_numba )
+
+    cuda.synchronize()
+    end = time()
+
+    timings[i] = end - start
+
+print ("numba U1W1 weighting kernel: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
+
+out_u1w1_numba = np.zeros((21, 16, 128),  dtype=np.float32)
+out_u1w1_numba = cuda.to_device(out_u1w1_numba)
+sparse_accumulate_U1W1_weighting[(21, 1, 1), (32, 1, 1)](U1_nonsparse_numba, U1_nonsparse_indices_numba, W1_numba, atom_types, out_u1w1_numba )
+
+c_tensor = contract("...k,ekc,be->b...c", U1_torch, W1_torch, Y_torch)
+
+#print (out_u1w1_numba.copy_to_host())
+
+#print (c_tensor)
+
+
+out_u1w1_x_numba = np.zeros((21, 128),  dtype=np.float32)
+out_u1w1_x_numba = cuda.to_device(out_u1w1_x_numba)
+
+
+sparse_accumulate_U1W1_contract[(21, 1, 1), (32, 1, 1)](U1_nonsparse_indices_numba, out_u1w1_numba, X_numba, out_u1w1_x_numba )
+
+## (21, 16, 128)
+
+
+print (c_tensor.shape)
+
+out = contract("bic..., bic->bc...",c_tensor, X_torch)
+
+
+print (out_u1w1_x_numba.copy_to_host())
+
+print (out)
+#self.equation_contract = "bc...i,bci->bc..."
+#
+#c_tensor = c_tensor + out
+#out = contract(self.equation_contract, c_tensor, x)
+
+#"b...ic, bic -> b...c"
