@@ -7,7 +7,7 @@ from typing import Tuple, List
 
 class TensorProductReference(torch.nn.Module):
 
-  def __init__(self, irreps1, irreps2, target_irreps, nchannels, device="cpu"):
+  def __init__(self, irreps1, irreps2, target_irreps, nchannels, n_l_channels, weights=None, device="cpu"):
     super().__init__()
     self.irreps1 = irreps1
     self.irreps2 = irreps2
@@ -25,7 +25,19 @@ class TensorProductReference(torch.nn.Module):
     for l in range (9):
       self.offsets_dict[l] = offset_sph_harm
       offset_sph_harm += (2 * l) + 1
-      
+    
+    self.n_l_channels = n_l_channels
+    self.nchannels = nchannels
+    
+    if (weights == None):
+        self.weights = torch.randn(nchannels, n_l_channels).cuda()
+    else: 
+        self.weights = weights
+    
+    l_channel = 0
+    
+    self.weight_indices = {}
+    
     for i, (mul, ir_in) in enumerate(self.irreps1):
         for j, (_, ir_edge) in enumerate(self.irreps2):
             for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
@@ -51,7 +63,17 @@ class TensorProductReference(torch.nn.Module):
                     self.cg_sparse_dict[l1, l2, l3] = cg_sparse
         
                     self.dim_out += z
+                    
+                    weight_idxs = torch.ones_like(mu1)
 
+                    self.weight_indices[l1, l2, l3] = l_channel
+                    
+                    l_channel +=1
+                  
+
+    assert l_channel == n_l_channels, "n_l_channels must equal the number of representation products"
+    
+    
   def forward(self, x, y):
 
     all_outputs = []
@@ -64,8 +86,39 @@ class TensorProductReference(torch.nn.Module):
             for k, (_, ir_edge) in enumerate(self.irreps2):
                 for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
                     if ir_out in self.target_irreps:
+                                                
+                        l1 = ir_in.l
+                        l2 = ir_edge.l
+                        l3 = ir_out.l
                         
-                        #TODO: add normalisation and weighting here
+                        mu1, mu2, mu3 = self.mu_dict[l1, l2, l3]
+                        cg_sparse = self.cg_sparse_dict[l1, l2, l3]
+                        
+                        cg_iteration = x[i, :, self.offsets_dict[l1] + mu1] * cg_sparse * y[i, :, self.offsets_dict[l2] + mu2]
+                    
+                        output = torch.zeros(x.shape[1], (2 * l3 + 1), device=self.device)
+                    
+                        output.index_add_(1, mu3, cg_iteration)
+                        
+                        outputs.append(output)
+                        
+        output_i = torch.cat(outputs, dim=-1)
+        
+        all_outputs.append(output_i)
+        
+    return torch.stack(all_outputs)
+
+    
+  def weighted_forward(self, x, y):
+
+    output = torch.zeros(x.shape[0], x.shape[1], device=self.device)
+    
+    for i in range(x.shape[0]): # loop over edges
+
+        for j, (mul, ir_in) in enumerate(self.irreps1):
+            for k, (_, ir_edge) in enumerate(self.irreps2):
+                for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
+                    if ir_out in self.target_irreps:
                                                 
                         l1 = ir_in.l
                         l2 = ir_edge.l
@@ -76,19 +129,9 @@ class TensorProductReference(torch.nn.Module):
                         
                         cg_iteration = x[i, :, self.offsets_dict[l1] + mu1] * cg_sparse * y[i, :, self.offsets_dict[l2] + mu2]
                         
-                        output = torch.zeros(x.shape[1], (2 * l3 + 1), device=self.device)
-                        
-                        output.index_add_(1, mu3, cg_iteration)
+                        output[i] += self.weights[:, self.weight_indices[l1, l2, l3]] * torch.sum(cg_iteration, dim=-1)
 
-                        #print (i, l1, l2, l3, cg_iteration.shape, output.shape)
-                        
-                        outputs.append(output)
-                        
-        output_i = torch.cat(outputs, dim=-1)
-        
-        all_outputs.append(output_i)
-        
-    return torch.stack(all_outputs)
+    return output
 
 if __name__ == "__main__":
 

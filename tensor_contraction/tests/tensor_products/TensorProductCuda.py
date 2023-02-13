@@ -6,14 +6,14 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Tuple, List
 
 from torch.utils.cpp_extension import load
-from TensorProduct import TensorProductReference
+from TensorProductReference import TensorProductReference
 
 tensor_product_cuda = load(
-    'tensor_product_cuda', ['../cuda/tensor_product_kernel.cu'], verbose=True, extra_cflags=['-O2'], extra_cuda_cflags=['-O2'])
+    'tensor_product_cuda', ['../../cuda/tensor_product_kernel.cu'], verbose=True, extra_cflags=['-O2'], extra_cuda_cflags=['-O2'])
 
 class TensorProductCuda(torch.nn.Module):
 
-  def __init__(self, irreps1, irreps2, target_irreps, nchannels, device="cpu"):
+  def __init__(self, irreps1, irreps2, target_irreps, nchannels, weights=None, device="cpu"):
     super().__init__()
     self.irreps1 = irreps1
     self.irreps2 = irreps2
@@ -87,7 +87,11 @@ class TensorProductCuda(torch.nn.Module):
                   
                   n_l_channels+=1
 
-    self.weights = torch.randn(nchannels, n_l_channels).cuda()
+    if (weights == None):
+        self.weights = torch.randn(nchannels, n_l_channels).cuda()
+    else:
+        self.weights = weights
+        
     self.weight_indices = torch.cat(weight_indices).int().cuda()
 
     self.mu_1 = torch.cat(mu_1).int()
@@ -160,19 +164,15 @@ def compute_total_l_channels(lmax):
 
 if __name__ == "__main__":
 
+    torch.set_printoptions(edgeitems=6)
+    
     nchannels=256
-
-    irreps1, irreps2, target_irreps = o3.Irreps(str(nchannels) +"x0e + " + str(nchannels)+"x1o"), o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"), \
-                                      o3.Irreps(str(nchannels)+"x0e + " + str(nchannels)+"x1o +" + str(nchannels)+"x2e + " + str(nchannels)+"x3o")
-
-    tp_cuda = TensorProductCuda(irreps1,irreps2,target_irreps,nchannels, device="cuda")
-    tp_reference = TensorProductReference(irreps1,irreps2,target_irreps,nchannels, device="cuda")
 
     l1 = 1
     l2 = 3
     n_l_channels = 10
     n_edges = 1000
-
+    
     X1 = torch.randn(n_edges, nchannels, (l1 + 1)**2)
     X2 = torch.randn(n_edges, 1, (l2 + 1)**2)
     weights = torch.rand(nchannels, n_l_channels)
@@ -180,32 +180,37 @@ if __name__ == "__main__":
     X1 = X1.to("cuda")
     X2 = X2.to("cuda")
     weights = weights.to("cuda")
+    
+    irreps1, irreps2, target_irreps = o3.Irreps(str(nchannels) +"x0e + " + str(nchannels)+"x1o"), o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"), \
+                                      o3.Irreps(str(nchannels)+"x0e + " + str(nchannels)+"x1o +" + str(nchannels)+"x2e + " + str(nchannels)+"x3o")
+
+    tp_cuda = TensorProductCuda(irreps1,irreps2,target_irreps,nchannels,weights, device="cuda")
+    tp_reference = TensorProductReference(irreps1,irreps2,target_irreps,nchannels, n_l_channels, weights, device="cuda")
 
     import torch.utils.benchmark as benchmark
     
     output = tp_cuda.forward(X1, X2)
     reference = tp_reference.forward(X1, X2)
+    
+    reference_weighted = tp_reference.weighted_forward(X1, X2)
     output_weighted = tp_cuda.weighted_forward(X1, X2)
     
-    print (output)
-    print (reference)
-    print (output_weighted)
-
-    torch.set_printoptions(edgeitems=6)
-
+    print ("CUDA vs Reference TP difference")
+    print (output - reference)
+    print ("CUDA vs Reference weighted TP difference")
+    print (output_weighted - reference_weighted)
 
     t0 = benchmark.Timer(
         stmt='tp(X1, X2)',
         globals={'X1': X1, 'X2': X2, "tp": tp_cuda.forward})
 
-    print(t0.timeit(1000))
-    
+    print("CUDA TP (no weights)", t0.timeit(1000))
     
     t0 = benchmark.Timer(
         stmt='tp(X1, X2)',
         globals={'X1': X1, 'X2': X2, "tp": tp_cuda.weighted_forward})
 
-    print(t0.timeit(1000))
+    print("CUDA TP (weights)", t0.timeit(1000))
 
     irreps_out, instructions = tp_out_irreps_with_instructions(irreps1, irreps2, target_irreps)
 
@@ -215,4 +220,4 @@ if __name__ == "__main__":
     stmt='tp(X1, X2)',
     globals={'X1': X1.reshape(n_edges, nchannels * compute_total_l_channels(l1)), 'X2': X2.reshape(n_edges,compute_total_l_channels(l2)), "tp": tp_torch})
 
-    print(t0.timeit(1000))
+    print("Pyotrch TP (no weights)", t0.timeit(1000))
