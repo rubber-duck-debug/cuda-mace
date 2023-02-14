@@ -1,94 +1,151 @@
 import torch
 import numpy as np
 from torch.utils import cpp_extension
-from e3nn import o3
+
 from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Tuple, List
 
 from torch.utils.cpp_extension import load
 from TensorProductReference import TensorProductReference
 
-tensor_product_cuda = load(
-    'tensor_product_cuda', ['../../cuda/tensor_product_kernel.cu'], verbose=True, extra_cflags=['-O2'], extra_cuda_cflags=['-O2'])
+from e3nn import o3
+from e3nn_jax import Instruction, Irreps
+from e3nn_jax._src.core_tensor_product import _normalize_instruction_path_weights
 
+tensor_product_cuda = load(
+    'tensor_product_cuda', ['../../cuda/tensor_product_kernel.cu'], verbose=True, extra_cflags=['-O3'], extra_cuda_cflags=['-O3'])
+
+class weighted_TP(torch.autograd.Function):
+    
+    @staticmethod
+    def forward(ctx, x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices):
+
+        ctx.save_for_backward(x, y, mu_1, mu_2, cg_coeffs, weights, weight_indices)
+        
+        res = tensor_product_cuda.weighted_forward(x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices)
+        
+        return res[0]
+        
+    @staticmethod
+    def backward (ctx, grad_input):
+        
+        x, y, mu_1, mu_2, cg_coeffs, weights, weight_indices = ctx.saved_tensors
+        
+        grad_X1 = tensor_product_cuda.weighted_backward_dX1(x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices, grad_input.contiguous())
+        
+        return grad_X1[0], None, None, None, None, None, None
+    
 class TensorProductCuda(torch.nn.Module):
 
-  def __init__(self, irreps1, irreps2, target_irreps, nchannels, weights=None, device="cpu"):
+  def __init__(self, irreps_in1, irreps_in2, target_irreps, nchannels, weights=None,weighted_tp=True, device="cpu"):
     super().__init__()
-    self.irreps1 = irreps1
-    self.irreps2 = irreps2
-    self.target_irreps = target_irreps
-    self.cg_dict = {}
-    self.mus_dict = {}
-    self.dim_out = 0
+    
+    self.irreps_in1 = o3.Irreps(irreps_in1)
+    self.irreps_in2 = o3.Irreps(irreps_in2)
+    self.target_irreps = o3.Irreps(target_irreps)
+    
     self.device = device
+    self.weighted_tp = weighted_tp
+    
+    instructions = []
+    irreps_out = []
+    
+    for i, (mul, ir_in) in enumerate(self.irreps_in1):
+            for j, (_, ir_edge) in enumerate(self.irreps_in2):
+                for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
+                    if ir_out in target_irreps:
+                        
+                        l1 = ir_in.l
+                        l2 = ir_edge.l
+                        l3 = ir_out.l
+            
+                        instructions.append(
+                            Instruction(
+                                i_in1=i,
+                                i_in2=j,
+                                i_out=len(instructions),
+                                connection_mode="uvu",
+                                has_weight=False,
+                                path_weight=1.0,
+                                weight_std=None,
+                                first_input_multiplicity=mul,
+                                second_input_multiplicity=1,
+                                output_multiplicity=mul,
+                            )
+                        )
+                        irreps_out.append((mul, ir_out))
+                        
+    self.irreps_out = Irreps(irreps_out)
 
+    self.instructions = _normalize_instruction_path_weights(
+            instructions,
+            self.irreps_in1,
+            self.irreps_in2,
+            self.irreps_out,
+            [1.0 for _ in self.irreps_in1],
+            [1.0 for _ in self.irreps_in2],
+            [1.0 for _ in self.irreps_out],
+            irrep_normalization="component",
+            path_normalization_exponent=1.0,  # path
+            gradient_normalization_exponent=1.0,  # path
+        )
+    
     mu_1 = []
     mu_2 = []
     mu_3 = []
-
     cg_coeffs = []
-
-    offset_1 = 0
-    offset_2 = 0
-    offset_3 = 0
-
-    offsets = {}
-    # l0 = 0
-    # l1 = 1,2,3
-    # l2 = 4,5,6,7,8
-    
-    offset_sph_harm = 0
-
-    for l in range (9):
-      offsets[l] = offset_sph_harm
-      offset_sph_harm += (2 * l) + 1
-
-    n_l_channels = 0 
     weight_indices = []
     
-    for i, (mul, ir_in) in enumerate(irreps1):
-        for j, (_, ir_edge) in enumerate(irreps2):
-            for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
-                if ir_out in target_irreps:
-                  l1 = ir_in.l
-                  l2 = ir_edge.l
-                  l3 = ir_out.l
+    l_channel = 0
+    
+    for ins in self.instructions:
+        l1 = self.irreps_in1[ins.i_in1].ir.l
+        l2 = self.irreps_in2[ins.i_in2].ir.l
+        l3 = self.irreps_out[ins.i_out].ir.l
 
-                  cg = o3.wigner_3j(l1,l2,l3).to(device)
+        offset1 = self.irreps_in1[: ins.i_in1].dim
+        offset2 = self.irreps_in2[: ins.i_in2].dim
+        offset3 = self.irreps_in2[: ins.i_out].dim
+        
+        print (l1, l2, l3, offset1, offset2, offset3)
+        
+        cg = o3.wigner_3j(l1, l2, l3).to(self.device)
 
-                  mu1, mu2, mu3 = cg.nonzero(as_tuple=True)
                   
-                  x,y,z = cg.shape[0],  cg.shape[1],  cg.shape[2]
+        # normalisation and weighting:
+        cg = cg * ins.path_weight
 
-                  cg_sparse = cg[(mu1, mu2, mu3)]
-                  
-                  sorted_indices = mu3.argsort()
-                  
-                  mu1 = mu1[sorted_indices]
-                  mu2 = mu2[sorted_indices]
-                  mu3 = mu3[sorted_indices]
+        mu1, mu2, mu3 = cg.nonzero(as_tuple=True)
+        
+        cg_sparse = cg[(mu1, mu2, mu3)]
+        
+        mu1 = mu1 + offset1
+        mu2 = mu2 + offset2
+        mu3 = mu3 + offset3
 
-                  mu_1.append(mu1 + offsets[l1])
-                  mu_2.append(mu2 + offsets[l2])
-                  mu_3.append(mu3 + offset_3)
+        sorted_indices = mu3.argsort()
 
-                  cg_sparse = cg_sparse[sorted_indices]
+        mu1 = mu1[sorted_indices]
+        mu2 = mu2[sorted_indices]
+        mu3 = mu3[sorted_indices]
+        cg_sparse = cg_sparse[sorted_indices]
 
-                  cg_coeffs.append(cg_sparse)
+        
+        mu_1.append(mu1)
+        mu_2.append(mu2)
+        mu_3.append(mu3)
 
-                  weight_idxs = torch.ones_like(mu1)
-                  
-                  weight_indices.append(weight_idxs * n_l_channels)
-                  
-                  self.dim_out += z
-                  offset_3 += z
-                  
-                  
-                  n_l_channels+=1
+        cg_coeffs.append(cg_sparse)
 
+        weight_idxs = torch.ones_like(mu1)
+        
+        weight_indices.append(weight_idxs * l_channel)
+        
+        l_channel += 1
+
+    
     if (weights == None):
-        self.weights = torch.randn(nchannels, n_l_channels).cuda()
+        self.weights = torch.randn(nchannels, l_channel).cuda()
     else:
         self.weights = weights
         
@@ -112,15 +169,13 @@ class TensorProductCuda(torch.nn.Module):
 
 
   def forward(self,x,y):
-
-    res = tensor_product_cuda.forward(x, self.mu_1, y, self.mu_2, self.cg_coeffs, self.mu_3, self.dim_out)
-
-    return res[0]
+    
+    if (self.weighted_tp):
+        return weighted_TP.apply(x, self.mu_1, y, self.mu_2, self.cg_coeffs, self.weights, self.weight_indices)
+    else:
+        pass
+    return None
   
-  def weighted_forward(self, x, y):
-    res = tensor_product_cuda.weighted_forward(x, self.mu_1, y, self.mu_2, self.cg_coeffs, self.weights, self.weight_indices)
-
-    return res[0]
 
 
 def tp_out_irreps_with_instructions(
@@ -166,58 +221,86 @@ if __name__ == "__main__":
 
     torch.set_printoptions(edgeitems=6)
     
-    nchannels=256
+    nchannels=128
 
     l1 = 1
     l2 = 3
     n_l_channels = 10
     n_edges = 1000
     
-    X1 = torch.randn(n_edges, nchannels, (l1 + 1)**2)
-    X2 = torch.randn(n_edges, 1, (l2 + 1)**2)
-    weights = torch.rand(nchannels, n_l_channels)
+    X1 = torch.randn(n_edges, nchannels, (l1 + 1)**2, requires_grad=True, device='cuda')
     
-    X1 = X1.to("cuda")
-    X2 = X2.to("cuda")
-    weights = weights.to("cuda")
+    X2 = torch.randn(n_edges, 1, (l2 + 1)**2, device='cuda')
+    weights = torch.rand(nchannels, n_l_channels, device='cuda')
     
-    irreps1, irreps2, target_irreps = o3.Irreps(str(nchannels) +"x0e + " + str(nchannels)+"x1o"), o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"), \
-                                      o3.Irreps(str(nchannels)+"x0e + " + str(nchannels)+"x1o +" + str(nchannels)+"x2e + " + str(nchannels)+"x3o")
+    #X1 = X1.to("cuda")
+    #X2 = X2.to("cuda")
+    
+    #weights = weights.to("cuda")
+    
+    irreps1, irreps2, target_irreps = (
+        o3.Irreps(f"0e + 1o"),
+        o3.Irreps("0e + 1o + 2e + 3o"),
+        o3.Irreps(f"0e + 1o + 2e + 3o"),
+    )
 
     tp_cuda = TensorProductCuda(irreps1,irreps2,target_irreps,nchannels,weights, device="cuda")
-    tp_reference = TensorProductReference(irreps1,irreps2,target_irreps,nchannels, n_l_channels, weights, device="cuda")
+    tp_reference = TensorProductReference(irreps1,irreps2,target_irreps,nchannels, weights, device="cuda")
 
     import torch.utils.benchmark as benchmark
+
+    tp_reference.weighted_tp=True
+    tp_cuda.weighed_tp = True
     
-    output = tp_cuda.forward(X1, X2)
-    reference = tp_reference.forward(X1, X2)
+    #output_weighted = tp_cuda.forward(X1, X2)
     
-    reference_weighted = tp_reference.weighted_forward(X1, X2)
-    output_weighted = tp_cuda.weighted_forward(X1, X2)
     
-    print ("CUDA vs Reference TP difference")
-    print (output - reference)
-    print ("CUDA vs Reference weighted TP difference")
-    print (output_weighted - reference_weighted)
+    X1_r = X1
+    X2_r = X2
+    
+    X1_r._requires_grad = True 
+
+    cuda_weighted = tp_cuda.forward(X1, X2)
+    
+    s_cuda = cuda_weighted.sum()
+    s_cuda.backward()
+    
+    reference_weighted = tp_reference.forward(X1_r, X2_r)
+    
+    s_reference = reference_weighted.sum()
+    s_reference.backward()
+
+    print (X1.grad - X1_r.grad)
+    
+    # print ("CUDA vs Reference weighted TP difference")
+    # print (output_weighted - reference_weighted)
+    # print (output_weighted)
 
     t0 = benchmark.Timer(
         stmt='tp(X1, X2)',
         globals={'X1': X1, 'X2': X2, "tp": tp_cuda.forward})
 
-    print("CUDA TP (no weights)", t0.timeit(1000))
-    
-    t0 = benchmark.Timer(
-        stmt='tp(X1, X2)',
-        globals={'X1': X1, 'X2': X2, "tp": tp_cuda.weighted_forward})
-
     print("CUDA TP (weights)", t0.timeit(1000))
+    
+    grad_input = torch.rand(output_weighted.shape).cuda()
+    
+    grad_out = tensor_product_cuda.weighted_backward_dX1(X1, tp_cuda.mu_1, X2, tp_cuda.mu_2, tp_cuda.cg_coeffs, tp_cuda.weights, tp_cuda.weight_indices, grad_input)
+    
+    t0_backward = benchmark.Timer(
+        stmt='tp(X1, mu1, X2, mu2, coeffs, weights, weight_indices, grad_input)',
+        globals={'X1': X1, 'X2': X2, 'mu1': tp_cuda.mu_1, 'mu2': tp_cuda.mu_2, 'coeffs': tp_cuda.cg_coeffs, 'weights': tp_cuda.weights, 
+                 'weight_indices': tp_cuda.weight_indices, 'grad_input': grad_input, "tp": tensor_product_cuda.weighted_backward_dX1})
 
-    irreps_out, instructions = tp_out_irreps_with_instructions(irreps1, irreps2, target_irreps)
 
-    tp_torch = o3.TensorProduct(irreps1, irreps2,irreps_out, instructions).to("cuda")
+    print("CUDA TP backward (weights)", t0_backward.timeit(1000))
+    
+ 
+    import e3nn_jax as e3nn
 
-    t0 = benchmark.Timer(
-    stmt='tp(X1, X2)',
-    globals={'X1': X1.reshape(n_edges, nchannels * compute_total_l_channels(l1)), 'X2': X2.reshape(n_edges,compute_total_l_channels(l2)), "tp": tp_torch})
-
-    print("Pyotrch TP (no weights)", t0.timeit(1000))
+    outj = e3nn.tensor_product(
+        e3nn.IrrepsArray(irreps1, X1.cpu().detach().numpy()),
+        e3nn.IrrepsArray(irreps2, X2.cpu().detach().numpy()),
+        filter_ir_out=e3nn.Irreps(target_irreps),
+    )
+    print (outj.irreps)
+    
