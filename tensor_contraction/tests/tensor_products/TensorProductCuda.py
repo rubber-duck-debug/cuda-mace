@@ -5,6 +5,7 @@ from torch.utils import cpp_extension
 from torch.profiler import profile, record_function, ProfilerActivity
 from typing import Tuple, List
 
+import torch.utils.benchmark as benchmark
 from torch.utils.cpp_extension import load
 from TensorProductReference import TensorProductReference
 
@@ -15,7 +16,7 @@ from e3nn_jax._src.core_tensor_product import _normalize_instruction_path_weight
 tensor_product_cuda = load(
     'tensor_product_cuda', ['../../cuda/tensor_product_kernel.cu'], verbose=True, extra_cflags=['-O3'], extra_cuda_cflags=['-O3'])
 
-class weighted_TP(torch.autograd.Function):
+class WeightedTPFunction(torch.autograd.Function):
     
     @staticmethod
     def forward(ctx, x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices):
@@ -29,11 +30,16 @@ class weighted_TP(torch.autograd.Function):
     @staticmethod
     def backward (ctx, grad_input):
         
+        print ("--grad_input--")
+        print (grad_input)
         x, y, mu_1, mu_2, cg_coeffs, weights, weight_indices = ctx.saved_tensors
         
-        grad_X1 = tensor_product_cuda.weighted_backward_dX1(x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices, grad_input.contiguous())
+        grad_X1, = tensor_product_cuda.weighted_backward_dX1(x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices, grad_input.contiguous())
         
-        return grad_X1[0], None, None, None, None, None, None
+        grad_X2, = tensor_product_cuda.weighted_backward_dX2(x, mu_1, y, mu_2, cg_coeffs, weights, weight_indices, grad_input.contiguous())
+        
+        
+        return grad_X1, grad_X2, None, None, None, None, None
     
 class TensorProductCuda(torch.nn.Module):
 
@@ -171,9 +177,9 @@ class TensorProductCuda(torch.nn.Module):
   def forward(self,x,y):
     
     if (self.weighted_tp):
-        return weighted_TP.apply(x, self.mu_1, y, self.mu_2, self.cg_coeffs, self.weights, self.weight_indices)
+        return WeightedTPFunction.apply(x, self.mu_1, y, self.mu_2, self.cg_coeffs, self.weights, self.weight_indices)
     else:
-        pass
+        raise Exception ("unweighted TP backwards is not supported yet")
     return None
   
 
@@ -221,22 +227,16 @@ if __name__ == "__main__":
 
     torch.set_printoptions(edgeitems=6)
     
-    nchannels=128
+    nchannels=1
 
     l1 = 1
     l2 = 3
     n_l_channels = 10
-    n_edges = 1000
+    n_edges = 2
     
     X1 = torch.randn(n_edges, nchannels, (l1 + 1)**2, requires_grad=True, device='cuda')
-    
-    X2 = torch.randn(n_edges, 1, (l2 + 1)**2, device='cuda')
+    X2 = torch.randn(n_edges, 1, (l2 + 1)**2, requires_grad=True, device='cuda')
     weights = torch.rand(nchannels, n_l_channels, device='cuda')
-    
-    #X1 = X1.to("cuda")
-    #X2 = X2.to("cuda")
-    
-    #weights = weights.to("cuda")
     
     irreps1, irreps2, target_irreps = (
         o3.Irreps(f"0e + 1o"),
@@ -247,18 +247,11 @@ if __name__ == "__main__":
     tp_cuda = TensorProductCuda(irreps1,irreps2,target_irreps,nchannels,weights, device="cuda")
     tp_reference = TensorProductReference(irreps1,irreps2,target_irreps,nchannels, weights, device="cuda")
 
-    import torch.utils.benchmark as benchmark
-
     tp_reference.weighted_tp=True
     tp_cuda.weighed_tp = True
-    
-    #output_weighted = tp_cuda.forward(X1, X2)
-    
-    
+
     X1_r = X1
     X2_r = X2
-    
-    X1_r._requires_grad = True 
 
     cuda_weighted = tp_cuda.forward(X1, X2)
     
@@ -270,7 +263,13 @@ if __name__ == "__main__":
     s_reference = reference_weighted.sum()
     s_reference.backward()
 
-    print (X1.grad - X1_r.grad)
+    #print ("X1 grad diff")
+    #print (X1.grad - X1_r.grad)
+    
+    
+
+    #print ("X2 grad diff")
+    #print (X2.grad - X2_r.grad)
     
     # print ("CUDA vs Reference weighted TP difference")
     # print (output_weighted - reference_weighted)
@@ -282,9 +281,13 @@ if __name__ == "__main__":
 
     print("CUDA TP (weights)", t0.timeit(1000))
     
-    grad_input = torch.rand(output_weighted.shape).cuda()
+    grad_input = torch.rand(cuda_weighted.shape).cuda()
     
-    grad_out = tensor_product_cuda.weighted_backward_dX1(X1, tp_cuda.mu_1, X2, tp_cuda.mu_2, tp_cuda.cg_coeffs, tp_cuda.weights, tp_cuda.weight_indices, grad_input)
+    grad_out_X1 = tensor_product_cuda.weighted_backward_dX1(X1, tp_cuda.mu_1, X2, tp_cuda.mu_2, tp_cuda.cg_coeffs, tp_cuda.weights, tp_cuda.weight_indices, grad_input)
+    grad_out_X2 = tensor_product_cuda.weighted_backward_dX2(X1, tp_cuda.mu_1, X2, tp_cuda.mu_2, tp_cuda.cg_coeffs, tp_cuda.weights, tp_cuda.weight_indices, grad_input)
+    print (grad_out_X2[0].shape)
+    
+    print (grad_out_X2[0])
     
     t0_backward = benchmark.Timer(
         stmt='tp(X1, mu1, X2, mu2, coeffs, weights, weight_indices, grad_input)',
@@ -292,9 +295,16 @@ if __name__ == "__main__":
                  'weight_indices': tp_cuda.weight_indices, 'grad_input': grad_input, "tp": tensor_product_cuda.weighted_backward_dX1})
 
 
-    print("CUDA TP backward (weights)", t0_backward.timeit(1000))
+    print("CUDA TP backward X1 (weights)", t0_backward.timeit(1000))
     
- 
+    t0_backward = benchmark.Timer(
+        stmt='tp(X1, mu1, X2, mu2, coeffs, weights, weight_indices, grad_input)',
+        globals={'X1': X1, 'X2': X2, 'mu1': tp_cuda.mu_1, 'mu2': tp_cuda.mu_2, 'coeffs': tp_cuda.cg_coeffs, 'weights': tp_cuda.weights, 
+                 'weight_indices': tp_cuda.weight_indices, 'grad_input': grad_input, "tp": tensor_product_cuda.weighted_backward_dX2})
+
+
+    print("CUDA TP backward X2 (weights)", t0_backward.timeit(1000))
+
     import e3nn_jax as e3nn
 
     outj = e3nn.tensor_product(
@@ -302,5 +312,11 @@ if __name__ == "__main__":
         e3nn.IrrepsArray(irreps2, X2.cpu().detach().numpy()),
         filter_ir_out=e3nn.Irreps(target_irreps),
     )
-    print (outj.irreps)
+    
+    out = tp_reference.grad_dX2(X1, X2)
+    
+    print (X2_r.grad)
+    print (X2_r.grad.shape)
+    
+    print (out)
     

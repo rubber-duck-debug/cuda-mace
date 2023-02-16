@@ -166,6 +166,40 @@ class TensorProductReference(torch.nn.Module):
             return self.forward_weighted_tp(x, y)
         else:
             return self.forward_unweighted_tp(x, y)
+        
+    def grad_dX2(self, x, y):
+        
+        output_grad = torch.zeros_like(y, device=self.device)
+        
+        for i in range(x.shape[0]): # loop over edges
+
+            for ins, (mu1, mu2, mu3), cg_sparse in zip(self.instructions, self.mu_list, self.cg_sparse_list):
+                ir_in1 = self.irreps_in1[ins.i_in1].ir
+                ir_in2 = self.irreps_in2[ins.i_in2].ir
+                ir_out = self.irreps_out[ins.i_out].ir
+
+                offset1 = self.irreps_in1[: ins.i_in1].dim
+                offset2 = self.irreps_in2[: ins.i_in2].dim
+                
+                l1 = self.irreps_in1[ins.i_in1].ir.l
+                l2 = self.irreps_in2[ins.i_in2].ir.l
+                l3 = self.irreps_out[ins.i_out].ir.l
+                
+                cg_iteration = x[i, :, offset1 + mu1] * cg_sparse
+
+                output = torch.zeros(x.shape[1], ir_out.dim, device=self.device)
+
+                output.index_add_(1, mu3, cg_iteration)
+            
+                
+                test = torch.sum(self.weights[:, self.weight_indices[l1, l2, l3]][:, None] * output, dim=0)
+                
+                output_grad[i, :, offset2: offset2+test.shape[0]] += test
+                
+                #output[i] += self.weights[:, self.weight_indices[l1, l2, l3]] * torch.sum(cg_iteration, dim=-1)
+
+        return output_grad
+        
     
 
 if __name__ == "__main__":
