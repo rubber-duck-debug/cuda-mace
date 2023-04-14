@@ -53,11 +53,11 @@ equation_contract = "bc...i,bci->bc..."
 
 equation_contract_weights = '...ik, ekc -> ...iec'
 
-U3W_non_sparse_indices = torch.zeros((16,16, 3), dtype=torch.int32).cuda()
-U3W_num_nonsparse = torch.zeros((16, 16), dtype=torch.int32).cuda()
+U3W_non_sparse_indices = torch.zeros((16,16, 3), dtype=torch.uint8).cuda()
+U3W_num_nonsparse = torch.zeros((16, 16), dtype=torch.uint8).cuda()
 
-U2W_non_sparse_indices = torch.zeros((16,1), dtype=torch.int32).cuda()
-U2W_num_nonsparse = torch.zeros((16), dtype=torch.int32).cuda()
+U2W_non_sparse_indices = torch.zeros((16,1), dtype=torch.uint8).cuda()
+U2W_num_nonsparse = torch.zeros((16), dtype=torch.uint8).cuda()
 
 UW_tensors = {}
 for corr in range(correlation, 0, -1):
@@ -170,32 +170,23 @@ atom_check = 0
 #print(outputs_v1[2][atom_check])
 #print(outputs_v2[2][atom_check])
 
-#print (grad_v1[atom_check])
-print (grad_v2[atom_check])
-
 X_torch = X.transpose(-1, -2).contiguous()  # (21, 16, 128)
 
 start = time()
 for i in range (1000):
     outputs_v1, grad_v1 = mace_v1(U_tensors, W_tensors, X, Y, 3, 0, requires_grad = True)
+
 end = time()
 
 
-#print (grad_v1)
+print (grad_v1[atom_check])
 
 print (end - start)
 
 start = time()
 for i in range (1000):
-    grad = symmetric_contraction_derivative(UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,1,1,1,16,16,1)
-end = time()
+    grad = sparse_symmetric_contraction_derivative(U3W_non_sparse_indices, U3W_num_nonsparse, UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,1,1,1,4,16,2)
 
-print (grad[atom_check].transpose(-1, -2))
-print (end - start)
-
-start = time()
-for i in range (1000):
-    grad = sparse_symmetric_contraction_derivative(U3W_non_sparse_indices, U3W_num_nonsparse, UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,1,1,1,16,16,1)
 end = time()
 
 print (grad[atom_check].transpose(-1, -2))
