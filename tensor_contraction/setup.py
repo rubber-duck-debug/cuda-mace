@@ -36,8 +36,8 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
     
     tensor_contraction = CUDAExtension(
         '.cuda.tensor_contraction', [
-            'tensor_contraction/cuda/tensor_contraction.cpp',
-            'tensor_contraction/cuda/tensor_contraction_kernels.cu'
+            'cuda/tensor_contraction.cpp',
+            'cuda/tensor_contraction_kernels.cu'
         ],
          extra_compile_args={'cxx': [optimisation_level_host],
                             'nvcc': [optimisation_level_device]})
@@ -50,8 +50,8 @@ else:
     
 setup(
     name='tensor_contraction',
-    packages=['tensor_contraction',
-              'tensor_contraction.cuda'],
+    packages=['tests',
+              'cuda'],
     version=__version__,
     author=__author__,
     author_email=__email__,

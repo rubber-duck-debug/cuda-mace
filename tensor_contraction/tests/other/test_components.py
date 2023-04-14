@@ -115,62 +115,22 @@ for i in range(U2_torch.shape[0]):
 
         count +=1
 
-out_u3w3x = torch.zeros((21, 16, 16, 128), device='cuda', dtype=torch.float32)
-
-for i in range(X_torch.shape[0]):
-
-    atom_type = atom_types[i]
-
-    for j in range (UW_torch.shape[0]):
-        for k in range (UW_torch.shape[1]):
-
-            for l in range(U3W_num_nonsparse[j, k]):
-
-                ldx = U3W_non_sparse_indices[j,k,l]
-
-                out_u3w3x[i, j, k, :] += UW_torch[j,k,ldx, atom_type, :] * X_torch[i, ldx, :]
-
 print ("X:", X_torch.shape)
 
 UW2 = contract("...k,ekc->e...c", U_tensors[2], W_tensors[2])
 UW1 = contract("...k,ekc->e...c", U_tensors[1], W_tensors[1])
 
-print (UW1.shape, UW2.shape)
 
-for i in range (timings.shape[0]):
-    start = time()
-    out = correlation_3_main(UW_torch,
-                            U3W_non_sparse_indices,
-                            U3W_num_nonsparse,
-                            X_torch,
-                            atom_types_torch, 21, 16, 1, 32, 16, 1)
-                            
-
-    out = correlation_2_contraction(U2_non_sparse_indices, UW2, out, 
-                                    X_torch, atom_types_torch, 
-                                    21, 1, 1,32,16,1)
-
-    out = correlation_1_contraction(U1_non_sparse_indices, UW1, out, 
-                                    X_torch, atom_types_torch,
-                                    21, 1, 1,32,1,1)
-
-    torch.cuda.synchronize()
-    end = time()
-
-    timings[i] = end - start
-
-print (out)
-
-print ("cuda time: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
-
-equation_main = "...iec,bic,be -> b...c"
+correlation = 3
 equation_main_UW3 = '...ik, ekc -> ...iec'
+equation_main = "...iec,bic,be -> b...c"
 equation_weighting = "...k,ekc,be->b...c"
 equation_contract = "bi...c,bic->b...c"
 
-correlation = 3
-
 UW3_torch = contract(equation_main_UW3, U_tensors[3],W_tensors[3])
+
+
+print ("UW3 shape:", UW3_torch.shape)
 
 C_tensors = {}
 for corr in range(correlation - 1, 0, -1):
@@ -182,30 +142,49 @@ for corr in range(correlation - 1, 0, -1):
             Y_torch,
         )
 
+        print (c_tensor.shape)
+
         C_tensors[corr] = c_tensor
 
 
-for i in range (timings.shape[0]):
-    start = time()
-    
-    out = contract(
+out3_torch = contract(
                         equation_main,
                         UW3_torch,
                         X_torch,
                         Y_torch,
                     ) 
 
-    for corr in range(correlation - 1, 0, -1):
 
-        c_tensor = C_tensors[corr] + out
-        out = contract(equation_contract, c_tensor, X_torch)
+c_tensor = C_tensors[correlation-1] + out3_torch
+out2_torch = contract(equation_contract, c_tensor, X_torch)
 
-        torch.cuda.synchronize()
-        end = time()
+c_tensor = C_tensors[correlation-2] + out2_torch
+out1_torch = contract(equation_contract, c_tensor, X_torch)
 
-        timings[i] = end - start
+out3_cuda = correlation_3_main(UW3_torch,
+                            U3W_non_sparse_indices,
+                            U3W_num_nonsparse,
+                            X_torch,
+                            atom_types_torch, 21, 16, 1, 32, 16, 1)
 
 
-print (out)
+print (UW2.shape)
+out2_cuda = correlation_2_contraction(U2_non_sparse_indices, UW2, out3_cuda, 
+                                    X_torch, atom_types_torch, 
+                                    21, 1, 1,32,16,1)
 
-print ("torch time: %.5f ms" % (np.mean(timings[50:]) * 1000.0))
+                    
+out1_cuda = correlation_1_contraction(U1_non_sparse_indices, UW1, out2_torch, 
+                                    X_torch, atom_types_torch,
+                                    21, 1, 1,32,1,1)
+
+
+
+idx = torch.where(out3_cuda - out3_torch > 1e-7)
+
+print (idx)
+
+idx = torch.where(out1_cuda - out1_torch > 1e-7)
+
+print (idx)
+
