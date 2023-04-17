@@ -33,7 +33,7 @@ __global__ void uw3_contraction_kernel(torch::PackedTensorAccessor32<uint8_t, 3,
 	size_t offset = 0;
 
 	float *buffer_X = reinterpret_cast<float *>(buffer + offset);
-	offset += nchannels * X.size(1) * sizeof(float);
+	offset += blockDim.x * X.size(1) * sizeof(float);
 	int * buffer_num_nonzeros = reinterpret_cast<int *>(buffer + offset);
 	offset += UW3_num_nonzeros.size(0) * UW3_num_nonzeros.size(1) * sizeof(int);
 	int * buffer_indices = reinterpret_cast<int *>(buffer + offset);
@@ -55,24 +55,21 @@ __global__ void uw3_contraction_kernel(torch::PackedTensorAccessor32<uint8_t, 3,
 
 	for (int atom_id = blockIdx.x; atom_id < natoms; atom_id += gridDim.x) {
 
-		for (int channel_id = threadIdx.x; channel_id < nchannels; channel_id += blockDim.x) {
-
-			for (int i = threadIdx.y; i < nl; i += blockDim.y) {
-				buffer_X[i * nchannels + channel_id] = X[atom_id][i][channel_id];
-			}
-		}
-
-		__syncthreads();
-
-		uint8_t atom_type = atom_types[atom_id];
+		int atom_type = atom_types[atom_id];
 
 		for (int channel_id = threadIdx.x; channel_id < nchannels; channel_id += blockDim.x) {
 			
+			for (int i = threadIdx.y; i < nl; i += blockDim.y) {
+				buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][i][channel_id];
+			}
+
+			__syncthreads();
+
 			float sum1 = 0.0;
 
 			for (int i = threadIdx.z; i < nl; i +=blockDim.z) {
 				
-				float Xi = buffer_X[i * nl + channel_id];
+				float Xi = buffer_X[i * nl + threadIdx.x];
 
 				float uw2_i = UW1[i][atom_type][channel_id];
 				
@@ -86,7 +83,7 @@ __global__ void uw3_contraction_kernel(torch::PackedTensorAccessor32<uint8_t, 3,
 					//float uw2_ij = 0.0;
 					float uw2_ij = UW2[i][j][atom_type][channel_id];
 
-					float Xj = buffer_X[j * nl + channel_id];
+					float Xj = buffer_X[j * nl + threadIdx.x];
 
 					float sum3 = 0.0; // uw2_ij;
 
@@ -95,7 +92,7 @@ __global__ void uw3_contraction_kernel(torch::PackedTensorAccessor32<uint8_t, 3,
 						//int kdx = UW3_indices[i][j][k];
 						int kdx = buffer_indices[i * (nl * 3) + (k * nl) + j];
 
-						float Xk = buffer_X[kdx * nl + channel_id];
+						float Xk = buffer_X[kdx * nl + threadIdx.x];
 						float uw3_k = UW3[i][j][kdx][atom_type][channel_id];
 
 						sum3 += Xk * uw3_k;
@@ -211,7 +208,7 @@ std::vector<torch::Tensor>  uw3_contraction(
 
 	dim3 grid(nthreadX, nthreadY, nthreadZ);
 
-	size_t shared_mem_amount = X.size(2) * X.size(1) * sizeof(float); // X storage
+	size_t shared_mem_amount = nthreadX * X.size(1) * sizeof(float); // X storage
 	shared_mem_amount +=  UW3_num_nonzeros.numel() * sizeof(int);
 	shared_mem_amount +=  UW3_indices.numel() * sizeof(int);
 
