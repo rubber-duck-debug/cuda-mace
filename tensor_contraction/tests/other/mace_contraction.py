@@ -234,19 +234,20 @@ atom_types_torch_i8 = atom_types_torch.type(torch.uint8)
 
 print (UW3T.shape)
 
-start = time()
+
 
 
 print (outputs_v1[1][atom_check])
-
+start = time()
 for i in range (1000):
-    out = uw3_contraction(U3W_non_sparse_indices.type(torch.uint8), U3W_num_nonsparse.type(torch.uint8), UW_tensors[3], UW_tensors[2], UW_tensors[1], atom_types_torch_i8, X_torch, X.shape[0], 1, 1, 32, 1, 1)
+    out = uw3_contraction(UW3T_indices, UW3T_num_nonzeros, UW3T, UW_tensors[2], UW_tensors[1], atom_types_torch_i8, X_torch, X.shape[0], 1, 1, 32, 4, 4)
 
-
-print (out[2][atom_check])
 end = time()
 
-#print (out)
+
 print (end - start)
+
+print (out[2][atom_check])
+
 
 
