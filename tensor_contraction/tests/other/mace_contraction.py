@@ -3,6 +3,7 @@ from time import time
 from opt_einsum import contract
 import torch
 from tensor_contraction.cuda.tensor_contraction import *
+from tensor_contraction.cuda.symmetric_contraction import *
 from numba import cuda
 import logging
 import traceback
@@ -37,7 +38,7 @@ correlation = 3
 U_tensors = {3: U_3, 2:  U_2, 1: U_1}
 W_tensors = {3: W_3, 2: W_2, 1: W_1}
 
-nrepeats = 50
+nrepeats = 1
 
 X = torch.from_numpy(X).float().cuda().repeat(nrepeats, 1, 1)
 Y = torch.from_numpy(Y).float().cuda().repeat(nrepeats, 1)
@@ -178,17 +179,74 @@ for i in range (1000):
 
 end = time()
 
-
-print (grad_v1[atom_check])
-
 print (end - start)
 
 start = time()
 for i in range (1000):
-    grad = sparse_symmetric_contraction_derivative(U3W_non_sparse_indices, U3W_num_nonsparse, UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,1,1,1,4,16,2)
+
+    out = correlation_3_main(UW_tensors[3], U3W_non_sparse_indices, U3W_num_nonsparse, X_torch, atom_types_torch,X_torch.shape[0],16,1,32,4,1)
+    #out = sparse_symmetric_contraction(U3W_non_sparse_indices, U3W_num_nonsparse, UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,1,1,1,8,16,1)
 
 end = time()
 
+print ("forwards only:", end - start)
+
+start = time()
+for i in range (1000):
+    out = sparse_symmetric_contraction(U3W_non_sparse_indices, U3W_num_nonsparse, UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,1,1,1,32,16,1)
+
+end = time()
+
+print ("forwards only:", end - start)
+
+start = time()
+for i in range (1000):
+    out, grad = sparse_symmetric_contraction_derivative(U3W_non_sparse_indices, U3W_num_nonsparse, UW_tensors[3], UW_tensors[2], UW_tensors[1], X_torch, atom_types_torch,X_torch.shape[0],1,1,8,16,1)
+
+end = time()
+
+print ("outputs 1")
+print (outputs_v1[1][atom_check])
+print (out[atom_check])
+
+print ("grads")
+print (grad_v1[atom_check])
 print (grad[atom_check].transpose(-1, -2))
 print (end - start)
+
+UW3T = UW_tensors[3].transpose(0, 1).transpose(1, 2).contiguous()
+UW3T_indices = torch.zeros((16,16, 3), dtype=torch.uint8).cuda()
+UW3T_num_nonzeros = torch.zeros((16, 16), dtype=torch.uint8).cuda()
+
+for i in range(UW3T.shape[0]):
+    for j in range(UW3T.shape[1]):
+
+        idx, edx, ldx  = torch.where(UW3T[i, j] != 0.0)
+        
+        idx = torch.unique(idx)
+
+        if (idx.shape[0] > 0):
+
+            UW3T_indices[i, j, :idx.shape[0]] = idx
+            UW3T_num_nonzeros[i, j] = idx.shape[0]
+
+atom_types_torch_i8 = atom_types_torch.type(torch.uint8)
+
+print (UW3T.shape)
+
+start = time()
+
+
+print (outputs_v1[1][atom_check])
+
+for i in range (1000):
+    out = uw3_contraction(U3W_non_sparse_indices.type(torch.uint8), U3W_num_nonsparse.type(torch.uint8), UW_tensors[3], UW_tensors[2], UW_tensors[1], atom_types_torch_i8, X_torch, X.shape[0], 1, 1, 32, 1, 1)
+
+
+print (out[2][atom_check])
+end = time()
+
+#print (out)
+print (end - start)
+
 

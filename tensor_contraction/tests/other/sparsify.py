@@ -2,7 +2,7 @@ import numpy as np
 from time import time
 from opt_einsum import contract
 import torch
-from tensor_contraction.cuda.tensor_contraction import *
+#from tensor_contraction.cuda.tensor_contraction import *
 from numba import cuda
 import logging
 import traceback
@@ -36,10 +36,16 @@ equation_main = "...ik,ekc,bci,be -> bc..."
 equation_weighting = "...k,ekc,be->bc..."
 equation_contract = "bc...i,bci->bc..."
             
+equation_contract_weights = '...ik, ekc -> ...iec'
 correlation = 3
 
 U_tensors = {3: U_3, 2:  U_2, 1: U_1}
 W_tensors = {3: W_3, 2: W_2, 1: W_1}
+
+UW_tensors = {}
+for corr in range(correlation, 0, -1):
+    uw_torch = contract(equation_contract_weights, U_tensors[corr],W_tensors[corr])
+    UW_tensors[corr] = uw_torch
 
 nrepeats = 50
 
@@ -54,19 +60,29 @@ print (X.shape, Y.shape, atom_types.shape)
 
 test_dict = {}
 
-for i in range(23):
-    test_dict[i] = []
 
-for i in range(U_tensors[3].shape[0]):
-    for j in range(U_tensors[3].shape[1]):
+UW3_T = UW_tensors[3].transpose(0, 1).transpose(1, 2).contiguous()
 
-        jdx, kdx   = torch.where(U_tensors[3][i, j] != 0.0)
+UW3_T = UW3_T[:, :, :,:,  0]
+UW_tensors[3] = UW_tensors[3][:, :, :, :, 0]
+
+for i in range(UW3_T.shape[0]):
+    for j in range(UW3_T.shape[1]):
+
+        kdxT, _   = torch.where(UW3_T[i, j] != 0.0)
         
-        for k in range(kdx.shape[0]):
-            test_dict[kdx[k].item()].append([i, j, jdx[k].item()])
-        
-s = 0
-for i in range(23):
-    s += len(test_dict[i])
+        kdxT = torch.unique(kdxT)
 
-print (s)
+        kdx, edx   = torch.where(UW_tensors[3][i, j] != 0.0)
+        
+        kdx = torch.unique(kdx)
+        
+        print (i, j, kdx, kdxT)
+
+print (torch.count_nonzero(UW_tensors[3]), torch.numel(UW_tensors[3]))
+
+#print (UW3_T)
+#print ()
+
+print (UW_tensors[3][15,14,7], UW3_T[14,7,15])
+

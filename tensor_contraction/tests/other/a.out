@@ -1,5 +1,0 @@
-uw_torch 3 torch.Size([16, 16, 16, 3, 128])
-uw_torch 2 torch.Size([16, 16, 3, 128])
-uw_torch 1 torch.Size([16, 3, 128])
-torch.Size([16, 16, 16, 3, 128]) torch.float32 torch.Size([16, 16, 3, 128]) torch.float32 torch.Size([16, 3, 128]) torch.float32
-torch.Size([21, 16, 128]) torch.float32 torch.Size([21]) torch.int32

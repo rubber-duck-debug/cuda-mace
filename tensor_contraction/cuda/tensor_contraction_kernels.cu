@@ -8,8 +8,8 @@ using namespace std;
 
 __global__ void correlation_3_main_kernel(
 	const torch::PackedTensorAccessor32<float, 5, torch::RestrictPtrTraits> UW,
-	const torch::PackedTensorAccessor32<int, 3, torch::RestrictPtrTraits> UW_nonsparse_indices,
-	const torch::PackedTensorAccessor32<int, 2, torch::RestrictPtrTraits> UW_num_nonzeros,
+	const torch::PackedTensorAccessor32<uint8_t, 3, torch::RestrictPtrTraits> UW_nonsparse_indices,
+	const torch::PackedTensorAccessor32<uint8_t, 2, torch::RestrictPtrTraits> UW_num_nonzeros,
 	const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> X,
 	const torch::PackedTensorAccessor32<int, 1, torch::RestrictPtrTraits> atom_types,
 	torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> out,
@@ -204,8 +204,8 @@ void correlation_3_main_gpu(
 
 	correlation_3_main_kernel<<<blocks, grid, buffer_size>>>(
 		UW.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
-		UW_nonsparse_indices.packed_accessor32<int, 3, torch::RestrictPtrTraits>(),
-		UW_nonsparse_num_nonzeros.packed_accessor32<int, 2, torch::RestrictPtrTraits>(),
+		UW_nonsparse_indices.packed_accessor32<uint8_t, 3, torch::RestrictPtrTraits>(),
+		UW_nonsparse_num_nonzeros.packed_accessor32<uint8_t, 2, torch::RestrictPtrTraits>(),
 		X.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
 		atom_types.packed_accessor32<int, 1, torch::RestrictPtrTraits>(),
 		out.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
@@ -578,7 +578,8 @@ __global__ void symmetric_contraction_derivative_kernel(
 }
 
 
-__global__ void sparse_symmetric_contraction_derivative_kernel(
+
+__global__ void sparse_symmetric_contraction_kernel(
 	const torch::PackedTensorAccessor32<uint8_t, 3, torch::RestrictPtrTraits> UW3_nonsparse_indices,
 	const torch::PackedTensorAccessor32<uint8_t, 2, torch::RestrictPtrTraits> UW3_num_nonsparse,
 	const torch::PackedTensorAccessor32<float, 5, torch::RestrictPtrTraits> UW3,
@@ -586,7 +587,7 @@ __global__ void sparse_symmetric_contraction_derivative_kernel(
 	const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> UW1,
 	const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> X,
 	const torch::PackedTensorAccessor32<int, 1, torch::RestrictPtrTraits> atom_types,
-	torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> grad_out)
+	torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> out)
 {
 
 	extern __shared__ char buffer[];
@@ -595,8 +596,9 @@ __global__ void sparse_symmetric_contraction_derivative_kernel(
 
 	float *buffer_X = reinterpret_cast<float *>(buffer + offset);
 	offset += blockDim.z * blockDim.x * X.size(1) * sizeof(float);
-	float *buffer_grad = reinterpret_cast<float *>(buffer + offset);
-	offset += blockDim.z * blockDim.x * X.size(1) * sizeof(float);
+	float *buffer_out = reinterpret_cast<float *>(buffer + offset);
+	offset += blockDim.z * blockDim.x * sizeof(float);
+
 	uint8_t * buffer_uw3_num_nonsparse =  reinterpret_cast<uint8_t *>(buffer + offset);
 	offset +=  X.size(1) * X.size(1)  * sizeof(uint8_t);
 	uint8_t * buffer_uw3_nonsparse_indices =  reinterpret_cast<uint8_t *>(buffer + offset);
@@ -620,18 +622,164 @@ __global__ void sparse_symmetric_contraction_derivative_kernel(
 
 	int atom_idx = blockIdx.x * blockDim.z + threadIdx.z;
 
-	for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
-		for (int j = threadIdx.x; j < X.size(1); j += blockDim.x) {
+	if (threadIdx.z == 0) {
+		for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
+			for (int j = threadIdx.x; j < X.size(1); j += blockDim.x) {
 
-			int nsparse = UW3_num_nonsparse[i][j];
+				int nsparse = UW3_num_nonsparse[i][j];
 
-			buffer_uw3_num_nonsparse[i * X.size(1) + j] = nsparse;
+				buffer_uw3_num_nonsparse[i * X.size(1) + j] = nsparse;
 
-			// 16, 16, 3
-			for (int k = 0; k < nsparse; k ++) {
-				buffer_uw3_nonsparse_indices[i * (X.size(1) * 3) + (k * X.size(1)) + j] = UW3_nonsparse_indices[i][j][k]; //todo account for k here
+				// 16, 16, 3
+				for (int k = 0; k < nsparse; k ++) {
+					buffer_uw3_nonsparse_indices[i * (X.size(1) * 3) + (k * X.size(1)) + j] = UW3_nonsparse_indices[i][j][k]; //todo account for k here
+				}
+			} 
+		}
+	}
+
+	__syncthreads();
+
+	int element = 0;
+
+	if (atom_idx < X.size(0)){
+		element = atom_types[atom_idx];
+	}
+
+	for (int r = threadIdx.x; r < X.size(2); r+= blockDim.x){
+		
+		for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
+
+			float Xir = 0.0;
+
+			if (atom_idx < X.size(0)){
+				 Xir = X[atom_idx][i][r];
 			}
-		} 
+
+			buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x] =  Xir;
+		}
+
+		buffer_out[threadIdx.z * blockDim.x + threadIdx.x] = 0.0;
+		
+		__syncthreads();
+
+		float output_1 = 0.0;
+
+		for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
+			
+			float Xi = buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x]; //X[atom_idx][j][r];
+
+			float uw1_i =  UW1[i][element][r];
+
+			float deriv1_tmp = uw1_i;
+
+			float output_2 = 0.0;
+
+			for (int j = 0; j < X.size(1); j ++) {
+								
+				uint8_t uw3_num_nonsparse = buffer_uw3_num_nonsparse[i * X.size(1) + j];
+
+				float Xj = buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + j * blockDim.x + threadIdx.x]; //X[atom_idx][j][r];
+
+				float uw2_ij  = UW2[i][j][element][r]; // UW2 is symmetric in [i, j]
+
+				float output_3 = 0.0;
+
+				for (uint8_t k = 0; k < uw3_num_nonsparse; k ++) {
+
+					uint8_t kdx1 = buffer_uw3_nonsparse_indices[i * (X.size(1) * 3) + (k * X.size(1)) + j];
+
+					float Xk1 = buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + kdx1 * blockDim.x + threadIdx.x];
+
+					float uw3_ijk = UW3[i][j][kdx1][element][r]; 
+
+
+					output_3 += uw3_ijk * Xk1;
+				}
+
+				output_2 += (output_3 + uw2_ij) * Xj;
+
+			}
+
+			output_1 += (output_2 + uw1_i) * Xi;
+
+		}
+		
+		atomicAdd(&buffer_out[threadIdx.z * blockDim.x + threadIdx.x], output_1); 
+
+		__syncthreads();
+
+
+		if (atom_idx < X.size(0)) {
+
+			if (threadIdx.y == 0) {
+				out[atom_idx][r] = buffer_out[threadIdx.z * blockDim.x + threadIdx.x];
+			}
+		}
+	}
+}
+
+
+__global__ void sparse_symmetric_contraction_derivative_kernel(
+	const torch::PackedTensorAccessor32<uint8_t, 3, torch::RestrictPtrTraits> UW3_nonsparse_indices,
+	const torch::PackedTensorAccessor32<uint8_t, 2, torch::RestrictPtrTraits> UW3_num_nonsparse,
+	const torch::PackedTensorAccessor32<float, 5, torch::RestrictPtrTraits> UW3,
+	const torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> UW2,
+	const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> UW1,
+	const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> X,
+	const torch::PackedTensorAccessor32<int, 1, torch::RestrictPtrTraits> atom_types,
+	torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> out,
+	torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> grad_out)
+{
+
+	extern __shared__ char buffer[];
+
+	size_t offset = 0;
+
+	float *buffer_X = reinterpret_cast<float *>(buffer + offset);
+	offset += blockDim.z * blockDim.x * X.size(1) * sizeof(float);
+	float *buffer_grad = reinterpret_cast<float *>(buffer + offset);
+	offset += blockDim.z * blockDim.x * X.size(1) * sizeof(float);
+	float *buffer_out = reinterpret_cast<float *>(buffer + offset);
+	offset += blockDim.z * blockDim.x * sizeof(float);
+
+	uint8_t * buffer_uw3_num_nonsparse =  reinterpret_cast<uint8_t *>(buffer + offset);
+	offset +=  X.size(1) * X.size(1)  * sizeof(uint8_t);
+	uint8_t * buffer_uw3_nonsparse_indices =  reinterpret_cast<uint8_t *>(buffer + offset);
+	offset +=  3 * X.size(1) * X.size(1)  * sizeof(uint8_t);
+
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	int tz = threadIdx.z;
+
+	int bx = blockIdx.x;
+	int by = blockIdx.y;
+	int bz = blockIdx.z;
+
+	int n_threads_x = blockDim.x;
+	int n_threads_y = blockDim.y;
+	int n_threads_z = blockDim.z;
+
+	int n_blocks_x = gridDim.x;
+	int n_blocks_y = gridDim.y;
+	int n_blocks_z = gridDim.z;
+
+	int atom_idx = blockIdx.x * blockDim.z + threadIdx.z;
+
+	if (threadIdx.z == 0) {
+		for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
+			for (int j = threadIdx.x; j < X.size(1); j += blockDim.x) {
+
+				int nsparse = UW3_num_nonsparse[i][j];
+
+				buffer_uw3_num_nonsparse[i * X.size(1) + j] = nsparse;
+
+				// 16, 16, 3
+				for (int k = 0; k < nsparse; k ++) {
+					buffer_uw3_nonsparse_indices[i * (X.size(1) * 3) + (k * X.size(1)) + j] = UW3_nonsparse_indices[i][j][k]; //todo account for k here
+				}
+			} 
+		}
 	}
 
 	__syncthreads();
@@ -655,30 +803,37 @@ __global__ void sparse_symmetric_contraction_derivative_kernel(
 			buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x] =  Xir;
 			buffer_grad[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x] = 0.0;
 		}
+
+		buffer_out[threadIdx.z * blockDim.x + threadIdx.x] = 0.0;
 		
 		__syncthreads();
 
-		for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
+		float output_1 = 0.0;
 
-			float deriv1_tmp = UW1[i][element][r];
+		for (int i = threadIdx.y; i < X.size(1); i += blockDim.y) {
+			
+			float Xi = buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x]; //X[atom_idx][j][r];
+
+			float uw1_i =  UW1[i][element][r];
+
+			float deriv1_tmp = uw1_i;
+
+			float output_2 = 0.0;
 
 			for (int j = 0; j < X.size(1); j ++) {
-				
-				float uw2_ij  = UW2[i][j][element][r]; // UW2 is symmetric in [i, j]
-				//float uw2_ji  = UW2[j][i][element][r];
-
+								
 				uint8_t uw3_num_nonsparse = buffer_uw3_num_nonsparse[i * X.size(1) + j];
-
-				float  deriv_1_j_tmp = uw2_ij;
-				float deriv_1_j_tmp2 = uw2_ij;
 
 				float Xj = buffer_X[threadIdx.z * (X.size(1) * blockDim.x) + j * blockDim.x + threadIdx.x]; //X[atom_idx][j][r];
 
+				float uw2_ij  = UW2[i][j][element][r]; // UW2 is symmetric in [i, j]
+
+				float deriv_1_j_tmp = uw2_ij ;
+				float deriv_1_j_tmp2 = uw2_ij ;
+
+				float output_3 = 0.0;
+
 				for (uint8_t k = 0; k < uw3_num_nonsparse; k ++) {
-					
-					//buffer_uw3_nonsparse_indices[i * (X.size(1) * 3) + (k * X.size(1)) + j] 
-					//int kdx1 = UW3_nonsparse_indices[i][j][k]; // can move these to shared mem
-					//int kdx2 = UW3_nonsparse_indices[j][i][k];
 
 					uint8_t kdx1 = buffer_uw3_nonsparse_indices[i * (X.size(1) * 3) + (k * X.size(1)) + j];
 					uint8_t kdx2 = buffer_uw3_nonsparse_indices[j * (X.size(1) * 3) + (k * X.size(1)) + i];
@@ -690,10 +845,13 @@ __global__ void sparse_symmetric_contraction_derivative_kernel(
 
 					float uw3_jik = UW3[j][i][kdx2][element][r];
 
+					output_3 += uw3_ijk * Xk1;
+
 					deriv_1_j_tmp +=uw3_ijk * Xk1;
 					deriv_1_j_tmp2 += uw3_jik * Xk2;
-
 				}
+
+				output_2 += (output_3 + uw2_ij) * Xj;
 
 				for (int k = 0; k < X.size(1); k ++) { // not sure if we can avoid explicitly going over all jki pairs here...
 
@@ -704,27 +862,32 @@ __global__ void sparse_symmetric_contraction_derivative_kernel(
 					deriv_1_j_tmp2 +=uw3_jki* Xk;
 
 					//deriv_1_j_tmp2 += UW3[j][k][i][element][r] * Xk + UW3[i][j][k][element][r] * Xk;
-				}
+				} 
 
-				deriv_1_j_tmp *= Xj;
-				deriv_1_j_tmp2 *= Xj;
-
-				deriv1_tmp +=  (deriv_1_j_tmp + deriv_1_j_tmp2);
-
+				deriv1_tmp +=  (deriv_1_j_tmp + deriv_1_j_tmp2) * Xj;
 			}
-			atomicAdd(&buffer_grad[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x],  deriv1_tmp); // reduce over threadIdx.z dimension
+
+			output_1 += (output_2 + uw1_i) * Xi;
+
+			buffer_grad[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x] =  deriv1_tmp;
 		}
+		
+		atomicAdd(&buffer_out[threadIdx.z * blockDim.x + threadIdx.x], output_1); 
 
 		__syncthreads();
 
 
 		if (atom_idx < X.size(0)) {
+
 			for (int i = threadIdx.y; i < X.size(1); i +=blockDim.y) {
 				grad_out[atom_idx][i][r] = buffer_grad[threadIdx.z * (X.size(1) * blockDim.x) + i * blockDim.x + threadIdx.x];
 			}
+
+			if (threadIdx.y == 0) {
+				out[atom_idx][r] = buffer_out[threadIdx.z * blockDim.x + threadIdx.x];
+			}
 		}
 	}
-	
 }
 
 
@@ -768,6 +931,7 @@ void sparse_symmetric_contraction_derivative_gpu(
 	torch::Tensor UW1,
 	torch::Tensor X,
 	torch::Tensor atom_types,
+	torch::Tensor out,
 	torch::Tensor grad_out,
 	int nblockX = 1,
 	int nblockY = 1,
@@ -785,6 +949,7 @@ void sparse_symmetric_contraction_derivative_gpu(
 
 	size_t shared_mem_amount = nthreadZ * nthreadX * X.size(1) * sizeof(float); // X storage
 	shared_mem_amount += nthreadZ * nthreadX * X.size(1) * sizeof(float); // grad stoage
+	shared_mem_amount += nthreadZ * nthreadX * sizeof(float); // output stoage
 	shared_mem_amount += X.size(1) * X.size(1) * sizeof(uint8_t); // uw3_num_nonsparse stoage
 	shared_mem_amount += 3 * X.size(1) * X.size(1) * sizeof(uint8_t); // uw3_nonsparse_indices storage
 
@@ -796,7 +961,50 @@ void sparse_symmetric_contraction_derivative_gpu(
 		UW1.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
 		X.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
 		atom_types.packed_accessor32<int, 1, torch::RestrictPtrTraits>(),
+		out.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
 		grad_out.packed_accessor32<float, 3, torch::RestrictPtrTraits>());
+
+	cudaDeviceSynchronize();
+}
+
+
+void sparse_symmetric_contraction_gpu(
+	torch::Tensor UW3_nonsparse_indices,
+	torch::Tensor UW3_num_nonsparse,
+	torch::Tensor UW3,
+	torch::Tensor UW2,
+	torch::Tensor UW1,
+	torch::Tensor X,
+	torch::Tensor atom_types,
+	torch::Tensor out,
+	int nblockX = 1,
+	int nblockY = 1,
+	int nblockZ = 1,
+	int nthreadX = 64,
+	int nthreadY = 1,
+	int nthreadZ = 1)
+{
+
+	auto find_num_blocks = [](int x, int bdim) { return (x + bdim - 1) / bdim; };
+
+    dim3 block_dim(find_num_blocks(X.size(0), nthreadZ));
+
+	dim3 grid(nthreadX, nthreadY, nthreadZ);
+
+	size_t shared_mem_amount = nthreadZ * nthreadX * X.size(1) * sizeof(float); // X storage
+	shared_mem_amount += nthreadZ * nthreadX * sizeof(float); // output stoage
+	shared_mem_amount += X.size(1) * X.size(1) * sizeof(uint8_t); // uw3_num_nonsparse stoage
+	shared_mem_amount += 3 * X.size(1) * X.size(1) * sizeof(uint8_t); // uw3_nonsparse_indices storage
+
+	sparse_symmetric_contraction_kernel<<<block_dim, grid, shared_mem_amount>>>(
+		UW3_nonsparse_indices.packed_accessor32<uint8_t, 3, torch::RestrictPtrTraits>(),
+		UW3_num_nonsparse.packed_accessor32<uint8_t, 2, torch::RestrictPtrTraits>(),
+		UW3.packed_accessor32<float, 5, torch::RestrictPtrTraits>(),
+		UW2.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
+		UW1.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+		X.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
+		atom_types.packed_accessor32<int, 1, torch::RestrictPtrTraits>(),
+		out.packed_accessor32<float, 2, torch::RestrictPtrTraits>());
 
 	cudaDeviceSynchronize();
 }

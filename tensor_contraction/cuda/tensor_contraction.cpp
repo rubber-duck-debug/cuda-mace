@@ -89,7 +89,24 @@ void sparse_symmetric_contraction_derivative_gpu(
 	torch::Tensor UW1,
 	torch::Tensor X,
 	torch::Tensor atom_types,
+	torch::Tensor out,
 	torch::Tensor grad_out,
+	int nblockX = 1,
+	int nblockY = 1,
+	int nblockZ = 1,
+	int nthreadX = 64,
+	int nthreadY = 1,
+	int nthreadZ = 1);
+
+void sparse_symmetric_contraction_gpu(
+	torch::Tensor UW3_nonsparse_indices,
+	torch::Tensor UW3_num_nonsparse,
+	torch::Tensor UW3,
+	torch::Tensor UW2,
+	torch::Tensor UW1,
+	torch::Tensor X,
+	torch::Tensor atom_types,
+	torch::Tensor out,
 	int nblockX = 1,
 	int nblockY = 1,
 	int nblockZ = 1,
@@ -131,7 +148,8 @@ torch::Tensor symmetric_contraction_derivative(
 }
 
 
-torch::Tensor sparse_symmetric_contraction_derivative(
+
+torch::Tensor sparse_symmetric_contraction(
 	torch::Tensor UW3_nonsparse_indices,
 	torch::Tensor UW3_num_nonsparse,
 	torch::Tensor UW3,
@@ -146,23 +164,54 @@ torch::Tensor sparse_symmetric_contraction_derivative(
 	int nthreadY = 1,
 	int nthreadZ = 1)
 {
-
 	int bx = nblockX;
 
 	if (bx == 1)
 	{
 		bx = X.size(0);
 	}
+	auto options = torch::TensorOptions().dtype(torch::kFloat32).layout(torch::kStrided).device(torch::kCUDA);
 
+	torch::Tensor out = torch::empty({X.size(0), X.size(2)}, options);
+
+	sparse_symmetric_contraction_gpu(UW3_nonsparse_indices, UW3_num_nonsparse, UW3, UW2, UW1,
+									X, atom_types, out, bx, nblockY, nblockZ, nthreadX, nthreadY, nthreadZ);
+
+
+	return out;
+}
+
+std::vector<torch::Tensor> sparse_symmetric_contraction_derivative(
+	torch::Tensor UW3_nonsparse_indices,
+	torch::Tensor UW3_num_nonsparse,
+	torch::Tensor UW3,
+	torch::Tensor UW2,
+	torch::Tensor UW1,
+	torch::Tensor X,
+	torch::Tensor atom_types,
+	int nblockX = 1,
+	int nblockY = 1,
+	int nblockZ = 1,
+	int nthreadX = 64,
+	int nthreadY = 1,
+	int nthreadZ = 1)
+{
+	int bx = nblockX;
+
+	if (bx == 1)
+	{
+		bx = X.size(0);
+	}
 	auto options = torch::TensorOptions().dtype(torch::kFloat32).layout(torch::kStrided).device(torch::kCUDA);
 
 	torch::Tensor grad = torch::empty_like(X, options);
-	
+	torch::Tensor out = torch::empty({X.size(0), X.size(2)}, options);
+
 	sparse_symmetric_contraction_derivative_gpu(UW3_nonsparse_indices, UW3_num_nonsparse, UW3, UW2, UW1,
-									X, atom_types,  grad, bx, nblockY, nblockZ, nthreadX, nthreadY, nthreadZ);
+									X, atom_types, out, grad, bx, nblockY, nblockZ, nthreadX, nthreadY, nthreadZ);
 
 
-	return grad;
+	return {out, grad};
 }
 
 std::vector<torch::Tensor> correlation_3_main_and_grad(
@@ -349,5 +398,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 	m.def("symmetric_contraction_derivative", &symmetric_contraction_derivative, "");
 	
 	m.def("sparse_symmetric_contraction_derivative", &sparse_symmetric_contraction_derivative, "");
+	m.def("sparse_symmetric_contraction", &sparse_symmetric_contraction, "");
 
 }

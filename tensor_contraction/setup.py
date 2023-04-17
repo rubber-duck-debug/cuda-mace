@@ -18,8 +18,8 @@ __url__ = "TODO"
 # optimisation_level_host = '-g'
 # optimisation_level_device = '-G'
 
-optimisation_level_host = '-O2'
-optimisation_level_device = '-O2'
+optimisation_level_host = '-O3'
+optimisation_level_device = '-O3'
 
 
 def readme():
@@ -41,8 +41,16 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         ],
          extra_compile_args={'cxx': [optimisation_level_host],
                             'nvcc': [optimisation_level_device]})
+
+    symmetric_contraction = CUDAExtension(
+        '.cuda.symmetric_contraction', [
+            'cuda/symmetric_contraction_kernels.cu'
+        ],
+         extra_compile_args={'cxx': [optimisation_level_host],
+                            'nvcc': [optimisation_level_device]})
     
     ext_modules.append(tensor_contraction)
+    ext_modules.append(symmetric_contraction)
     
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")

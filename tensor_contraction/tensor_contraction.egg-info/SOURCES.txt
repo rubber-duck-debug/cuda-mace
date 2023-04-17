@@ -1,6 +1,7 @@
 README.md
 setup.py
 cuda/__init__.py
+cuda/symmetric_contraction_kernels.cu
 cuda/tensor_contraction.cpp
 cuda/tensor_contraction_kernels.cu
 tensor_contraction.egg-info/PKG-INFO
