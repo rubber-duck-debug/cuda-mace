@@ -18,8 +18,8 @@ __url__ = "TODO"
 # optimisation_level_host = '-g'
 # optimisation_level_device = '-G'
 
-optimisation_level_host = '-O3'
-optimisation_level_device = '-O3'
+optimisation_level_host = '-O2'
+optimisation_level_device = '-O2'
 
 
 def readme():
@@ -50,7 +50,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
                             'nvcc': [optimisation_level_device]})
     
     ext_modules.append(tensor_contraction)
-    ext_modules.append(symmetric_contraction)
+    #ext_modules.append(symmetric_contraction)
     
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")

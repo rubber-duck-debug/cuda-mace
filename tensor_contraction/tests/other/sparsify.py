@@ -61,28 +61,20 @@ print (X.shape, Y.shape, atom_types.shape)
 test_dict = {}
 
 
-UW3_T = UW_tensors[3].transpose(0, 1).transpose(1, 2).contiguous()
+for i in range(U_3.shape[0]):
+    for j in range(U_3.shape[1]):
 
-UW3_T = UW3_T[:, :, :,:,  0]
-UW_tensors[3] = UW_tensors[3][:, :, :, :, 0]
-
-for i in range(UW3_T.shape[0]):
-    for j in range(UW3_T.shape[1]):
-
-        kdxT, _   = torch.where(UW3_T[i, j] != 0.0)
+        kdx, ldx   = torch.where(U_3[i, j] != 0.0)
         
-        kdxT = torch.unique(kdxT)
+        print (i, j, kdx, ldx)
 
-        kdx, edx   = torch.where(UW_tensors[3][i, j] != 0.0)
-        
-        kdx = torch.unique(kdx)
-        
-        print (i, j, kdx, kdxT)
+print ("--U2 Sparsity--")
+for i in range(U_2.shape[0]):
+    kdx, ldx   = torch.where(U_2[i] != 0.0)
+    
+    print (i, kdx, ldx)
 
-print (torch.count_nonzero(UW_tensors[3]), torch.numel(UW_tensors[3]))
 
-#print (UW3_T)
-#print ()
 
-print (UW_tensors[3][15,14,7], UW3_T[14,7,15])
+
 
