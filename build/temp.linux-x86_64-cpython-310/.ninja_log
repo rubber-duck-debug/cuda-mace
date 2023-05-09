@@ -1,6 +1,0 @@
-# ninja log v5
-1	29337	1683621578000000000	/scratch/aistor/browning/CSCS/COSMO/sparse_contraction/build/temp.linux-x86_64-cpython-310/mace_ops/cuda/tensor_product_kernels.o	f545d4de8a222b9c
-1	29849	1683621629000000000	/scratch/aistor/browning/CSCS/COSMO/sparse_contraction/build/temp.linux-x86_64-cpython-310/mace_ops/cuda/symmetric_contraction_kernels.o	ba0bc81c501cf512
-3	29716	1683621751000000000	/scratch/aistor/browning/CSCS/COSMO/sparse_contraction/build/temp.linux-x86_64-cpython-310/mace_ops/cuda/tensor_product_kernels.o	f545d4de8a222b9c
-2	29733	1683621781000000000	/scratch/aistor/browning/CSCS/COSMO/sparse_contraction/build/temp.linux-x86_64-cpython-310/mace_ops/cuda/symmetric_contraction_kernels.o	ba0bc81c501cf512
-2	29881	1683622212000000000	/scratch/aistor/browning/CSCS/COSMO/sparse_contraction/build/temp.linux-x86_64-cpython-310/mace_ops/cuda/symmetric_contraction_kernels.o	ba0bc81c501cf512
