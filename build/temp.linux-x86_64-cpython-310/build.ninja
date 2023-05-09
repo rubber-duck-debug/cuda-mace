@@ -1,0 +1,33 @@
+ninja_required_version = 1.3
+cxx = /user-environment/linux-sles15-zen3/gcc-11.3.0/gcc-11.3.0-7vcnno655nolw6ted2kgzoumoocsxxin/bin/g++
+nvcc = /user-environment/linux-sles15-zen3/gcc-11.3.0/cuda-11.8.0-3xr57kuw4q4cw53rscdnvqyjorpqamnp/bin/nvcc
+
+cflags = -Wno-unused-result -Wsign-compare -DNDEBUG -fwrapv -O2 -Wall -fPIC -O2 -isystem /scratch/aistor/browning/miniconda3/envs/cosmo/include -fPIC -O2 -isystem /scratch/aistor/browning/miniconda3/envs/cosmo/include -fPIC -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include/TH -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include/THC -I/user-environment/linux-sles15-zen3/gcc-11.3.0/cuda-11.8.0-3xr57kuw4q4cw53rscdnvqyjorpqamnp/include -I/scratch/aistor/browning/miniconda3/envs/cosmo/include/python3.10 -c
+post_cflags = -O3 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=symmetric_contraction -D_GLIBCXX_USE_CXX11_ABI=0 -std=c++17
+cuda_cflags = -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include/TH -I/scratch/aistor/browning/miniconda3/envs/cosmo/lib/python3.10/site-packages/torch/include/THC -I/user-environment/linux-sles15-zen3/gcc-11.3.0/cuda-11.8.0-3xr57kuw4q4cw53rscdnvqyjorpqamnp/include -I/scratch/aistor/browning/miniconda3/envs/cosmo/include/python3.10 -c
+cuda_post_cflags = -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr --compiler-options ''"'"'-fPIC'"'"'' -O3 -DTORCH_API_INCLUDE_EXTENSION_H '-DPYBIND11_COMPILER_TYPE="_gcc"' '-DPYBIND11_STDLIB="_libstdcpp"' '-DPYBIND11_BUILD_ABI="_cxxabi1011"' -DTORCH_EXTENSION_NAME=symmetric_contraction -D_GLIBCXX_USE_CXX11_ABI=0 -gencode=arch=compute_80,code=compute_80 -gencode=arch=compute_80,code=sm_80 -ccbin /user-environment/linux-sles15-zen3/gcc-11.3.0/gcc-11.3.0-7vcnno655nolw6ted2kgzoumoocsxxin/bin/gcc -std=c++17
+cuda_dlink_post_cflags = 
+ldflags = 
+
+rule compile
+  command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags
+  depfile = $out.d
+  deps = gcc
+
+rule cuda_compile
+  depfile = $out.d
+  deps = gcc
+  command = $nvcc  $cuda_cflags -c $in -o $out $cuda_post_cflags
+
+
+
+
+
+build /scratch/aistor/browning/CSCS/COSMO/sparse_contraction/build/temp.linux-x86_64-cpython-310/mace_ops/cuda/symmetric_contraction_kernels.o: cuda_compile /scratch/aistor/browning/CSCS/COSMO/sparse_contraction/mace_ops/cuda/symmetric_contraction_kernels.cu
+
+
+
+
+
+
+
