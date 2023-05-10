@@ -27,20 +27,20 @@ def _tensor_product(
                 output_size, nthreadx, nthready, nthreadz)
 
 def _symmetric_contraction(
-                X, 
-                atom_types, 
-                U3_nonsparse_indices, 
-                U3_num_nonsparse, 
-                U3_nonsparse_elements, 
-                U2_nonsparse_indices, 
-                U2_nonsparse_elements, 
-                U1, 
-                W3, 
-                W2, 
-                W1, 
-                nthreadx,
-                nthready,
-                nthreadz ):
+                X: torch.Tensor, 
+                atom_types: torch.Tensor, 
+                U3_nonsparse_indices: torch.Tensor, 
+                U3_num_nonsparse: torch.Tensor, 
+                U3_nonsparse_elements: torch.Tensor, 
+                U2_nonsparse_indices: torch.Tensor, 
+                U2_nonsparse_elements: torch.Tensor, 
+                U1: torch.Tensor, 
+                W3: torch.Tensor, 
+                W2: torch.Tensor, 
+                W1 : torch.Tensor, 
+                nthreadx: int,
+                nthready: int,
+                nthreadz: int ) -> torch.Tensor:
     
     return torch.ops.mace_cuda_symm_contraction.symmetric_contraction(
                 X, 

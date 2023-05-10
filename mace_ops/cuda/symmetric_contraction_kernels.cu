@@ -272,9 +272,9 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 	const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> U1,
 
-	const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> W3,
-	const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> W2,
-	const torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> W1,
+	const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> W3,
+	const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> W2,
+	const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> W1,
 
 	torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> out,
 	torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_out,
@@ -337,8 +337,6 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 		int element = atom_types[atom_id];
 
-		for (int equivariant_id = 0; equivariant_id < W3.size(0); equivariant_id ++)
-		{
 
 		for (int i = threadIdx.y; i < nl; i += blockDim.y)
 		{
@@ -352,23 +350,23 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 			for (int k = 0; k < num_nonsparse_u3; k++)
 			{
 
-				buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[equivariant_id][i][j][0][k];
-				buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[equivariant_id][i][j][1][k]; // U3_nonsparse_indices_ldx[i][1][k][j];
+				buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][0][k];
+				buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][1][k]; // U3_nonsparse_indices_ldx[i][1][k][j];
 
 				/* derivative indices */
-				buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[equivariant_id][i][j][2][k];
-				buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[equivariant_id][i][j][3][k];
+				buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][2][k];
+				buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][3][k];
 
-				buffer_u3_values[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_elements[equivariant_id][i][j][k]; // U3_nonsparse_elements[i][k][j];
+				buffer_u3_values[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_elements[i][j][k]; // U3_nonsparse_elements[i][k][j];
 			}
 
-			int u2_kdx = U2_nonsparse_indices[equivariant_id][i][j];
+			int u2_kdx = U2_nonsparse_indices[i][j];
 
 			buffer_u2_kdx_indices[i * nl + j] = u2_kdx;
-			buffer_u2_values[i * nl + j] = U2_nonsparse_elements[equivariant_id][i][j];
+			buffer_u2_values[i * nl + j] = U2_nonsparse_elements[i][j];
 		}
 
-		buffer_u1_values[i] = U1[equivariant_id][i][0];
+		buffer_u1_values[i] = U1[i][0];
 		}
 
 		__syncthreads();
@@ -379,23 +377,23 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 				/** load X into shared memory **/
 				for (int i = threadIdx.y; i < nl; i += blockDim.y)
 				{
-					buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][equivariant_id][i][channel_id];
+					buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][i][channel_id];
 				}
 
 				/** load W3, W2, W1 into shared memory **/
 				for (int i = threadIdx.y; i < W3.size(1); i += blockDim.y)
 				{
-					buffer_W3[i * blockDim.x + threadIdx.x] = W3[equivariant_id][element][i][channel_id];
+					buffer_W3[i * blockDim.x + threadIdx.x] = W3[element][i][channel_id];
 				}
 
 				for (int i = threadIdx.y; i < W2.size(1); i += blockDim.y)
 				{
-					buffer_W2[i * blockDim.x + threadIdx.x] = W2[equivariant_id][element][i][channel_id];
+					buffer_W2[i * blockDim.x + threadIdx.x] = W2[element][i][channel_id];
 				}
 
 				for (int i = threadIdx.y; i < W1.size(1); i += blockDim.y)
 				{
-					buffer_W1[i * blockDim.x + threadIdx.x] = W1[equivariant_id][element][i][channel_id];
+					buffer_W1[i * blockDim.x + threadIdx.x] = W1[element][i][channel_id];
 				}
 
 				buffer_out[threadIdx.x] = 0.0;
@@ -478,7 +476,6 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 					out[atom_id][channel_id] = buffer_out[threadIdx.x];
 				}
 			}
-		}
 	}
 }
 
