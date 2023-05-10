@@ -266,5 +266,5 @@ class SymmetricContraction(torch.nn.Module):
                 self.W2, 
                 self.W1, 
                 nthreads,
-                16,
+                8,
                 1)

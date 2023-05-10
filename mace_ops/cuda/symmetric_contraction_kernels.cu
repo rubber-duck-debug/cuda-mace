@@ -284,7 +284,7 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 	extern __shared__ char buffer[];
 
 	const int natoms = X.size(0);
-	const int nl = X.size(1);
+	const int nl = 16;
 	const int nchannels = X.size(2);
 	const int u3_maxn_nonsparse = U3_nonsparse_indices.size(3);
 
@@ -371,111 +371,113 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 		__syncthreads();
 
-			for (int channel_id = threadIdx.x; channel_id < X.size(2); channel_id += blockDim.x)
+		for (int channel_id = threadIdx.x; channel_id < X.size(2); channel_id += blockDim.x)
+		{
+
+			/** load X into shared memory **/
+			for (int i = threadIdx.y; i < nl; i += blockDim.y)
+			{
+				buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][i][channel_id];
+			}
+
+			/** load W3, W2, W1 into shared memory **/
+			for (int i = threadIdx.y; i < W3.size(1); i += blockDim.y)
+			{
+				buffer_W3[i * blockDim.x + threadIdx.x] = W3[element][i][channel_id];
+			}
+
+			for (int i = threadIdx.y; i < W2.size(1); i += blockDim.y)
+			{
+				buffer_W2[i * blockDim.x + threadIdx.x] = W2[element][i][channel_id];
+			}
+
+			for (int i = threadIdx.y; i < W1.size(1); i += blockDim.y)
+			{
+				buffer_W1[i * blockDim.x + threadIdx.x] = W1[element][i][channel_id];
+			}
+
+			buffer_out[threadIdx.x] = 0.0;
+
+			__syncthreads();
+
+			float output_1 = 0.0;
+
+
+			for (int i = threadIdx.y; i < nl; i += blockDim.y)
 			{
 
-				/** load X into shared memory **/
-				for (int i = threadIdx.y; i < nl; i += blockDim.y)
-				{
-					buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][i][channel_id];
-				}
+				float Xi = buffer_X[i * blockDim.x + threadIdx.x];
 
-				/** load W3, W2, W1 into shared memory **/
-				for (int i = threadIdx.y; i < W3.size(1); i += blockDim.y)
-				{
-					buffer_W3[i * blockDim.x + threadIdx.x] = W3[element][i][channel_id];
-				}
+				float u1_i = buffer_u1_values[i];
+				float w1_i = buffer_W1[threadIdx.x];
 
-				for (int i = threadIdx.y; i < W2.size(1); i += blockDim.y)
-				{
-					buffer_W2[i * blockDim.x + threadIdx.x] = W2[element][i][channel_id];
-				}
+				float uw1_i = u1_i * w1_i;
 
-				for (int i = threadIdx.y; i < W1.size(1); i += blockDim.y)
-				{
-					buffer_W1[i * blockDim.x + threadIdx.x] = W1[element][i][channel_id];
-				}
+				float deriv1_tmp = uw1_i;
 
-				buffer_out[threadIdx.x] = 0.0;
+				float output_2 = 0.0;
 
-				__syncthreads();
-
-				float output_1 = 0.0;
-
-				for (int i = threadIdx.y; i < nl; i += blockDim.y)
+				#pragma unroll
+				for (int j = 0; j < nl; j++)
 				{
 
-					float Xi = buffer_X[i * blockDim.x + threadIdx.x];
+					float Xj = buffer_X[j * blockDim.x + threadIdx.x];
 
-					float u1_i = buffer_u1_values[i];
-					float w1_i = buffer_W1[threadIdx.x];
+					float u2_ij = buffer_u2_values[i * nl + j];
+					uint8_t u2_kdx = buffer_u2_kdx_indices[i * nl + j];
+					float w2 = buffer_W2[u2_kdx * blockDim.x + threadIdx.x];
 
-					float uw1_i = u1_i * w1_i;
+					float uw2_ij = w2 * u2_ij;
 
-					float deriv1_tmp = uw1_i;
+					float deriv_1_j_tmp = uw2_ij;
 
-					float output_2 = 0.0;
+					uint8_t uw3_num_nonsparse = buffer_u3_nonzeros[i * nl + j];
 
-					for (int j = 0; j < nl; j++)
+					float output_3 = 0.0;
+
+					for (uint8_t k = 0; k < uw3_num_nonsparse; k++)
 					{
 
-						float Xj = buffer_X[j * blockDim.x + threadIdx.x];
+						uint8_t u3_kdx = buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j];
 
-						float u2_ij = buffer_u2_values[i * nl + j];
-						uint8_t u2_kdx = buffer_u2_kdx_indices[i * nl + j];
-						float w2 = buffer_W2[u2_kdx * blockDim.x + threadIdx.x];
+						uint8_t u3_ldx1 = buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j];
+						uint8_t u3_ldx2 = buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j];
+						uint8_t u3_ldx3 = buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j];
 
-						float uw2_ij = w2 * u2_ij;
+						float w3_1 = buffer_W3[u3_ldx1 * blockDim.x + threadIdx.x];
+						float w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
+						float w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
 
-						float deriv_1_j_tmp = uw2_ij;
+						float u3_ijkdx = buffer_u3_values[i * (nl * 3) + (k * nl) + j];
 
-						uint8_t uw3_num_nonsparse = buffer_u3_nonzeros[i * nl + j];
+						float Xk = buffer_X[u3_kdx * blockDim.x + threadIdx.x];
 
-						float output_3 = 0.0;
+						float uw3_ijk = u3_ijkdx * w3_1;
 
-						for (uint8_t k = 0; k < uw3_num_nonsparse; k++)
-						{
+						output_3 += uw3_ijk * Xk;
 
-							uint8_t u3_kdx = buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j];
-
-							uint8_t u3_ldx1 = buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j];
-							uint8_t u3_ldx2 = buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j];
-							uint8_t u3_ldx3 = buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j];
-
-							float w3_1 = buffer_W3[u3_ldx1 * blockDim.x + threadIdx.x];
-							float w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
-							float w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
-
-							float u3_ijkdx = buffer_u3_values[i * (nl * 3) + (k * nl) + j];
-
-							float Xk = buffer_X[u3_kdx * blockDim.x + threadIdx.x];
-
-							float uw3_ijk = u3_ijkdx * w3_1;
-
-							output_3 += uw3_ijk * Xk;
-
-							deriv_1_j_tmp += u3_ijkdx * (w3_1 + w3_2 + w3_3) * Xk;
-						}
-
-						output_2 += (output_3 + uw2_ij) * Xj;
-
-						deriv1_tmp += (uw2_ij + deriv_1_j_tmp) * Xj;
+						deriv_1_j_tmp += u3_ijkdx * (w3_1 + w3_2 + w3_3) * Xk;
 					}
 
-					output_1 += (output_2 + uw1_i) * Xi;
+					output_2 += (output_3 + uw2_ij) * Xj;
 
-					grad_out[atom_id][i][channel_id] = deriv1_tmp;
+					deriv1_tmp += (uw2_ij + deriv_1_j_tmp) * Xj;
 				}
 
-				atomicAdd(&buffer_out[threadIdx.x], output_1);
+				output_1 += (output_2 + uw1_i) * Xi;
 
-				__syncthreads();
-
-				if (threadIdx.y == 0)
-				{
-					out[atom_id][channel_id] = buffer_out[threadIdx.x];
-				}
+				grad_out[atom_id][i][channel_id] = deriv1_tmp;
 			}
+
+			atomicAdd(&buffer_out[threadIdx.x], output_1);
+
+			__syncthreads();
+
+			if (threadIdx.y == 0)
+			{
+				out[atom_id][channel_id] = buffer_out[threadIdx.x];
+			}
+		}
 	}
 }
 
