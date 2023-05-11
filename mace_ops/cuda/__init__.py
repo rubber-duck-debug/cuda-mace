@@ -234,7 +234,7 @@ class SymmetricContraction(torch.nn.Module):
                     compressed_output1 = kdx1[k] << 8 | ldx1[k]
                     compressed_output2 = ldx2[k] << 8 | ldx3[k]
 
-                    compressed_output = compressed_output1 << 16 | compressed_output2
+                    compressed_output = compressed_output2 << 16 | compressed_output1
 
                     self.U3_nonsparse_indices[k, i,j] = compressed_output
 
@@ -261,7 +261,7 @@ class SymmetricContraction(torch.nn.Module):
         
         nthreads = 32
 
-        if (x.shape[-1] == 128):
+        if (x.shape[-1] >= 128):
             nthreads = 64
         
         return _symmetric_contraction(

@@ -350,13 +350,6 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 				buffer_u3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[k][i][j];
 
-				// buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][0][k];
-				// buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][1][k]; // U3_nonsparse_indices_ldx[i][1][k][j];
-
-				/* derivative indices */
-				// buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][2][k];
-				// buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][3][k];
-
 				buffer_u3_values[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_elements[k][i][j]; // U3_nonsparse_elements[i][k][j];
 			}
 
@@ -393,8 +386,11 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 		buffer_W1[i * blockDim.x + threadIdx.x] = W1[element][i][channel_id];
 	}
 
-	buffer_out[threadIdx.x] = 0.0;
-
+	if (threadIdx.y == 0)
+	{
+		buffer_out[threadIdx.x] = 0.0;
+	}
+	
 	__syncthreads();
 
 	scalar_t output_1 = 0.0;
@@ -410,9 +406,9 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 		scalar_t uw1_i = u1_i * w1_i;
 
-		scalar_t deriv1_tmp = uw1_i;
-
 		scalar_t output_2 = 0.0;
+
+		scalar_t deriv1_tmp = uw1_i;
 
 #pragma unroll
 		for (int j = 0; j < nl; j++)
@@ -432,18 +428,28 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 			scalar_t output_3 = 0.0;
 
+			scalar_t w3_2;
+			scalar_t w3_3;
+			uint8_t u3_ldx3;
+			uint8_t u3_ldx2;
+
 			for (uint8_t k = 0; k < uw3_num_nonsparse; k++)
 			{
 				int compressed_indices = buffer_u3_indices[i * (nl * 3) + (k * nl) + j];
 
-				uint8_t u3_ldx3 = compressed_indices & 0xFF;
-				uint8_t u3_ldx2 = (compressed_indices >> 8) & 0xFF;
-				uint8_t u3_ldx1 = (compressed_indices >> 16) & 0xFF;
-				uint8_t u3_kdx = (compressed_indices >> 24) & 0xFF;
+				uint8_t u3_ldx1 = compressed_indices & 0xFF;
+				uint8_t u3_kdx = (compressed_indices >> 8) & 0xFF;
 
 				scalar_t w3_1 = buffer_W3[u3_ldx1 * blockDim.x + threadIdx.x];
-				scalar_t w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
-				scalar_t w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
+
+				if (requires_grad)
+				{
+					u3_ldx3 = (compressed_indices >> 16) & 0xFF;
+					u3_ldx2 = (compressed_indices >> 24) & 0xFF;
+
+					w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
+					w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
+				}
 
 				scalar_t u3_ijkdx = buffer_u3_values[i * (nl * 3) + (k * nl) + j];
 
@@ -453,17 +459,26 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 				output_3 += uw3_ijk * Xk;
 
-				deriv_1_j_tmp += u3_ijkdx * (w3_1 + w3_2 + w3_3) * Xk;
+				if (requires_grad)
+				{
+					deriv_1_j_tmp += u3_ijkdx * (w3_1 + w3_2 + w3_3) * Xk;
+				}
 			}
 
 			output_2 += (output_3 + uw2_ij) * Xj;
 
-			deriv1_tmp += (uw2_ij + deriv_1_j_tmp) * Xj;
+			if (requires_grad)
+			{
+				deriv1_tmp += (uw2_ij + deriv_1_j_tmp) * Xj;
+			}
 		}
 
 		output_1 += (output_2 + uw1_i) * Xi;
 
-		grad_out[atom_id][i][channel_id] = deriv1_tmp;
+		if (requires_grad)
+		{
+			grad_out[atom_id][i][channel_id] = deriv1_tmp;
+		}
 	}
 
 	atomicAdd(&buffer_out[threadIdx.x], output_1);
