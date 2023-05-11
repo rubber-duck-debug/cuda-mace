@@ -218,16 +218,10 @@ class SymmetricContraction(torch.nn.Module):
             for j in range(nl_3):
                 
                 kdx1, ldx1  = torch.where(U_tensors[3][i, j] != 0.0)
-                kdx2, ldx2  = torch.where(U_tensors[3][j, :, i, :] != 0.0)
-                kdx3, ldx3  = torch.where(U_tensors[3][j, i] != 0.0)
+                _, ldx2  = torch.where(U_tensors[3][j, :, i, :] != 0.0)
+                _, ldx3  = torch.where(U_tensors[3][j, i] != 0.0)
 
                 for k in range(kdx1.shape[0]):
-                    #self.U3_nonsparse_indices[i, j, 0, k] = kdx1[k]
-                    #self.U3_nonsparse_indices[i, j, 1, k] = ldx1[k] # ijk ldx1
-                    
-                    # additional derivative indices
-                    #self.U3_nonsparse_indices[i, j, 2, k] = ldx2[k] # ikj ldx2
-                    #self.U3_nonsparse_indices[i, j, 3, k] = ldx3[k] # jik ldx3
 
                     #lets pack the indices together into single int32
                     
