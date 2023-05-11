@@ -6,7 +6,7 @@ import logging
 import traceback
 from mace_ops.cuda import SymmetricContraction
 
-nchannels = 128
+nchannels = 96
 
 X = np.fromfile('symm_contraction_data/X.npy').reshape(21, 128, 16)[:, :nchannels, :]
 
@@ -38,7 +38,7 @@ correlation = 3
 U_tensors = {3: U3, 2:  U2, 1: U1}
 W_tensors = {3: W3, 2: W2, 1: W1}
 
-nrepeats = int((50000.0) / 21)
+nrepeats = int((5000.0) / 21)
 
 X = torch.from_numpy(X).float().cuda().repeat(nrepeats, 1, 1)
 Y = torch.from_numpy(Y).float().cuda().repeat(nrepeats, 1)
@@ -105,15 +105,17 @@ print (X_torch.grad[atom_check].transpose(-1, -2))
 
 torch.matmul(torch.zeros(1024, 1024, device='cuda'), torch.zeros(1024, 1024, device='cuda'))
 
-
 start = time()
 for i in range (1000):
     outputs_v1, grad_v1 = mace_v1(U_tensors, W_tensors, X, Y, 3, 0, requires_grad = True)
-    torch.cuda.synchronize()
+torch.cuda.synchronize()
 
 end = time()
 
+
 print ("Dense forward + backward: ", end - start)
+
+torch.matmul(torch.zeros(1024, 1024, device='cuda'), torch.zeros(1024, 1024, device='cuda'))
 
 fwd_time = 0
 bwd_time = 0
@@ -134,6 +136,7 @@ for i in range (1000):
     end = time()
     
     bwd_time += end-start
+torch.cuda.synchronize()
 
 end_total = time()
 print ("Sparse forward + backward:", fwd_time, bwd_time, end_total - start_total)

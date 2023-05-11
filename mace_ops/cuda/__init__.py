@@ -229,6 +229,8 @@ class SymmetricContraction(torch.nn.Module):
                     #self.U3_nonsparse_indices[i, j, 2, k] = ldx2[k] # ikj ldx2
                     #self.U3_nonsparse_indices[i, j, 3, k] = ldx3[k] # jik ldx3
 
+                    #lets pack the indices together into single int32
+                    
                     compressed_output1 = kdx1[k] << 8 | ldx1[k]
                     compressed_output2 = ldx2[k] << 8 | ldx3[k]
 

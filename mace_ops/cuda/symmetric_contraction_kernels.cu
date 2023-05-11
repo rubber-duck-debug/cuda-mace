@@ -441,12 +441,6 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 				uint8_t u3_ldx1 = (compressed_indices >> 16) & 0xFF;
 				uint8_t u3_kdx = (compressed_indices >> 24) & 0xFF;
 
-				// uint8_t u3_kdx = buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j];
-
-				// uint8_t u3_ldx1 = buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j];
-				// uint8_t u3_ldx2 = buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j];
-				// uint8_t u3_ldx3 = buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j];
-
 				scalar_t w3_1 = buffer_W3[u3_ldx1 * blockDim.x + threadIdx.x];
 				scalar_t w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
 				scalar_t w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
