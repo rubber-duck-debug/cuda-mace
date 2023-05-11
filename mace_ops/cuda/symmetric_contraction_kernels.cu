@@ -390,7 +390,7 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 	{
 		buffer_out[threadIdx.x] = 0.0;
 	}
-	
+
 	__syncthreads();
 
 	scalar_t output_1 = 0.0;
