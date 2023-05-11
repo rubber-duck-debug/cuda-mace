@@ -263,7 +263,7 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 	const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> X,
 	const torch::PackedTensorAccessor32<int, 1, torch::RestrictPtrTraits> atom_types,
 
-	const torch::PackedTensorAccessor32<uint8_t, 4, torch::RestrictPtrTraits> U3_nonsparse_indices,
+	const torch::PackedTensorAccessor32<int, 3, torch::RestrictPtrTraits> U3_nonsparse_indices,
 	const torch::PackedTensorAccessor32<uint8_t, 2, torch::RestrictPtrTraits> U3_num_nonsparse,
 	const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> U3_nonsparse_elements,
 
@@ -286,7 +286,7 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 	const int natoms = X.size(0);
 	const int nl = 16;
 	const int nchannels = X.size(2);
-	const int u3_maxn_nonsparse = U3_nonsparse_indices.size(3);
+	const int u3_maxn_nonsparse = U3_nonsparse_indices.size(0);
 
 	size_t offset = 0;
 
@@ -310,14 +310,14 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 	offset += W1.size(1) * blockDim.x * sizeof(scalar_t);
 
 	/** U3 storage buffers **/
-	uint8_t *buffer_u3_kdx_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
-	uint8_t *buffer_u3_ldx1_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
-	uint8_t *buffer_u3_ldx2_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
-	uint8_t *buffer_u3_ldx3_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
+	int *buffer_u3_indices = reinterpret_cast<int *>(buffer + offset);
+	offset += u3_maxn_nonsparse * nl * nl * sizeof(int);
+	// uint8_t *buffer_u3_ldx1_indices = reinterpret_cast<uint8_t *>(buffer + offset);
+	// offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
+	// uint8_t *buffer_u3_ldx2_indices = reinterpret_cast<uint8_t *>(buffer + offset);
+	// offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
+	// uint8_t *buffer_u3_ldx3_indices = reinterpret_cast<uint8_t *>(buffer + offset);
+	// offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
 
 	/** U2 storage buffers **/
 	uint8_t *buffer_u3_nonzeros = reinterpret_cast<uint8_t *>(buffer + offset);
@@ -332,16 +332,14 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 
 	// non_sparse_indices U2: 16x16
 
-	for (int atom_id = blockIdx.x; atom_id < natoms; atom_id += gridDim.x)
+	int atom_id = blockIdx.x;
+
+	int element = atom_types[atom_id];
+
+	for (int i = threadIdx.y; i < nl; i += blockDim.y)
 	{
-
-		int element = atom_types[atom_id];
-
-
-		for (int i = threadIdx.y; i < nl; i += blockDim.y)
+		for (int j = threadIdx.x; j < nl; j += blockDim.x)
 		{
-			for (int j = threadIdx.x; j < nl; j += blockDim.x)
-			{
 
 			int num_nonsparse_u3 = U3_num_nonsparse[i][j];
 
@@ -350,134 +348,137 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 			for (int k = 0; k < num_nonsparse_u3; k++)
 			{
 
-				buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][0][k];
-				buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][1][k]; // U3_nonsparse_indices_ldx[i][1][k][j];
+				buffer_u3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[k][i][j];
+
+				// buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][0][k];
+				// buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][1][k]; // U3_nonsparse_indices_ldx[i][1][k][j];
 
 				/* derivative indices */
-				buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][2][k];
-				buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][3][k];
+				// buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][2][k];
+				// buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[i][j][3][k];
 
-				buffer_u3_values[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_elements[i][j][k]; // U3_nonsparse_elements[i][k][j];
+				buffer_u3_values[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_elements[k][i][j]; // U3_nonsparse_elements[i][k][j];
 			}
 
-			int u2_kdx = U2_nonsparse_indices[i][j];
-
-			buffer_u2_kdx_indices[i * nl + j] = u2_kdx;
+			buffer_u2_kdx_indices[i * nl + j] = U2_nonsparse_indices[i][j];
 			buffer_u2_values[i * nl + j] = U2_nonsparse_elements[i][j];
 		}
 
 		buffer_u1_values[i] = U1[i][0];
-		}
+	}
 
-		__syncthreads();
+	__syncthreads();
 
-		for (int channel_id = threadIdx.x; channel_id < X.size(2); channel_id += blockDim.x)
+	int channel_id = blockIdx.y * blockDim.x + threadIdx.x;
+
+	/** load X into shared memory **/
+	for (int i = threadIdx.y; i < nl; i += blockDim.y)
+	{
+		buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][i][channel_id];
+	}
+
+	/** load W3, W2, W1 into shared memory **/
+	for (int i = threadIdx.y; i < W3.size(1); i += blockDim.y)
+	{
+		buffer_W3[i * blockDim.x + threadIdx.x] = W3[element][i][channel_id];
+	}
+
+	for (int i = threadIdx.y; i < W2.size(1); i += blockDim.y)
+	{
+		buffer_W2[i * blockDim.x + threadIdx.x] = W2[element][i][channel_id];
+	}
+
+	for (int i = threadIdx.y; i < W1.size(1); i += blockDim.y)
+	{
+		buffer_W1[i * blockDim.x + threadIdx.x] = W1[element][i][channel_id];
+	}
+
+	buffer_out[threadIdx.x] = 0.0;
+
+	__syncthreads();
+
+	scalar_t output_1 = 0.0;
+
+#pragma unroll
+	for (int i = threadIdx.y; i < nl; i += blockDim.y)
+	{
+
+		scalar_t Xi = buffer_X[i * blockDim.x + threadIdx.x];
+
+		scalar_t u1_i = buffer_u1_values[i];
+		scalar_t w1_i = buffer_W1[threadIdx.x];
+
+		scalar_t uw1_i = u1_i * w1_i;
+
+		scalar_t deriv1_tmp = uw1_i;
+
+		scalar_t output_2 = 0.0;
+
+#pragma unroll
+		for (int j = 0; j < nl; j++)
 		{
 
-			/** load X into shared memory **/
-			for (int i = threadIdx.y; i < nl; i += blockDim.y)
+			scalar_t Xj = buffer_X[j * blockDim.x + threadIdx.x];
+
+			scalar_t u2_ij = buffer_u2_values[i * nl + j];
+			uint8_t u2_kdx = buffer_u2_kdx_indices[i * nl + j];
+			scalar_t w2 = buffer_W2[u2_kdx * blockDim.x + threadIdx.x];
+
+			scalar_t uw2_ij = w2 * u2_ij;
+
+			scalar_t deriv_1_j_tmp = uw2_ij;
+
+			uint8_t uw3_num_nonsparse = buffer_u3_nonzeros[i * nl + j];
+
+			scalar_t output_3 = 0.0;
+
+			for (uint8_t k = 0; k < uw3_num_nonsparse; k++)
 			{
-				buffer_X[i * blockDim.x + threadIdx.x] = X[atom_id][i][channel_id];
+				int compressed_indices = buffer_u3_indices[i * (nl * 3) + (k * nl) + j];
+
+				uint8_t u3_ldx3 = compressed_indices & 0xFF;
+				uint8_t u3_ldx2 = (compressed_indices >> 8) & 0xFF;
+				uint8_t u3_ldx1 = (compressed_indices >> 16) & 0xFF;
+				uint8_t u3_kdx = (compressed_indices >> 24) & 0xFF;
+
+				// uint8_t u3_kdx = buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j];
+
+				// uint8_t u3_ldx1 = buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j];
+				// uint8_t u3_ldx2 = buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j];
+				// uint8_t u3_ldx3 = buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j];
+
+				scalar_t w3_1 = buffer_W3[u3_ldx1 * blockDim.x + threadIdx.x];
+				scalar_t w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
+				scalar_t w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
+
+				scalar_t u3_ijkdx = buffer_u3_values[i * (nl * 3) + (k * nl) + j];
+
+				scalar_t Xk = buffer_X[u3_kdx * blockDim.x + threadIdx.x];
+
+				scalar_t uw3_ijk = u3_ijkdx * w3_1;
+
+				output_3 += uw3_ijk * Xk;
+
+				deriv_1_j_tmp += u3_ijkdx * (w3_1 + w3_2 + w3_3) * Xk;
 			}
 
-			/** load W3, W2, W1 into shared memory **/
-			for (int i = threadIdx.y; i < W3.size(1); i += blockDim.y)
-			{
-				buffer_W3[i * blockDim.x + threadIdx.x] = W3[element][i][channel_id];
-			}
+			output_2 += (output_3 + uw2_ij) * Xj;
 
-			for (int i = threadIdx.y; i < W2.size(1); i += blockDim.y)
-			{
-				buffer_W2[i * blockDim.x + threadIdx.x] = W2[element][i][channel_id];
-			}
-
-			for (int i = threadIdx.y; i < W1.size(1); i += blockDim.y)
-			{
-				buffer_W1[i * blockDim.x + threadIdx.x] = W1[element][i][channel_id];
-			}
-
-			buffer_out[threadIdx.x] = 0.0;
-
-			__syncthreads();
-
-			float output_1 = 0.0;
-
-
-			for (int i = threadIdx.y; i < nl; i += blockDim.y)
-			{
-
-				float Xi = buffer_X[i * blockDim.x + threadIdx.x];
-
-				float u1_i = buffer_u1_values[i];
-				float w1_i = buffer_W1[threadIdx.x];
-
-				float uw1_i = u1_i * w1_i;
-
-				float deriv1_tmp = uw1_i;
-
-				float output_2 = 0.0;
-
-				#pragma unroll
-				for (int j = 0; j < nl; j++)
-				{
-
-					float Xj = buffer_X[j * blockDim.x + threadIdx.x];
-
-					float u2_ij = buffer_u2_values[i * nl + j];
-					uint8_t u2_kdx = buffer_u2_kdx_indices[i * nl + j];
-					float w2 = buffer_W2[u2_kdx * blockDim.x + threadIdx.x];
-
-					float uw2_ij = w2 * u2_ij;
-
-					float deriv_1_j_tmp = uw2_ij;
-
-					uint8_t uw3_num_nonsparse = buffer_u3_nonzeros[i * nl + j];
-
-					float output_3 = 0.0;
-
-					for (uint8_t k = 0; k < uw3_num_nonsparse; k++)
-					{
-
-						uint8_t u3_kdx = buffer_u3_kdx_indices[i * (nl * 3) + (k * nl) + j];
-
-						uint8_t u3_ldx1 = buffer_u3_ldx1_indices[i * (nl * 3) + (k * nl) + j];
-						uint8_t u3_ldx2 = buffer_u3_ldx2_indices[i * (nl * 3) + (k * nl) + j];
-						uint8_t u3_ldx3 = buffer_u3_ldx3_indices[i * (nl * 3) + (k * nl) + j];
-
-						float w3_1 = buffer_W3[u3_ldx1 * blockDim.x + threadIdx.x];
-						float w3_2 = buffer_W3[u3_ldx2 * blockDim.x + threadIdx.x];
-						float w3_3 = buffer_W3[u3_ldx3 * blockDim.x + threadIdx.x];
-
-						float u3_ijkdx = buffer_u3_values[i * (nl * 3) + (k * nl) + j];
-
-						float Xk = buffer_X[u3_kdx * blockDim.x + threadIdx.x];
-
-						float uw3_ijk = u3_ijkdx * w3_1;
-
-						output_3 += uw3_ijk * Xk;
-
-						deriv_1_j_tmp += u3_ijkdx * (w3_1 + w3_2 + w3_3) * Xk;
-					}
-
-					output_2 += (output_3 + uw2_ij) * Xj;
-
-					deriv1_tmp += (uw2_ij + deriv_1_j_tmp) * Xj;
-				}
-
-				output_1 += (output_2 + uw1_i) * Xi;
-
-				grad_out[atom_id][i][channel_id] = deriv1_tmp;
-			}
-
-			atomicAdd(&buffer_out[threadIdx.x], output_1);
-
-			__syncthreads();
-
-			if (threadIdx.y == 0)
-			{
-				out[atom_id][channel_id] = buffer_out[threadIdx.x];
-			}
+			deriv1_tmp += (uw2_ij + deriv_1_j_tmp) * Xj;
 		}
+
+		output_1 += (output_2 + uw1_i) * Xi;
+
+		grad_out[atom_id][i][channel_id] = deriv1_tmp;
+	}
+
+	atomicAdd(&buffer_out[threadIdx.x], output_1);
+
+	__syncthreads();
+
+	if (threadIdx.y == 0)
+	{
+		out[atom_id][channel_id] = buffer_out[threadIdx.x];
 	}
 }
 
@@ -520,9 +521,9 @@ std::vector<torch::Tensor> sparse_full_symmetric_contraction_derivative_gpu(
 	const int natoms = X.size(0);
 	const int nl = X.size(1);
 	const int nchannels = X.size(2);
-	const int u3_n_nonsparse = U3_nonsparse_indices.size(3);
+	const int u3_n_nonsparse = U3_nonsparse_indices.size(0);
 
-	dim3 block_dim(natoms);
+	dim3 block_dim(natoms, nchannels / nthreadX);
 
 	dim3 grid(nthreadX, nthreadY, nthreadZ);
 
@@ -534,7 +535,8 @@ std::vector<torch::Tensor> sparse_full_symmetric_contraction_derivative_gpu(
             size_t shared_mem_amount =  nthreadX * nl * sizeof(scalar_t); // X storage
 			shared_mem_amount +=  nthreadX * sizeof(scalar_t); // output stoage
 
-			shared_mem_amount += 4 * nl * nl * u3_n_nonsparse * sizeof(uint8_t); // U3_nonsparse_indices stoage for kdx and ldx
+			//shared_mem_amount += 4 * nl * nl * u3_n_nonsparse * sizeof(uint8_t); // U3_nonsparse_indices stoage for kdx and ldx
+			shared_mem_amount += nl * nl * u3_n_nonsparse * sizeof(int); // U3_nonsparse_indices stoage for kdx and ldx
 			shared_mem_amount += nl * nl * sizeof(uint8_t); // U3_num_nonsparse storage
 			shared_mem_amount += u3_n_nonsparse * nl * nl * sizeof(scalar_t); // U3_nonsparse_elements storage
 
@@ -548,7 +550,7 @@ std::vector<torch::Tensor> sparse_full_symmetric_contraction_derivative_gpu(
             sparse_full_symmetric_contraction_derivative_kernel<<<block_dim, grid, shared_mem_amount>>>(
 				X.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
 				atom_types.packed_accessor32<int, 1, torch::RestrictPtrTraits>(),
-				U3_nonsparse_indices.packed_accessor32<uint8_t, 4, torch::RestrictPtrTraits>(),
+				U3_nonsparse_indices.packed_accessor32<int, 3, torch::RestrictPtrTraits>(),
 				U3_num_nonsparse.packed_accessor32<uint8_t, 2, torch::RestrictPtrTraits>(),
 				U3_nonsparse_elements.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
 				U2_nonsparse_indices.packed_accessor32<uint8_t, 2, torch::RestrictPtrTraits>(),

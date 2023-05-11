@@ -206,8 +206,11 @@ class SymmetricContraction(torch.nn.Module):
                 kdx1, ldx1  = torch.where(U_tensors[3][i, j] != 0.0)
                 self.U3_num_nonsparse[i, j] = kdx1.shape[0]
 
-        self.U3_nonsparse_indices = torch.zeros((nl_3,nl_3, 4, self.U3_num_nonsparse.max().item()), dtype=torch.uint8).cuda()
-        self.U3_nonsparse_elements = torch.zeros((nl_3, nl_3, 4), dtype=torch.float).cuda()
+        #self.U3_nonsparse_indices = torch.zeros((nl_3, nl_3, 4, self.U3_num_nonsparse.max().item()), dtype=torch.uint8).cuda()
+
+        self.U3_nonsparse_indices = torch.zeros((self.U3_num_nonsparse.max().item(), nl_3, nl_3), dtype=torch.int32).cuda()
+        
+        self.U3_nonsparse_elements = torch.zeros((4, nl_3, nl_3), dtype=torch.float).cuda()
         self.U2_nonsparse_indices = torch.zeros((nl_3,nl_3), dtype=torch.uint8).cuda()
         self.U2_nonsparse_elements = torch.zeros((nl_3, nl_3), dtype=torch.float).cuda()
 
@@ -219,14 +222,21 @@ class SymmetricContraction(torch.nn.Module):
                 kdx3, ldx3  = torch.where(U_tensors[3][j, i] != 0.0)
 
                 for k in range(kdx1.shape[0]):
-                    self.U3_nonsparse_indices[i, j, 0, k] = kdx1[k]
-                    self.U3_nonsparse_indices[i, j, 1, k] = ldx1[k] # ijk ldx1
+                    #self.U3_nonsparse_indices[i, j, 0, k] = kdx1[k]
+                    #self.U3_nonsparse_indices[i, j, 1, k] = ldx1[k] # ijk ldx1
                     
                     # additional derivative indices
-                    self.U3_nonsparse_indices[i, j, 2, k] = ldx2[k] # ikj ldx2
-                    self.U3_nonsparse_indices[i, j, 3, k] = ldx3[k] # jik ldx3
+                    #self.U3_nonsparse_indices[i, j, 2, k] = ldx2[k] # ikj ldx2
+                    #self.U3_nonsparse_indices[i, j, 3, k] = ldx3[k] # jik ldx3
 
-                    self.U3_nonsparse_elements[i, j, k] = U_tensors[3][i, j, kdx1[k], ldx1[k]]
+                    compressed_output1 = kdx1[k] << 8 | ldx1[k]
+                    compressed_output2 = ldx2[k] << 8 | ldx3[k]
+
+                    compressed_output = compressed_output1 << 16 | compressed_output2
+
+                    self.U3_nonsparse_indices[k, i,j] = compressed_output
+
+                    self.U3_nonsparse_elements[k, i, j] = U_tensors[3][i, j, kdx1[k], ldx1[k]]
 
         for i in range (U_tensors[2].shape[0]):
 
@@ -245,14 +255,13 @@ class SymmetricContraction(torch.nn.Module):
     def forward(self, x, atom_types):
 
         assert x.shape[-1] % 32 == 0, "channel dimension of x ([-1]) must be a multiple of 32."
-
+        assert x.shape[1] == 16, "l dimension of x ([1]) must be 16."
+        
         nthreads = 32
 
-        if (x.shape[-1] == 96):
-            nthreads = 32
-        elif (x.shape[-1] >= 64):
+        if (x.shape[-1] == 128):
             nthreads = 64
-
+        
         return _symmetric_contraction(
                 x, 
                 atom_types, 

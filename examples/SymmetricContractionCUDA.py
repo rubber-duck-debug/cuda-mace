@@ -38,7 +38,7 @@ correlation = 3
 U_tensors = {3: U3, 2:  U2, 1: U1}
 W_tensors = {3: W3, 2: W2, 1: W1}
 
-nrepeats = int((500.0) / 21)
+nrepeats = int((50000.0) / 21)
 
 X = torch.from_numpy(X).float().cuda().repeat(nrepeats, 1, 1)
 Y = torch.from_numpy(Y).float().cuda().repeat(nrepeats, 1)
@@ -115,32 +115,25 @@ end = time()
 
 print ("Dense forward + backward: ", end - start)
 
-start = time()
+fwd_time = 0
+bwd_time = 0
+
+start_total = time()
 for i in range (1000):
+
+    start = time()
     _ = symm_contract.forward(X_torch, atom_types_torch)
-    
+    end = time()
+
+    fwd_time += end-start
+
     os = _.sum()
 
+    start = time()
     os.backward()
-    torch.cuda.synchronize()
+    end = time()
+    
+    bwd_time += end-start
 
-end = time()
-print ("Sparse forward + backward:", end - start)
-
-# U1 = U1.reshape(16)
-
-# start = time()
-# for i in range (1000):
-#     out = sparse_full_symmetric_contraction(U3_nonsparse_indices,U3_num_nonsparse, U3_nonzero_elements, U2_non_sparse_indices, U2_nonsparse_elements, U1, W3, W2, W1, X_torch, atom_types_torch, 64, 16, 1)
-# end = time()
-# print (end - start)
-
-# start = time()
-# for i in range (1000):
-#     out, grad = sparse_full_symmetric_contraction_derivative(U3_nonsparse_indices,U3_num_nonsparse, U3_nonzero_elements, U2_non_sparse_indices, U2_nonsparse_elements, U1, W3, W2, W1, X_torch, atom_types_torch, 64, 16, 1)
-# end = time()
-# print (end - start)
-
-# atom_check = 0
-
-# assert torch.allclose(grad_v1[atom_check], grad[atom_check].transpose(-1, -2), atol=1e-7)
+end_total = time()
+print ("Sparse forward + backward:", fwd_time, bwd_time, end_total - start_total)

@@ -1,10 +1,10 @@
 import numpy as np
 from time import time
-from opt_einsum import contract
 import torch
 import logging
 import traceback
 from mace_ops.cuda import SymmetricContraction
+from torch.profiler import profile, record_function, ProfilerActivity
 
 nchannels = 128
 
@@ -38,7 +38,7 @@ correlation = 3
 U_tensors = {3: U3, 2:  U2, 1: U1}
 W_tensors = {3: W3, 2: W2, 1: W1}
 
-nrepeats = int((500.0) / 21)
+nrepeats = int((500.0) / 21.0)
 
 X = torch.from_numpy(X).float().cuda().repeat(nrepeats, 1, 1)
 Y = torch.from_numpy(Y).float().cuda().repeat(nrepeats, 1)
@@ -47,24 +47,69 @@ X_torch = X.transpose(-1, -2).contiguous()
 atom_types = np.array([1,1,1,1,1,1,1,2,2,2,1,1,2,0,0,0,0,0,0,0,0])
 atom_types_torch = torch.from_numpy(atom_types).repeat(nrepeats).int().cuda()
 
-
-equation_main = "...ik,ekc,bci,be -> bc..."
-equation_weighting = "...k,ekc,be->bc..."
-equation_contract = "bc...i,bci->bc..."
-
-equation_contract_weights = '...ik, ekc -> ...iec'
-
 symm_contract = SymmetricContraction(U_tensors, W_tensors, device='cuda', dtype=torch.float32)
 
 script = torch.jit.script(symm_contract)
 
 X_torch.requires_grad = True
 
-start = time()
-for i in range (1000):
-    out = script(X_torch, atom_types_torch)
-end = time()
+start = torch.cuda.Event(enable_timing=True)
+end = torch.cuda.Event(enable_timing=True)
 
-print (end - start)
+start.record()
+
+for i in range (1000):
+
+    out = script(X_torch, atom_types_torch)
+
+    os = out.sum()
+
+    os.backward()
+
+end.record()
+
+torch.cuda.synchronize()
+
+elapsed = start.elapsed_time(end)
+
+print (elapsed)
+
+print (out.shape)
 print (out)
+
+from torch.profiler import schedule
+
+my_schedule = schedule(
+    skip_first=10,
+    wait=5,
+    warmup=1,
+    active=3,
+    repeat=2)
+
+
+X_torch.requires_grad=True
+
+def trace_handler(p):
+    output = p.key_averages().table(sort_by="self_cuda_time_total", row_limit=10)
+    print(output)
+    p.export_chrome_trace("/tmp/trace_" + str(p.step_num) + ".json")
+
+with profile(
+    activities=[ProfilerActivity.CUDA],
+    schedule=torch.profiler.schedule(
+        wait=1,
+        warmup=1,
+        active=1),
+    on_trace_ready=trace_handler
+) as p:
+    for idx in range(6):
+        out = script(X_torch, atom_types_torch)
+
+        os = out.sum()
+
+        os.backward()
+        p.step()
+
+    print(p.key_averages().table(sort_by="cuda_time_total", row_limit=10))
+
 

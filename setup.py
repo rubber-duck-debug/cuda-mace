@@ -17,8 +17,9 @@ __status__ = "Alpha"
 __description__ = "GPU-Accelerated Sparse Symmetric Contractions and Tensor Products"
 __url__ = "TODO"
 
-optimisation_level_host = ['-O3']
-optimisation_level_device = ['-O3']
+host_flags = ['-O3']
+#device_flags = ['-G', '-lineinfo']
+nvcc_flags = ['-O3', '--use_fast_math']
 
 def readme():
     with open('README.md') as f:
@@ -58,15 +59,15 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         '.cuda.tensor_product', [
             'mace_ops/cuda/tensor_product_kernels.cu'
         ],
-         extra_compile_args={'cxx': optimisation_level_host,
-                            'nvcc': optimisation_level_device})
+         extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
 
     symmetric_contraction = CUDAExtension(
         '.cuda.symmetric_contraction', [
             'mace_ops/cuda/symmetric_contraction_kernels.cu'
         ],
-         extra_compile_args={'cxx': optimisation_level_host,
-                            'nvcc': optimisation_level_device})
+         extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
     
     ext_modules.append(tensor_contraction)
     ext_modules.append(symmetric_contraction)
