@@ -197,13 +197,13 @@ class SymmetricContraction(torch.nn.Module):
 
             assert W_tensors[key].dtype == self.dtype, f"W_tensor[{key}] dtype: {W_tensors[key].dtype} is not the same as self.dtype {self.dtype}"
 
-        nl_3 = U_tensors[3].shape[0]
+        nl_3 = U_tensors["3"].shape[0]
 
         self.U3_num_nonsparse = torch.zeros((nl_3, nl_3), dtype=torch.uint8).cuda()
 
         for i in range(nl_3):
             for j in range(nl_3):
-                kdx1, ldx1  = torch.where(U_tensors[3][i, j] != 0.0)
+                kdx1, ldx1  = torch.where(U_tensors["3"][i, j] != 0.0)
                 self.U3_num_nonsparse[i, j] = kdx1.shape[0]
 
         self.U3_nonsparse_indices = torch.zeros((self.U3_num_nonsparse.max().item(), nl_3, nl_3), dtype=torch.int32).cuda()
@@ -215,9 +215,9 @@ class SymmetricContraction(torch.nn.Module):
         for i in range(nl_3):
             for j in range(nl_3):
                 
-                kdx1, ldx1  = torch.where(U_tensors[3][i, j] != 0.0)
-                _, ldx2  = torch.where(U_tensors[3][j, :, i, :] != 0.0)
-                _, ldx3  = torch.where(U_tensors[3][j, i] != 0.0)
+                kdx1, ldx1  = torch.where(U_tensors["3"][i, j] != 0.0)
+                _, ldx2  = torch.where(U_tensors["3"][j, :, i, :] != 0.0)
+                _, ldx3  = torch.where(U_tensors["3"][j, i] != 0.0)
 
                 for k in range(kdx1.shape[0]):
 
@@ -230,21 +230,21 @@ class SymmetricContraction(torch.nn.Module):
 
                     self.U3_nonsparse_indices[k, i,j] = compressed_output
 
-                    self.U3_nonsparse_elements[k, i, j] = U_tensors[3][i, j, kdx1[k], ldx1[k]]
+                    self.U3_nonsparse_elements[k, i, j] = U_tensors["3"][i, j, kdx1[k], ldx1[k]]
 
-        for i in range (U_tensors[2].shape[0]):
+        for i in range (U_tensors["2"].shape[0]):
 
-            jdx, kdx  = torch.where(U_tensors[2][i] != 0.0)
+            jdx, kdx  = torch.where(U_tensors["2"][i] != 0.0)
 
             if (jdx.shape[0] > 0):
                 self.U2_nonsparse_indices[i, jdx] = kdx.type(torch.uint8)
-                self.U2_nonsparse_elements[i, jdx] = U_tensors[2][i, jdx, kdx]
+                self.U2_nonsparse_elements[i, jdx] = U_tensors["2"][i, jdx, kdx]
 
-        self.U1 = U_tensors[1]
+        self.U1 = U_tensors["1"]
 
-        self.W3 = W_tensors[3]
-        self.W2 = W_tensors[2]
-        self.W1 = W_tensors[1]
+        self.W3 = W_tensors["3"]
+        self.W2 = W_tensors["2"]
+        self.W1 = W_tensors["1"]
 
     def forward(self, x, atom_types):
 

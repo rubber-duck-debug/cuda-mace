@@ -35,8 +35,8 @@ W1 = torch.from_numpy(W1).float().cuda()
         
 correlation = 3
 
-U_tensors = {3: U3, 2:  U2, 1: U1}
-W_tensors = {3: W3, 2: W2, 1: W1}
+U_tensors = {"3": U3, "2":  U2, "1": U1}
+W_tensors = {"3": W3, "2": W2, "1": W1}
 
 nrepeats = int((5000.0) / 21.0)
 

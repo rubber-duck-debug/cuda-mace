@@ -35,8 +35,8 @@ W1 = torch.from_numpy(W1).float().cuda()
         
 correlation = 3
 
-U_tensors = {3: U3, 2:  U2, 1: U1}
-W_tensors = {3: W3, 2: W2, 1: W1}
+U_tensors = {"3": U3, "2":  U2, "1": U1}
+W_tensors = {"3": W3, "2": W2, "1": W1}
 
 nrepeats = int((5000.0) / 21)
 
@@ -60,7 +60,7 @@ def mace_v1(U_tensors, W_tensors, X, Y, correlation, correlation_min=0, requires
 
     outputs = {}
 
-    out_v1 = contract(equation_main, U_tensors[correlation],W_tensors[correlation], X, Y)
+    out_v1 = contract(equation_main, U_tensors[str(correlation)],W_tensors[str(correlation)], X, Y)
 
     outputs[correlation] = out_v1
 
@@ -68,8 +68,8 @@ def mace_v1(U_tensors, W_tensors, X, Y, correlation, correlation_min=0, requires
 
         c_tensor_v1 = contract(
             equation_weighting,
-            U_tensors[corr],
-            W_tensors[corr],
+            U_tensors[str(corr)],
+            W_tensors[str(corr)],
             Y,
         )
 
