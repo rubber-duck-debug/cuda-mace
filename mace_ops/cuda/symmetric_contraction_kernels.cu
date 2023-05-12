@@ -309,19 +309,13 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 	scalar_t *buffer_W1 = reinterpret_cast<scalar_t *>(buffer + offset);
 	offset += W1.size(1) * blockDim.x * sizeof(scalar_t);
 
-	/** U3 storage buffers **/
+	/** U3 index buffers **/
 	int *buffer_u3_indices = reinterpret_cast<int *>(buffer + offset);
 	offset += u3_maxn_nonsparse * nl * nl * sizeof(int);
-	// uint8_t *buffer_u3_ldx1_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	// offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
-	// uint8_t *buffer_u3_ldx2_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	// offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
-	// uint8_t *buffer_u3_ldx3_indices = reinterpret_cast<uint8_t *>(buffer + offset);
-	// offset += u3_maxn_nonsparse * nl * nl * sizeof(uint8_t);
-
-	/** U2 storage buffers **/
 	uint8_t *buffer_u3_nonzeros = reinterpret_cast<uint8_t *>(buffer + offset);
 	offset += nl * nl * sizeof(uint8_t);
+
+	/** U2 storage indices **/
 	uint8_t *buffer_u2_kdx_indices = reinterpret_cast<uint8_t *>(buffer + offset);
 	offset += nl * nl * sizeof(uint8_t);
 
@@ -348,7 +342,7 @@ __global__ void sparse_full_symmetric_contraction_derivative_kernel(
 			for (int k = 0; k < num_nonsparse_u3; k++)
 			{
 
-				buffer_u3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[k][i][j];
+				buffer_u3_indices[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_indices[k][i][j]; // packed 32 bit integer containing 4 x uint8 indices
 
 				buffer_u3_values[i * (nl * 3) + (k * nl) + j] = U3_nonsparse_elements[k][i][j]; // U3_nonsparse_elements[i][k][j];
 			}
@@ -544,7 +538,6 @@ std::vector<torch::Tensor> sparse_full_symmetric_contraction_derivative_gpu(
             size_t shared_mem_amount =  nthreadX * nl * sizeof(scalar_t); // X storage
 			shared_mem_amount +=  nthreadX * sizeof(scalar_t); // output stoage
 
-			//shared_mem_amount += 4 * nl * nl * u3_n_nonsparse * sizeof(uint8_t); // U3_nonsparse_indices stoage for kdx and ldx
 			shared_mem_amount += nl * nl * u3_n_nonsparse * sizeof(int); // U3_nonsparse_indices stoage for kdx and ldx
 			shared_mem_amount += nl * nl * sizeof(uint8_t); // U3_num_nonsparse storage
 			shared_mem_amount += u3_n_nonsparse * nl * nl * sizeof(scalar_t); // U3_nonsparse_elements storage

@@ -206,8 +206,6 @@ class SymmetricContraction(torch.nn.Module):
                 kdx1, ldx1  = torch.where(U_tensors[3][i, j] != 0.0)
                 self.U3_num_nonsparse[i, j] = kdx1.shape[0]
 
-        #self.U3_nonsparse_indices = torch.zeros((nl_3, nl_3, 4, self.U3_num_nonsparse.max().item()), dtype=torch.uint8).cuda()
-
         self.U3_nonsparse_indices = torch.zeros((self.U3_num_nonsparse.max().item(), nl_3, nl_3), dtype=torch.int32).cuda()
         
         self.U3_nonsparse_elements = torch.zeros((4, nl_3, nl_3), dtype=torch.float).cuda()
