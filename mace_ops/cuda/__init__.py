@@ -208,9 +208,9 @@ class SymmetricContraction(torch.nn.Module):
 
         self.U3_nonsparse_indices = torch.zeros((self.U3_num_nonsparse.max().item(), nl_3, nl_3), dtype=torch.int32).cuda()
         
-        self.U3_nonsparse_elements = torch.zeros((4, nl_3, nl_3), dtype=torch.float).cuda()
+        self.U3_nonsparse_elements = torch.zeros((4, nl_3, nl_3), dtype=self.dtype).cuda()
         self.U2_nonsparse_indices = torch.zeros((nl_3,nl_3), dtype=torch.uint8).cuda()
-        self.U2_nonsparse_elements = torch.zeros((nl_3, nl_3), dtype=torch.float).cuda()
+        self.U2_nonsparse_elements = torch.zeros((nl_3, nl_3), dtype=self.dtype).cuda()
 
         for i in range(nl_3):
             for j in range(nl_3):
