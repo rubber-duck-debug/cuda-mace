@@ -1,16 +1,122 @@
 import os
-import sys
 import torch
 import sysconfig
+import math
+
+import collections
+from typing import List
+
+from mace.tools.cg import U_matrix_real
 from e3nn import o3
-from e3nn_jax import Instruction, Irreps
-from e3nn_jax._src.core_tensor_product import _normalize_instruction_path_weights
+
+from .instruction import Instruction
+from .irreps import Irreps
 
 _HERE = os.path.realpath(os.path.dirname(__file__))
 EXT_SUFFIX = sysconfig.get_config_var('EXT_SUFFIX')
 
 torch.ops.load_library(_HERE + '/tensor_product.so')
 torch.ops.load_library(_HERE + '/symmetric_contraction.so')
+
+#taken from e3nn-jax to remove dependence on jax...
+def _normalize_instruction_path_weights(
+    instructions: List[Instruction],
+    first_input_irreps: Irreps,
+    second_input_irreps: Irreps,
+    output_irreps: Irreps,
+    first_input_variance: List[float],
+    second_input_variance: List[float],
+    output_variance: List[float],
+    irrep_normalization: str,
+    path_normalization_exponent: float,
+    gradient_normalization_exponent: float,
+) -> List[Instruction]:
+    """Returns instructions with normalized path weights."""
+
+    def var(instruction):
+        return (
+            first_input_variance[instruction.i_in1]
+            * second_input_variance[instruction.i_in2]
+            * instruction.num_elements
+        )
+
+    # Precompute normalization factors.
+    path_normalization_sums = collections.defaultdict(lambda: 0.0)
+    for instruction in instructions:
+        path_normalization_sums[instruction.i_out] += var(instruction) ** (
+            1.0 - path_normalization_exponent
+        )
+
+    path_normalization_factors = {
+        instruction: var(instruction) ** path_normalization_exponent
+        * path_normalization_sums[instruction.i_out]
+        for instruction in instructions
+    }
+
+    def update(instruction: Instruction) -> float:
+        """Computes normalized path weight for a single instructions, with precomputed path normalization factors."""
+
+        if irrep_normalization not in ["component", "norm", "none"]:
+            raise ValueError(f"Unsupported irrep normalization: {irrep_normalization}.")
+
+        mul_ir_in1 = first_input_irreps[instruction.i_in1]
+        mul_ir_in2 = second_input_irreps[instruction.i_in2]
+        mul_ir_out = output_irreps[instruction.i_out]
+
+        assert mul_ir_in1.ir.p * mul_ir_in2.ir.p == mul_ir_out.ir.p
+        assert (
+            abs(mul_ir_in1.ir.l - mul_ir_in2.ir.l)
+            <= mul_ir_out.ir.l
+            <= mul_ir_in1.ir.l + mul_ir_in2.ir.l
+        )
+
+        if irrep_normalization == "component":
+            alpha = mul_ir_out.ir.dim
+        if irrep_normalization == "norm":
+            alpha = mul_ir_in1.ir.dim * mul_ir_in2.ir.dim
+        if irrep_normalization == "none":
+            alpha = 1
+
+        x = path_normalization_factors[instruction]
+        if x > 0.0:
+            alpha /= x
+
+        alpha *= output_variance[instruction.i_out]
+        alpha *= instruction.path_weight
+
+        if instruction.has_weight:
+            return instruction.replace(
+                path_weight=math.sqrt(alpha) ** gradient_normalization_exponent,
+                weight_std=math.sqrt(alpha) ** (1.0 - gradient_normalization_exponent),
+            )
+        else:
+            return instruction.replace(path_weight=math.sqrt(alpha))
+
+    return [update(instruction) for instruction in instructions]
+
+def _sum_weighted_tensor_product(
+    X1,
+    X2,
+    weights,
+    weight_index,
+    receiver_list,
+    num_nodes,
+    avg_num_neighbours,
+    nthreadx,
+    nthready,
+    nthreadz):
+
+    return torch.ops.mace_cuda_tp.sum_weighted_tensor_product(
+        X1,
+        X2,
+        weights,
+        weight_index,
+        receiver_list,
+        num_nodes,
+        avg_num_neighbours,
+        nthreadx,
+        nthready,
+        nthreadz)
 
 def _tensor_product(
                 X1, X2, 
@@ -27,36 +133,76 @@ def _tensor_product(
                 output_size, nthreadx, nthready, nthreadz)
 
 def _symmetric_contraction(
-                X: torch.Tensor, 
-                atom_types: torch.Tensor, 
-                U3_nonsparse_indices: torch.Tensor, 
-                U3_num_nonsparse: torch.Tensor, 
-                U3_nonsparse_elements: torch.Tensor, 
-                U2_nonsparse_indices: torch.Tensor, 
-                U2_nonsparse_elements: torch.Tensor, 
-                U1: torch.Tensor, 
-                W3: torch.Tensor, 
-                W2: torch.Tensor, 
-                W1 : torch.Tensor, 
-                nthreadx: int,
-                nthready: int,
-                nthreadz: int ) -> torch.Tensor:
+            X,
+            atom_types,
+            U3_num_nonsparse_1,
+            U3_num_nonsparse_2,
+            U3_num_nonsparse_3,
+            U3_indices_0,
+            U3_indices_1,
+            U3_indices_2,
+            U3_indices_3,
+            U3_values_0,
+            U3_values_1,
+            U3_values_2,
+            U3_values_3,
+            U2_num_nonsparse_1,
+            U2_num_nonsparse_2,
+            U2_indices_1,
+            U2_indices_2,
+            U2_values_1,
+            U2_values_2,
+            U1_num_nonsparse,
+            U1_index,
+            W3,
+            W2,
+            W1,
+            W3_L0_size : int,
+            W2_L0_size : int,
+            W1_L0_size : int,
+            W3_size,
+            W2_size,
+            W1_size,
+            U3_max_nonsparse,
+            nthreadX: int,
+            nthreadY: int,
+            nthreadZ: int) -> torch.Tensor:
     
     return torch.ops.mace_cuda_symm_contraction.symmetric_contraction(
-                X, 
-                atom_types, 
-                U3_nonsparse_indices, 
-                U3_num_nonsparse, 
-                U3_nonsparse_elements, 
-                U2_nonsparse_indices, 
-                U2_nonsparse_elements, 
-                U1, 
-                W3, 
-                W2, 
-                W1, 
-                nthreadx,
-                nthready,
-                nthreadz)
+            X,
+            atom_types,
+            U3_num_nonsparse_1,
+            U3_num_nonsparse_2,
+            U3_num_nonsparse_3,
+            U3_indices_0,
+            U3_indices_1,
+            U3_indices_2,
+            U3_indices_3,
+            U3_values_0,
+            U3_values_1,
+            U3_values_2,
+            U3_values_3,
+            U2_num_nonsparse_1,
+            U2_num_nonsparse_2,
+            U2_indices_1,
+            U2_indices_2,
+            U2_values_1,
+            U2_values_2,
+            U1_num_nonsparse,
+            U1_index,
+            W3,
+            W2,
+            W1,
+            W3_L0_size,
+            W2_L0_size,
+            W1_L0_size,
+            W3_size,
+            W2_size,
+            W1_size,
+            U3_max_nonsparse,
+            nthreadX,
+            nthreadY,
+            nthreadZ)
 
 
 class TensorProduct(torch.nn.Module):
@@ -151,6 +297,10 @@ class TensorProduct(torch.nn.Module):
     self.mu2 = torch.cat(mu_2).cuda().type(torch.int16)
     self.mu3 = torch.cat(mu_3).cuda().type(torch.int16)
 
+    print (self.mu1)
+    print (self.mu2)
+    print (self.mu3)
+
     self.cg_coeffs = torch.cat(cg_coeffs).type(self.dtype).cuda()
 
     self.mu_1_sort = torch.argsort(self.mu1).type(torch.int16).cuda()
@@ -162,112 +312,316 @@ class TensorProduct(torch.nn.Module):
 
     assert x.dtype == self.dtype and y.dtype == self.dtype, f"x: {x.dtype} and y:{y.dtype} need to be the same as this class: {self.dtype}"
     
-    nthreads = 32
-    if (x.shape[-1] == 96):
-        nthreads = 96
-    elif (x.shape[-1] >= 64):
-        nthreads = 64
+    nthreads = 96
 
     return _tensor_product(x, y, 
                           self.mu1, self.mu2, self.mu3,
                           self.mu_1_sort, self.mu_2_sort, self.mu_3_sort,
                           self.cg_coeffs,
-                          self.irreps_out.dim, nthreads, 1, 1)
-
+                          self.irreps_out.dim, nthreads, 4, 1)
 
 class SymmetricContraction(torch.nn.Module):
 
-    def __init__(self, U_tensors, W_tensors, device="cuda", dtype=torch.float64):
+    def __init__(self, irreps_in: o3.Irreps, irreps_out: o3.Irreps, W_tensors, correlation=3, nthreadX=32, nthreadY=4, nthreadZ=1, device="cuda", dtype=torch.float64):
         super().__init__()
 
         self.device=device
         self.dtype=dtype
+        self.irreps_in = irreps_in
+        self.irreps_out = irreps_out
+        self.correlation = correlation
 
-        assert len(U_tensors.keys()) == 3, "U_tensors must contain only 3 keys."
-        assert len(W_tensors.keys()) == 3, "W_tensors must contain only 3 keys."
-
-        for key in U_tensors.keys():
-            if (not U_tensors[key].is_cuda):
-                U_tensors[key] = U_tensors[key].cuda()
-
-            assert U_tensors[key].dtype == self.dtype, f"U_tensor[{key}] dtype: {U_tensors[key].dtype} is not the same as self.dtype {self.dtype}"
-
-            if (not W_tensors[key].is_cuda):
-                W_tensors[key] = W_tensors[key].cuda()
-
-            assert W_tensors[key].dtype == self.dtype, f"W_tensor[{key}] dtype: {W_tensors[key].dtype} is not the same as self.dtype {self.dtype}"
-
-        nl_3 = U_tensors["3"].shape[0]
-
-        self.U3_num_nonsparse = torch.zeros((nl_3, nl_3), dtype=torch.uint8).cuda()
-
-        for i in range(nl_3):
-            for j in range(nl_3):
-                kdx1, ldx1  = torch.where(U_tensors["3"][i, j] != 0.0)
-                self.U3_num_nonsparse[i, j] = kdx1.shape[0]
-
-        self.U3_nonsparse_indices = torch.zeros((self.U3_num_nonsparse.max().item(), nl_3, nl_3), dtype=torch.int32).cuda()
+        self.nthreadX = nthreadX
+        self.nthreadY = nthreadY
+        self.nthreadZ = nthreadZ
         
-        self.U3_nonsparse_elements = torch.zeros((4, nl_3, nl_3), dtype=self.dtype).cuda()
-        self.U2_nonsparse_indices = torch.zeros((nl_3,nl_3), dtype=torch.uint8).cuda()
-        self.U2_nonsparse_elements = torch.zeros((nl_3, nl_3), dtype=self.dtype).cuda()
+        self.nlout = (irreps_out.lmax + 1) ** 2
 
-        for i in range(nl_3):
-            for j in range(nl_3):
-                
-                kdx1, ldx1  = torch.where(U_tensors["3"][i, j] != 0.0)
-                _, ldx2  = torch.where(U_tensors["3"][j, :, i, :] != 0.0)
-                _, ldx3  = torch.where(U_tensors["3"][j, i] != 0.0)
+        assert correlation == 3, "CUDASymmetricContraction exclusively supports correlation=3"
 
-                for k in range(kdx1.shape[0]):
+        self.U_matrices = {}
 
-                    #lets pack the indices together into single int32
-                    
-                    compressed_output1 = kdx1[k] << 8 | ldx1[k]
-                    compressed_output2 = ldx2[k] << 8 | ldx3[k]
+        for nu in range(1, correlation + 1):
+            self.U_matrices[nu] = {}
 
-                    compressed_output = compressed_output2 << 16 | compressed_output1
+            for ir_id, ir_out in enumerate(irreps_out):
+                U_matrix = U_matrix_real(
+                    irreps_in=irreps_in,
+                    irreps_out=o3.Irreps(str(ir_out.ir)),
+                    correlation=nu,
+                    dtype=torch.float32,
+                )[-1]
+                self.U_matrices[nu][ir_id] = U_matrix
 
-                    self.U3_nonsparse_indices[k, i,j] = compressed_output
+        self.W_tensors = W_tensors
 
-                    self.U3_nonsparse_elements[k, i, j] = U_tensors["3"][i, j, kdx1[k], ldx1[k]]
+        self.setup_sparse_matrices()
+        self.setup_weights()
 
-        for i in range (U_tensors["2"].shape[0]):
+        shared_mem_required = torch.ops.mace_cuda_symm_contraction.LGT0_shared_memory_required(
+            nthreadX, nthreadY, nthreadZ,  
+            self.u3_max_nonsparse_tensor.max().item(), 
+            16,
+            self.nweights_3[-1].item(), self.nweights_2[-1].item(), self.nweights_1[-1].item(), dtype)
 
-            jdx, kdx  = torch.where(U_tensors["2"][i] != 0.0)
-
-            if (jdx.shape[0] > 0):
-                self.U2_nonsparse_indices[i, jdx] = kdx.type(torch.uint8)
-                self.U2_nonsparse_elements[i, jdx] = U_tensors["2"][i, jdx, kdx]
-
-        self.U1 = U_tensors["1"]
-
-        self.W3 = W_tensors["3"]
-        self.W2 = W_tensors["2"]
-        self.W1 = W_tensors["1"]
-
+        if (shared_mem_required > 49152):
+            print ("adjusting shared memory to fit:", shared_mem_required, "bytes")
+            for device_id in range(torch.cuda.device_count()):
+                if torch.ops.mace_cuda_symm_contraction.set_shared_mem_size(shared_mem_required, device_id, self.dtype):
+                    print("shared memory reallocation accepted on device:", device_id)
+            
     def forward(self, x, atom_types):
 
         assert x.shape[-1] % 32 == 0, "channel dimension of x ([-1]) must be a multiple of 32."
         assert x.shape[1] == 16, "l dimension of x ([1]) must be 16."
         
-        nthreads = 32
+        return _symmetric_contraction(  
+                    x, 
+                    atom_types,
+                    self.U3_num_nonsparse_1,
+                    self.U3_num_nonsparse_2,
+                    self.U3_num_nonsparse_3,
+                    self.U3_indices_0, # L=0 specific
+                    self.U3_indices_1,
+                    self.U3_indices_2,
+                    self.U3_indices_3,
+                    self.U3_values_0, # L=0 specific
+                    self.U3_values_1,
+                    self.U3_values_2,
+                    self.U3_values_3,
+                    self.U2_num_nonsparse_1,
+                    self.U2_num_nonsparse_2,
+                    self.U2_indices_1,
+                    self.U2_indices_2,
+                    self.U2_values_1,
+                    self.U2_values_2,
+                    self.U1_num_values,
+                    self.U1_index,
+                    self.weights_3,
+                    self.weights_2,
+                    self.weights_1,
+                    self.W3_L0_size,
+                    self.W2_L0_size,
+                    self.W1_L0_size,
+                    self.nweights_3,
+                    self.nweights_2,
+                    self.nweights_1,
+                    self.u3_max_nonsparse_tensor,
+                    self.nthreadX,
+                    self.nthreadY,
+                    self.nthreadZ)
+    
+    def setup_sparse_matrices(self):
+        lout_counter = 0
+        self.U3_num_nonsparse_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U3_num_nonsparse_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U3_num_nonsparse_3 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        for ir_id, ir_out in enumerate(self.irreps_out):
+            U_matrix = self.U_matrices[3][ir_id]
+            if (len(U_matrix.shape) == 4):
+                nl = U_matrix.shape[0]
+                for i in range(nl):
+                        for j in range(nl):
+                            kdx1, ldx1  = torch.where(U_matrix[i, j] != 0.0)
+                            kdx2, ldx2  = torch.where(U_matrix[j, i, :, :] != 0.0)
+                            kdx3, ldx3  = torch.where(U_matrix[j, :, i, :] != 0.0)
+                            if (kdx1.shape[0] > 0):
+                                self.U3_num_nonsparse_1[lout_counter, i, j] = kdx1.shape[0]
+                            if (kdx2.shape[0] > 0):
+                                self.U3_num_nonsparse_2[lout_counter, i, j] = kdx2.shape[0]
+                            if (kdx3.shape[0] > 0):   
+                                self.U3_num_nonsparse_3[lout_counter, i, j] = kdx3.shape[0]
+                lout_counter +=1
+            else:
+                nl = U_matrix.shape[1]
+                for a in range(U_matrix.shape[0]):
+                    for i in range(nl):
+                        for j in range(nl):
+                            kdx1, ldx1  = torch.where(U_matrix[a, i, j] != 0.0)
+                            kdx2, ldx2  = torch.where(U_matrix[a, j, i] != 0.0)
+                            kdx3, ldx3  = torch.where(U_matrix[a, j, :, i, :] != 0.0)
+                            self.U3_num_nonsparse_1[lout_counter, i, j] = kdx1.shape[0]
+                            self.U3_num_nonsparse_2[lout_counter, i, j] = kdx2.shape[0]
+                            self.U3_num_nonsparse_3[lout_counter, i, j] = kdx3.shape[0]
+                    lout_counter+=1
 
-        if (x.shape[-1] >= 128):
-            nthreads = 64
-        
-        return _symmetric_contraction(
-                x, 
-                atom_types, 
-                self.U3_nonsparse_indices, 
-                self.U3_num_nonsparse, 
-                self.U3_nonsparse_elements, 
-                self.U2_nonsparse_indices, 
-                self.U2_nonsparse_elements, 
-                self.U1, 
-                self.W3, 
-                self.W2, 
-                self.W1, 
-                nthreads,
-                8,
-                1)
+        self.u3_max_nonsparse = torch.max( torch.tensor([self.U3_num_nonsparse_1.max().item(), self.U3_num_nonsparse_2.max().item(), self.U3_num_nonsparse_3.max().item()])).item()
+
+        lout_counter = 0
+        self.U3_indices_0 = torch.zeros((self.u3_max_nonsparse, 16, 16), dtype=torch.int32).cuda()
+        self.U3_values_0 = torch.zeros((self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
+        self.U3_indices_1  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).cuda()
+        self.U3_indices_2  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).cuda()
+        self.U3_indices_3  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).cuda()
+        self.U3_values_1 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
+        self.U3_values_2 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
+        self.U3_values_3 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
+        for ir_id, ir_out in enumerate(self.irreps_out):
+            U_matrix = self.U_matrices[3][ir_id]
+            if (len(U_matrix.shape) == 4):
+                nl = U_matrix.shape[0]
+                for i in range(nl):
+                    for j in range(nl):
+                        kdx1, ldx1  = torch.where(U_matrix[i, j] != 0.0)
+                        _, ldx2  = torch.where(U_matrix[j, i, :, :] != 0.0)
+                        _, ldx3  = torch.where(U_matrix[j, :, i, :] != 0.0)
+                        for k in range(kdx1.shape[0]):
+                            compressed_output1 = kdx1[k] << 8 | ldx1[k]
+                            compressed_output2 = ldx2[k] << 8 | ldx3[k]
+                            compressed_output = compressed_output2 << 16 | compressed_output1
+                            self.U3_indices_0[k, i, j] = compressed_output
+                            self.U3_values_0[k, i, j] = U_matrix[i, j, kdx1[k], ldx1[k]]
+                lout_counter +=1
+            else:
+                nl = U_matrix.shape[1]
+                for a in range(U_matrix.shape[0]):
+                    for i in range(nl):
+                        for j in range(nl):
+                            kdx1, ldx1  = torch.where(U_matrix[a, i, j] != 0.0)
+                            kdx2, ldx2  = torch.where(U_matrix[a, j, i] != 0.0)
+                            kdx3, ldx3  = torch.where(U_matrix[a, j, :, i, :] != 0.0)
+                            for k in range (self.U3_num_nonsparse_1[lout_counter, i, j]):
+                                compressed_index = kdx1[k] << 8 | ldx1[k]
+                                self.U3_indices_1[lout_counter, k, i, j] = compressed_index
+                                self.U3_values_1[lout_counter, k, i, j] = U_matrix[a, i, j, kdx1[k], ldx1[k]]
+                            for k in range (self.U3_num_nonsparse_2[lout_counter, i, j]):
+                                compressed_index = kdx2[k] << 8 | ldx2[k]
+                                self.U3_indices_2[lout_counter, k, i, j] = compressed_index
+                                self.U3_values_2[lout_counter, k, i, j] = U_matrix[a, j, i, kdx2[k], ldx2[k]]
+                            for k in range (self.U3_num_nonsparse_3[lout_counter, i, j]):
+                                compressed_index = kdx3[k] << 8 | ldx3[k]
+                                self.U3_indices_3[lout_counter, k, i, j] = compressed_index
+                                self.U3_values_3[lout_counter, k, i, j] = U_matrix[a, j, kdx3[k], i, ldx3[k]]
+
+                    lout_counter+=1
+
+        lout_counter = 0
+        self.U2_num_nonsparse_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U2_num_nonsparse_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        for ir_id, ir_out in enumerate(self.irreps_out):
+            U_matrix = self.U_matrices[2][ir_id]
+            if (len(U_matrix.shape) == 3):
+                nl = U_matrix.shape[0]
+                for i in range(nl):
+                    for j in range (nl):
+                            jdx,  = torch.where(U_matrix[i, j] != 0.0)
+                            self.U2_num_nonsparse_1[lout_counter, i, j] = jdx.shape[0]
+                            jdx,  = torch.where(U_matrix[j, i] != 0.0)
+                            self.U2_num_nonsparse_2[lout_counter, i, j] = jdx.shape[0]
+                lout_counter +=1
+            else:
+                nl = U_matrix.shape[1]
+                for a in range(U_matrix.shape[0]):
+                    for i in range(nl):
+                        for j in range (nl):
+                            jdx,  = torch.where(U_matrix[a, i, j] != 0.0)
+                            self.U2_num_nonsparse_1[lout_counter, i, j] = jdx.shape[0]
+                            jdx,  = torch.where(U_matrix[a, j, i] != 0.0)
+                            self.U2_num_nonsparse_2[lout_counter, i, j] = jdx.shape[0]
+                    lout_counter+=1
+
+        lout_counter = 0
+        self.u2_max_nonsparse = torch.max( torch.tensor([self.U2_num_nonsparse_1.max().item(), self.U2_num_nonsparse_2.max().item()])).item()
+        self.U2_values_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.float32).cuda()
+        self.U2_indices_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U2_values_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.float32).cuda()
+        self.U2_indices_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        for ir_id, ir_out in enumerate(self.irreps_out):
+            U_matrix = self.U_matrices[2][ir_id]
+            if (len(U_matrix.shape) == 3):
+                nl = U_matrix.shape[0]
+                for i in range(nl):
+                    for j in range (nl):
+                        kdx_1,  = torch.where(U_matrix[i, j] != 0.0)
+                        kdx_2,  = torch.where(U_matrix[j, i] != 0.0)
+                        if (self.U2_num_nonsparse_1[lout_counter, i, j] > 0):
+                            self.U2_values_1[lout_counter, i, j] = U_matrix[ i, j, kdx_1]
+                            self.U2_indices_1[lout_counter, i, j] = kdx_1
+                        if (self.U2_num_nonsparse_2[lout_counter, i, j] > 0):
+                            self.U2_values_2[lout_counter, i, j] = U_matrix[ j, i, kdx_2]
+                            self.U2_indices_2[lout_counter, i, j] = kdx_2
+                lout_counter +=1
+            else:
+                for a in range(U_matrix.shape[0]):
+                    nl = U_matrix[a].shape[0]
+                    for i in range(nl):
+                        for j in range (nl):
+                            kdx_1,  = torch.where(U_matrix[a, i, j] != 0.0)
+                            kdx_2,  = torch.where(U_matrix[a, j, i] != 0.0)
+                            if (self.U2_num_nonsparse_1[lout_counter, i, j] > 0):
+                                self.U2_values_1[lout_counter, i, j] = U_matrix[a, i, j, kdx_1]
+                                self.U2_indices_1[lout_counter, i, j] = kdx_1
+
+                            if (self.U2_num_nonsparse_2[lout_counter, i, j] > 0):
+                                self.U2_values_2[lout_counter, i, j] = U_matrix[a, j, i, kdx_2]
+                                self.U2_indices_2[lout_counter, i, j] = kdx_2
+
+                    lout_counter+=1
+
+        lout_counter = 0
+        self.U1_num_values = torch.zeros((self.nlout, 16), dtype=torch.int16).cuda()
+        self.U1_index = torch.zeros((self.nlout, 16), dtype=torch.int16).cuda()
+        for ir_id, ir_out in enumerate(self.irreps_out):
+            U_matrix =  self.U_matrices[1][ir_id]
+            if (len(U_matrix.shape) == 2):
+                nl = U_matrix.shape[0]
+                for i in range(nl):
+                    jdx,  = torch.where(U_matrix[i] != 0.0)
+                    if (jdx.shape[0] > 0):
+                        self.U1_num_values[lout_counter, i] = 1
+                        self.U1_index[lout_counter, i] = jdx
+                lout_counter +=1
+            else:
+                for a in range(U_matrix.shape[0]):
+                    for i in range(nl):
+                        jdx,  = torch.where(U_matrix[a, i] != 0.0)
+                        if (jdx.shape[0] > 0):
+                            self.U1_num_values[lout_counter, i] = 1
+                            self.U1_index[lout_counter, i] = jdx
+                    lout_counter+=1
+
+        self.u3_max_nonsparse_tensor = torch.zeros(self.nlout, device='cpu', dtype=int) 
+        for i in range (self.U3_indices_1.shape[0]):
+            self.u3_max_nonsparse_tensor[i] = torch.max( torch.tensor([self.U3_num_nonsparse_1[i].max().item(), self.U3_num_nonsparse_2[i].max().item(), self.U3_num_nonsparse_3[i].max().item()])).item()
+
+
+    def setup_weights(self):
+        self.weight_max_size = {}
+
+        for c in self.W_tensors.keys():
+            l = int(c)
+            nl = 2 * l + 1
+            for contraction in self.W_tensors[c].keys():
+                if contraction not in self.weight_max_size or self.weight_max_size[contraction] < self.W_tensors[c][contraction].shape[-2]:
+                    self.weight_max_size[contraction] = self.W_tensors[c][contraction].shape[-2]
+
+        weights_dict = {}
+        nweights ={}
+
+        nelements = self.W_tensors[str(0)][3].shape[0]
+
+        for nu in range(1, self.correlation + 1):
+            weights_c = torch.zeros(self.nlout, nelements, self.weight_max_size[nu], self.W_tensors[str(0)][3].shape[-1], device='cuda', dtype=self.dtype)  
+            weights_dict[str(nu)] = weights_c
+            nweights[str(nu)] = torch.zeros(self.nlout, device='cuda', dtype=torch.int32)
+
+        count = 0
+        for i in range(len(self.W_tensors.keys())):
+            nl_outputs = 2 * i + 1
+            for j in range (nl_outputs):
+                for nu in self.W_tensors[str(i)].keys():
+                    nweights[str(nu)][count +j] = self.W_tensors[str(i)][nu].shape[-2]
+                    weights_dict[str(nu)][count + j, :, :self.W_tensors[str(i)][nu].shape[-2], :] = self.W_tensors[str(i)][nu]
+            count += nl_outputs
+
+        self.weights_3 = weights_dict[str(3)]
+        self.weights_2 = weights_dict[str(2)]
+        self.weights_1 = weights_dict[str(1)]
+
+        self.nweights_3 = nweights[str(3)]
+        self.nweights_2 = nweights[str(2)]
+        self.nweights_1 = nweights[str(1)]
+
+        self.W3_L0_size = self.nweights_3[0].item()
+        self.W2_L0_size = self.nweights_2[0].item()
+        self.W1_L0_size = self.nweights_1[0].item()

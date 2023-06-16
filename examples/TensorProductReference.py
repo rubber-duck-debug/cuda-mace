@@ -96,7 +96,7 @@ class TensorProductReference(torch.nn.Module):
 
     def forward_unweighted_tp(self, x, y):
         all_outputs = []
-
+        
         for i in range(x.shape[0]):  # loop over edges
             outputs = []
 

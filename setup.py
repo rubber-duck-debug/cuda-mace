@@ -18,7 +18,7 @@ __description__ = "GPU-Accelerated Sparse Symmetric Contractions and Tensor Prod
 __url__ = "TODO"
 
 host_flags = ['-O3']
-#device_flags = ['-G', '-lineinfo']
+debug_flags = ['-G', '-lineinfo']
 nvcc_flags = ['-O3', '--use_fast_math']
 
 def readme():

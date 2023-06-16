@@ -14,14 +14,199 @@ using namespace torch::autograd;
 #define FULL_MASK 0xffffffff
 
 template <typename scalar_t>
-__global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> X1,
-                                                          const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> X2,
-                                                          const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> mu_1,
-                                                          const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> mu_2,
-                                                          const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> mu_3,
-                                                          const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> X3_ordering,
-                                                          const torch::PackedTensorAccessor32<scalar_t, 1, torch::RestrictPtrTraits> cg_coefficients,
-                                                          torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> output)
+__global__ void dense_sum_tensor_product_cuda_forward_kernel(const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X1,
+                                                             const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X2,
+                                                             const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> weights,
+                                                             const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> weight_index,
+                                                             const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,
+                                                             const int32_t nsamples_per_thread,
+                                                             torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
+
+{
+    extern __shared__ char buffer[];
+    size_t offset = 0;
+
+    // scalar_t *buffer_weights = reinterpret_cast<scalar_t *>(buffer + offset);
+    // offset += blockDim.y * blockDim.x * 4 * sizeof(scalar_t);
+    // scalar_t *buffer_x2 = reinterpret_cast<scalar_t *>(buffer + offset);
+    // offset += blockDim.y * X2.size(1) * sizeof(scalar_t);
+    // scalar_t *buffer_output = reinterpret_cast<scalar_t *>(buffer + offset);
+    // offset += blockDim.y * blockDim.x * 16 * sizeof(scalar_t);
+    int32_t *buffer_weight_index = reinterpret_cast<int32_t *>(buffer + offset);
+    offset += weight_index.size(0) * sizeof(int32_t);
+
+    int32_t prev_receiver = 0;
+    int32_t sample = 0;
+    int32_t receiver = 0;
+
+    if (threadIdx.y == 0)
+    {
+        for (int32_t i = threadIdx.x; i < weight_index.size(0); i += blockDim.x)
+        {
+            buffer_weight_index[i] = weight_index[i];
+        }
+    }
+
+    __syncthreads();
+
+    int32_t channel_id = blockIdx.y * blockDim.x + threadIdx.x;
+
+    for (int32_t sph = 0; sph < 16; sph ++) {
+
+        scalar_t tmp_output = 0.0;
+        int32_t weight_index = buffer_weight_index[sph];
+
+        for (int32_t i = 0; i < nsamples_per_thread; i++)
+        {
+            int32_t sample_idx = blockIdx.x * (blockDim.y * nsamples_per_thread) + threadIdx.y * nsamples_per_thread + i;
+
+            if (sample_idx < X1.size(0))
+            {
+                receiver = receiver_list[sample_idx];
+                sample = sample_idx;
+            }
+
+            scalar_t x1 = 0.0;
+            scalar_t x2 = 0.0;
+            scalar_t weight = 0.0;
+
+            if (sample_idx < X1.size(0))
+            {
+                x1 = X1[sample][channel_id];
+                x2 = X2[sample][sph];
+                weight = weights[sample][weight_index * X1.size(1) + channel_id];
+            }
+
+            if (receiver != prev_receiver)
+            {
+                atomicAdd(&output[prev_receiver][sph][channel_id], tmp_output);
+
+                tmp_output = 0.0;
+                prev_receiver = receiver;
+            }
+            
+            tmp_output += x1 * x2 * weight;                
+        }
+
+        atomicAdd(&output[receiver][sph][channel_id], tmp_output);
+    }
+}
+
+torch::Tensor sum_weighted_tensor_product_gpu(
+    const torch::Tensor X1,
+    const torch::Tensor X2,
+    const torch::Tensor weights,
+    const torch::Tensor weight_index,
+    const torch::Tensor receiver_list,
+    const int64_t num_nodes,
+    const int64_t avg_num_neighbours,
+    const int64_t nthreadx,
+    const int64_t nthready,
+    const int64_t nthreadz)
+{
+
+    torch::Tensor output = torch::empty({num_nodes, X2.size(1), X1.size(1)},
+                                        torch::TensorOptions()
+                                            .dtype(X1.dtype())
+                                            .device(X1.device()));
+
+    const auto batch_size_x = X1.size(0);
+    const auto batch_size_y = X1.size(1);
+
+    auto find_num_blocks = [](int x, int bdim)
+    { return (x + bdim - 1) / bdim; };
+
+    dim3 grid_dim(nthreadx, nthready, nthreadz);
+
+    dim3 block_dim(find_num_blocks(batch_size_x, avg_num_neighbours * grid_dim.y), find_num_blocks(batch_size_y, grid_dim.x));
+
+    AT_DISPATCH_FLOATING_TYPES(
+        X1.type(), "sum_weighted_tensor_product_gpu", ([&]
+                                                         {
+            size_t total_buff_size = 0;
+
+            //total_buff_size += grid_dim.y * X2.size(1) * sizeof(scalar_t);
+            //total_buff_size += grid_dim.y * grid_dim.x * 4 * sizeof(scalar_t);
+            //total_buff_size += grid_dim.y * grid_dim.x * 16 * sizeof(scalar_t);
+            total_buff_size += weight_index.size(0) * sizeof(int32_t);
+
+            dense_sum_tensor_product_cuda_forward_kernel<scalar_t><<<block_dim, grid_dim, total_buff_size>>>(
+                                                      X1.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                      X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                      weights.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                      weight_index.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                                                      receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                                                      avg_num_neighbours,
+                                                      output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
+             }));
+
+    cudaDeviceSynchronize();
+
+    return output;
+}
+
+template <typename scalar_t>
+__global__ void dense_tensor_product_cuda_forward_kernel(const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> X1,
+                                                         const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X2,
+                                                         torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
+{
+
+    extern __shared__ char buffer[];
+    size_t offset = 0;
+
+    scalar_t *buffer_x2 = reinterpret_cast<scalar_t *>(buffer + offset);
+    offset += blockDim.y * X2.size(1) * sizeof(scalar_t);
+
+    // load all cg coefficients, mu indices into shared memory
+    bool weighted = false;
+
+    int sample_idx = blockIdx.x * blockDim.y + threadIdx.y;
+
+    for (int sph = threadIdx.x; sph < X2.size(1); sph += blockDim.x)
+    {
+        buffer_x2[threadIdx.y * X2.size(1) + sph] = X2[sample_idx][sph];
+    }
+
+    __syncthreads();
+
+    for (int channel_id = threadIdx.x; channel_id < X1.size(2); channel_id += blockDim.x) // loop over nchannels
+    {
+        scalar_t x1 = X1[sample_idx][0][channel_id];
+
+        output[sample_idx][0][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 0] * x1;
+        output[sample_idx][1][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 1] * x1;
+        output[sample_idx][2][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 2] * x1;
+        output[sample_idx][3][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 3] * x1;
+        output[sample_idx][4][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 4] * x1;
+        output[sample_idx][5][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 5] * x1;
+        output[sample_idx][6][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 6] * x1;
+        output[sample_idx][7][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 7] * x1;
+        output[sample_idx][8][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 8] * x1;
+        output[sample_idx][9][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 9] * x1;
+        output[sample_idx][10][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 10] * x1;
+        output[sample_idx][11][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 11] * x1;
+        output[sample_idx][12][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 12] * x1;
+        output[sample_idx][13][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 13] * x1;
+        output[sample_idx][14][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 14] * x1;
+        output[sample_idx][15][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + 15] * x1;
+
+        /*#pragma unroll
+        for (int sph =0; sph < X2.size(1); sph ++)
+        {
+            output[sample_idx][sph][channel_id] = buffer_x2[threadIdx.y * X2.size(1) + sph] * x1;
+        } */
+    }
+}
+
+template <typename scalar_t>
+__global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> X1,
+                                                          const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X2,
+                                                          const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> mu_1,
+                                                          const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> mu_2,
+                                                          const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> mu_3,
+                                                          const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> X3_ordering,
+                                                          const torch::PackedTensorAccessor64<scalar_t, 1, torch::RestrictPtrTraits> cg_coefficients,
+                                                          torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
 {
 
     extern __shared__ char buffer[];
@@ -30,7 +215,7 @@ __global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTen
     scalar_t *buffer_x1 = reinterpret_cast<scalar_t *>(buffer + offset);
     offset += blockDim.x * X1.size(1) * sizeof(scalar_t);
     scalar_t *buffer_x2 = reinterpret_cast<scalar_t *>(buffer + offset);
-    offset += X2.size(1) * X2.size(2) * sizeof(scalar_t);
+    offset += X2.size(1) * sizeof(scalar_t);
 
     scalar_t *buffer_cg_coefficients = reinterpret_cast<scalar_t *>(buffer + offset);
     offset += cg_coefficients.size(0) * sizeof(scalar_t);
@@ -95,11 +280,11 @@ __global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTen
 
     __syncthreads();
 
-    int atom_idx = blockIdx.x;
+    int sample_idx = blockIdx.x;
 
     for (int l_id = threadIdx.x; l_id < X2.size(1); l_id += blockDim.x)
     {
-        buffer_x2[l_id] = X2[atom_idx][l_id][0];
+        buffer_x2[l_id] = X2[sample_idx][l_id];
     }
 
     __syncthreads();
@@ -109,7 +294,7 @@ __global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTen
         // zero out or load shared memory for subset of X1[ix, :], X2[ix, :] and X3[ix, :]
         for (int l_id = 0; l_id < X1.size(1); l_id += 1)
         {
-            buffer_x1[l_id * blockDim.x + threadIdx.x] = X1[atom_idx][l_id][channel_id];
+            buffer_x1[l_id * blockDim.x + threadIdx.x] = X1[sample_idx][l_id][channel_id];
         }
 
         __syncthreads();
@@ -134,7 +319,7 @@ __global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTen
             // new X3_index so writeout
             if (prev_X3_index != X3_index)
             {
-                output[atom_idx][prev_X3_index][channel_id] = sum;
+                output[sample_idx][prev_X3_index][channel_id] = sum;
                 sum = 0.0;
                 prev_X3_index = X3_index;
             }
@@ -142,11 +327,11 @@ __global__ void sparse_tensor_product_cuda_forward_kernel(const torch::PackedTen
             sum += cg_coeff * x1 * x2;
         }
         // write out last element
-        output[atom_idx][X3_index][channel_id] = sum;
+        output[sample_idx][X3_index][channel_id] = sum;
     }
 }
 
-torch::Tensor sparse_tensor_product_gpu_forward(
+torch::Tensor tensor_product_gpu_forward(
     const torch::Tensor X1,
     const torch::Tensor X2,
     const torch::Tensor mu_1,
@@ -185,21 +370,35 @@ torch::Tensor sparse_tensor_product_gpu_forward(
         X1.type(), "sparse_tensor_product_gpu_forward", ([&]
                                                          {
             size_t total_buff_size = 0;
+            
+            if (X1.size(1) == 1) {
+                
+               dim3 dense_block_dim(find_num_blocks(batch_sizex, grid_dim.y));
 
+               total_buff_size += grid_dim.y * X2.size(1) * sizeof(scalar_t);
+
+                dense_tensor_product_cuda_forward_kernel<scalar_t><<<dense_block_dim, grid_dim, total_buff_size>>>(X1.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                      X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                        output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
+            } else {
+
+            
             total_buff_size += 7 * mu_1.size(0) * sizeof(int16_t);
             total_buff_size += 2 * cg_coefficients.size(0) * sizeof(scalar_t);
             total_buff_size += grid_dim.x * X1.size(1) * sizeof(scalar_t);
-            total_buff_size += X2.size(1) * X2.size(2) * sizeof(scalar_t);
+            total_buff_size += X2.size(1) * sizeof(scalar_t);
 
-            sparse_tensor_product_cuda_forward_kernel<scalar_t><<<block_dim, grid_dim, total_buff_size>>>(X1.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                                                                    X2.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                                                                    mu_1.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    mu_2.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    mu_3.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    X3_ordering.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    cg_coefficients.packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>()
-                                                                                    ); }));
+            sparse_tensor_product_cuda_forward_kernel<scalar_t><<<block_dim, grid_dim, total_buff_size>>>(X1.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                                                    X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                    mu_1.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    mu_2.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    mu_3.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    X3_ordering.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    cg_coefficients.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>()
+                                                                                    );
+                                                                                    
+            } }));
 
     cudaDeviceSynchronize();
 
@@ -207,17 +406,110 @@ torch::Tensor sparse_tensor_product_gpu_forward(
 }
 
 template <typename scalar_t>
-__global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> X1,
-                                                      const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> X2,
-                                                      const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> mu1,
-                                                      const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> mu2,
-                                                      const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> mu3,
-                                                      const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> X1_ordering,
-                                                      const torch::PackedTensorAccessor32<int16_t, 1, torch::RestrictPtrTraits> X2_ordering,
-                                                      const torch::PackedTensorAccessor32<scalar_t, 1, torch::RestrictPtrTraits> cg_coefficients,
-                                                      const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_out,
-                                                      torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_X1,
-                                                      torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> grad_X2,
+__global__ void dense_tensor_product_backward_kernel(const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> X1,
+                                                     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X2,
+                                                     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_out,
+                                                     torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_X1,
+                                                     torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> grad_X2,
+                                                     const bool requires_grad_X1,
+                                                     const bool requires_grad_X2)
+{
+
+    extern __shared__ char buffer[];
+
+    size_t offset = 0;
+
+    scalar_t *buffer_x2 = reinterpret_cast<scalar_t *>(buffer + offset);
+    offset += X2.size(1) * sizeof(scalar_t);
+
+    scalar_t *buffer_grad_X2 = reinterpret_cast<scalar_t *>(buffer + offset);
+    offset += X2.size(1) * sizeof(scalar_t);
+
+    scalar_t *buffer_dx1 = reinterpret_cast<scalar_t *>(buffer + offset);
+    offset += blockDim.x * blockDim.y * sizeof(scalar_t);
+
+    int sample_idx = blockIdx.x;
+
+    if (threadIdx.y == 0)
+    {
+        for (int sph = threadIdx.x; sph < X2.size(1); sph += blockDim.x)
+        {
+            buffer_x2[sph] = X2[sample_idx][sph];
+            buffer_grad_X2[sph] = 0.0;
+        }
+    }
+
+    __syncthreads();
+
+    for (int channel_id = threadIdx.x; channel_id < X1.size(2); channel_id += blockDim.x)
+    {
+        __syncthreads();
+
+        scalar_t x1 = X1[sample_idx][0][channel_id];
+
+        scalar_t dx1 = 0.0;
+        scalar_t dx2 = 0.0;
+
+        for (int sph = threadIdx.y; sph < X2.size(1); sph += blockDim.y)
+        {
+
+            float grad = grad_out[sample_idx][sph][channel_id];
+
+            dx1 += buffer_x2[sph] * grad;
+
+            scalar_t tmp = x1 * grad;
+
+            for (int offset = blockDim.x / 2; offset > 0; offset /= 2)
+                tmp += __shfl_down_sync(FULL_MASK, tmp, offset);
+
+            __syncthreads();
+
+            if (threadIdx.x % 32 == 0)
+            {
+                atomicAdd(&buffer_grad_X2[sph], tmp);
+                // buffer_grad_X2[sph] += tmp;
+            }
+        }
+
+        buffer_dx1[threadIdx.y * blockDim.x + threadIdx.x] = dx1;
+
+        __syncthreads();
+
+        if (threadIdx.y == 0)
+        {
+
+            for (int i = 1; i < blockDim.y; i++)
+            {
+                dx1 += buffer_dx1[i * blockDim.x + threadIdx.x];
+            }
+
+            grad_X1[sample_idx][0][channel_id] = dx1;
+        }
+    }
+
+    __syncthreads();
+
+    if (threadIdx.y == 0)
+    {
+        for (int sph = threadIdx.x; sph < X2.size(1); sph += blockDim.x)
+        {
+            grad_X2[sample_idx][sph] = buffer_grad_X2[sph];
+        }
+    }
+}
+
+template <typename scalar_t>
+__global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> X1,
+                                                      const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X2,
+                                                      const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> mu1,
+                                                      const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> mu2,
+                                                      const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> mu3,
+                                                      const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> X1_ordering,
+                                                      const torch::PackedTensorAccessor64<int16_t, 1, torch::RestrictPtrTraits> X2_ordering,
+                                                      const torch::PackedTensorAccessor64<scalar_t, 1, torch::RestrictPtrTraits> cg_coefficients,
+                                                      const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_out,
+                                                      torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_X1,
+                                                      torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> grad_X2,
                                                       const bool requires_grad_X1,
                                                       const bool requires_grad_X2)
 {
@@ -229,7 +521,7 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
     scalar_t *buffer_x1 = reinterpret_cast<scalar_t *>(buffer + offset);
     offset += blockDim.x * X1.size(1) * sizeof(scalar_t);
     scalar_t *buffer_x2 = reinterpret_cast<scalar_t *>(buffer + offset);
-    offset += X2.size(1) * X2.size(2) * sizeof(scalar_t);
+    offset += X2.size(1) * sizeof(scalar_t);
     scalar_t *buffer_grad_out = reinterpret_cast<scalar_t *>(buffer + offset);
     offset += blockDim.x * grad_out.size(1) * sizeof(scalar_t);
 
@@ -272,7 +564,7 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
     int16_t *buffer_mu3_X2 = reinterpret_cast<int16_t *>(buffer + offset);
     offset += mu3.size(0) * sizeof(int16_t);
 
-    int atom_idx = blockIdx.x;
+    int sample_idx = blockIdx.x;
 
     // load all cg coefficients, mu indices into shared memory
     __syncthreads();
@@ -317,7 +609,7 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
     for (int X2_sph_id = threadIdx.x; X2_sph_id < X2.size(1); X2_sph_id += blockDim.x)
     {
 
-        buffer_x2[X2_sph_id] = X2[atom_idx][X2_sph_id][0];
+        buffer_x2[X2_sph_id] = X2[sample_idx][X2_sph_id];
 
         if (requires_grad_X2)
         {
@@ -333,12 +625,12 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
 
         for (int X1_sph_id = 0; X1_sph_id < X1.size(1); X1_sph_id++)
         {
-            buffer_x1[X1_sph_id * blockDim.x + threadIdx.x] = X1[atom_idx][X1_sph_id][channel_id];
+            buffer_x1[X1_sph_id * blockDim.x + threadIdx.x] = X1[sample_idx][X1_sph_id][channel_id];
         }
 
         for (int grad_sph_id = 0; grad_sph_id < grad_out.size(1); grad_sph_id++)
         {
-            buffer_grad_out[grad_sph_id * blockDim.x + threadIdx.x] = grad_out[atom_idx][grad_sph_id][channel_id];
+            buffer_grad_out[grad_sph_id * blockDim.x + threadIdx.x] = grad_out[sample_idx][grad_sph_id][channel_id];
         }
 
         __syncthreads();
@@ -373,7 +665,7 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
 
             if (requires_grad_X1 && prev_X1_index_mu1 != X1_index_mu1)
             {
-                grad_X1[atom_idx][prev_X1_index_mu1][channel_id] = sum_X1;
+                grad_X1[sample_idx][prev_X1_index_mu1][channel_id] = sum_X1;
                 sum_X1 = 0.0;
                 prev_X1_index_mu1 = X1_index_mu1;
             }
@@ -402,7 +694,7 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
         __syncthreads();
 
         if (requires_grad_X1)
-            grad_X1[atom_idx][X1_index_mu1][channel_id] = sum_X1;
+            grad_X1[sample_idx][X1_index_mu1][channel_id] = sum_X1;
 
         if (requires_grad_X2)
         {
@@ -422,7 +714,7 @@ __global__ void sparse_tensor_product_backward_kernel(const torch::PackedTensorA
     {
         for (int X2_sph_id = threadIdx.x; X2_sph_id < grad_X2.size(1); X2_sph_id += blockDim.x)
         {
-            grad_X2[atom_idx][X2_sph_id][0] = buffer_grad_X2[X2_sph_id];
+            grad_X2[sample_idx][X2_sph_id] = buffer_grad_X2[X2_sph_id];
         }
     }
 }
@@ -470,7 +762,7 @@ std::vector<torch::Tensor> sparse_tensor_product_gpu_backward(
     }
     else
     {
-        grad_X2 = torch::empty({1, 1, 1},
+        grad_X2 = torch::empty({1, 1},
                                torch::TensorOptions()
                                    .dtype(X2.dtype())
                                    .device(X2.device()));
@@ -489,14 +781,26 @@ std::vector<torch::Tensor> sparse_tensor_product_gpu_backward(
     AT_DISPATCH_FLOATING_TYPES(
         X1.type(), "sparse_tensor_product_gpu_backward", ([&]
                                                           {
-
             size_t total_buff_size = 0;
 
+            if (X1.size(1) == 1) {
+
+                total_buff_size += 2 * X2.size(1) * sizeof(scalar_t);
+                total_buff_size += grid_dim.x * grid_dim.y * sizeof(scalar_t);
+
+                dense_tensor_product_backward_kernel<scalar_t><<<block_dim, grid_dim, total_buff_size>>>(X1.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                    X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                    grad_output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                    grad_X1.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                    grad_X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                    X1.requires_grad(),
+                                                    X2.requires_grad());
+            } else { 
             total_buff_size += 11 * mu1.size(0) * sizeof(int16_t);
             total_buff_size += 3 * cg_coefficients.size(0) * sizeof(scalar_t);
 
             total_buff_size += grid_dim.x * X1.size(1) * sizeof(scalar_t);
-            total_buff_size += X2.size(1) * X2.size(2) * sizeof(scalar_t);
+            total_buff_size += X2.size(1) * sizeof(scalar_t);
             total_buff_size += grid_dim.x * grad_output.size(1) * sizeof(scalar_t);
 
             if (X2.requires_grad()) { // assume X2 has 1 channel
@@ -504,20 +808,22 @@ std::vector<torch::Tensor> sparse_tensor_product_gpu_backward(
             }
 
             sparse_tensor_product_backward_kernel<scalar_t><<<block_dim, grid_dim, total_buff_size>>>(
-                                                                                    X1.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                                                                    X2.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                                                                    mu1.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    mu2.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    mu3.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    X1_ordering.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    X2_ordering.packed_accessor32<int16_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    cg_coefficients.packed_accessor32<scalar_t, 1, torch::RestrictPtrTraits>(),
-                                                                                    grad_output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                                                                    grad_X1.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                                                                    grad_X2.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                                                    X1.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                                                    X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                                                                    mu1.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    mu2.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    mu3.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    X1_ordering.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    X2_ordering.packed_accessor64<int16_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    cg_coefficients.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
+                                                                                    grad_output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                                                    grad_X1.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                                                                                    grad_X2.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                                                                                     X1.requires_grad(),
                                                                                     X2.requires_grad()
-                                                                                    ); }));
+                                                                                    );
+                                                                                    
+ } }));
 
     cudaDeviceSynchronize();
 
@@ -544,7 +850,7 @@ public:
         const int64_t nthreadz)
     {
 
-        auto result = sparse_tensor_product_gpu_forward(X1, X2, mu1, mu2, mu3, X3_ordering, cg_coefficients, output_size, nthreadx, nthready, nthreadz);
+        auto result = tensor_product_gpu_forward(X1, X2, mu1, mu2, mu3, X3_ordering, cg_coefficients, output_size, nthreadx, nthready, nthreadz);
 
         if (X1.requires_grad() || X2.requires_grad())
         {
@@ -598,7 +904,9 @@ torch::Tensor tensor_product(torch::Tensor X1, torch::Tensor X2,
                                         output_size, nthreadx, nthready, nthreadz);
 }
 
+
 TORCH_LIBRARY(mace_cuda_tp, m)
 {
     m.def("tensor_product", &tensor_product);
+    m.def("sum_weighted_tensor_product", &sum_weighted_tensor_product_gpu);
 }
