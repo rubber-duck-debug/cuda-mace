@@ -1,0 +1,9 @@
+Metadata-Version: 2.1
+Name: mace-ops
+Version: 0.1
+Summary: GPU-Accelerated Sparse Symmetric Contractions and Tensor Products
+Home-page: TODO
+Author: Nicholas J. Browning
+Author-email: nickjbrowning@gmail.com
+Keywords: Machine Learning
+Platform: Any

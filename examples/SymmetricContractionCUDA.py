@@ -333,7 +333,7 @@ class CUDAContraction(torch.nn.Module):
         )
         return out
 
-nchannels = 128
+nchannels = 96
 max_ell = 3
 correlation = 3
 natoms = 1000
@@ -341,8 +341,8 @@ dtype = torch.float32
 torch.set_default_dtype(dtype)
 
 #hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o + " + str(nchannels) + "x2e" )
-#hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o")
-hidden_irreps=o3.Irreps(str(nchannels) + "x0e")
+hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o")
+#hidden_irreps=o3.Irreps(str(nchannels) + "x0e")
 
 sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
 num_features = hidden_irreps.count(o3.Irrep(0, 1))

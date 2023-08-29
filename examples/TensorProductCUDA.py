@@ -7,6 +7,7 @@ from e3nn import o3
 from mace_ops.cuda import TensorProduct
 from TensorProductReference import TensorProductReference
 
+
 if __name__ == "__main__":
 
     torch.set_printoptions(edgeitems=3)

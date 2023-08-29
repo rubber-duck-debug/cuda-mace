@@ -1,0 +1,13 @@
+README.md
+setup.py
+mace_ops.egg-info/PKG-INFO
+mace_ops.egg-info/SOURCES.txt
+mace_ops.egg-info/dependency_links.txt
+mace_ops.egg-info/top_level.txt
+mace_ops/cuda/__init__.py
+mace_ops/cuda/equivariant_outer_product.cu
+mace_ops/cuda/generators.py
+mace_ops/cuda/instruction.py
+mace_ops/cuda/irreps.py
+mace_ops/cuda/symmetric_contraction_kernels.cu
+mace_ops/cuda/tensor_product_kernels.cu

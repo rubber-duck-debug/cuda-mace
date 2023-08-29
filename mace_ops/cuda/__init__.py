@@ -1,15 +1,11 @@
 import os
 import torch
 import sysconfig
-import math
-
-import collections
-from typing import List
 
 from mace.tools.cg import U_matrix_real
 from e3nn import o3
 
-from .instruction import Instruction
+from .instruction import Instruction, _normalize_instruction_path_weights
 from .irreps import Irreps
 
 _HERE = os.path.realpath(os.path.dirname(__file__))
@@ -17,82 +13,7 @@ EXT_SUFFIX = sysconfig.get_config_var('EXT_SUFFIX')
 
 torch.ops.load_library(_HERE + '/tensor_product.so')
 torch.ops.load_library(_HERE + '/symmetric_contraction.so')
-
-#taken from e3nn-jax to remove dependence on jax...
-def _normalize_instruction_path_weights(
-    instructions: List[Instruction],
-    first_input_irreps: Irreps,
-    second_input_irreps: Irreps,
-    output_irreps: Irreps,
-    first_input_variance: List[float],
-    second_input_variance: List[float],
-    output_variance: List[float],
-    irrep_normalization: str,
-    path_normalization_exponent: float,
-    gradient_normalization_exponent: float,
-) -> List[Instruction]:
-    """Returns instructions with normalized path weights."""
-
-    def var(instruction):
-        return (
-            first_input_variance[instruction.i_in1]
-            * second_input_variance[instruction.i_in2]
-            * instruction.num_elements
-        )
-
-    # Precompute normalization factors.
-    path_normalization_sums = collections.defaultdict(lambda: 0.0)
-    for instruction in instructions:
-        path_normalization_sums[instruction.i_out] += var(instruction) ** (
-            1.0 - path_normalization_exponent
-        )
-
-    path_normalization_factors = {
-        instruction: var(instruction) ** path_normalization_exponent
-        * path_normalization_sums[instruction.i_out]
-        for instruction in instructions
-    }
-
-    def update(instruction: Instruction) -> float:
-        """Computes normalized path weight for a single instructions, with precomputed path normalization factors."""
-
-        if irrep_normalization not in ["component", "norm", "none"]:
-            raise ValueError(f"Unsupported irrep normalization: {irrep_normalization}.")
-
-        mul_ir_in1 = first_input_irreps[instruction.i_in1]
-        mul_ir_in2 = second_input_irreps[instruction.i_in2]
-        mul_ir_out = output_irreps[instruction.i_out]
-
-        assert mul_ir_in1.ir.p * mul_ir_in2.ir.p == mul_ir_out.ir.p
-        assert (
-            abs(mul_ir_in1.ir.l - mul_ir_in2.ir.l)
-            <= mul_ir_out.ir.l
-            <= mul_ir_in1.ir.l + mul_ir_in2.ir.l
-        )
-
-        if irrep_normalization == "component":
-            alpha = mul_ir_out.ir.dim
-        if irrep_normalization == "norm":
-            alpha = mul_ir_in1.ir.dim * mul_ir_in2.ir.dim
-        if irrep_normalization == "none":
-            alpha = 1
-
-        x = path_normalization_factors[instruction]
-        if x > 0.0:
-            alpha /= x
-
-        alpha *= output_variance[instruction.i_out]
-        alpha *= instruction.path_weight
-
-        if instruction.has_weight:
-            return instruction.replace(
-                path_weight=math.sqrt(alpha) ** gradient_normalization_exponent,
-                weight_std=math.sqrt(alpha) ** (1.0 - gradient_normalization_exponent),
-            )
-        else:
-            return instruction.replace(path_weight=math.sqrt(alpha))
-
-    return [update(instruction) for instruction in instructions]
+torch.ops.load_library(_HERE + '/equivariant_outer_product.so')
 
 def _sum_weighted_tensor_product(
     X1,

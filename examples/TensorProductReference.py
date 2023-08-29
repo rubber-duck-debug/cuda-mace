@@ -4,8 +4,8 @@ import numpy as np
 from typing import Tuple, List
 
 from e3nn import o3
-from e3nn_jax import Instruction, Irreps
-from e3nn_jax._src.core_tensor_product import _normalize_instruction_path_weights
+from mace_ops.cuda.instruction import Instruction, _normalize_instruction_path_weights
+from mace_ops.cuda.irreps import Irreps
 
 class TensorProductReference(torch.nn.Module):
 
@@ -142,9 +142,9 @@ if __name__ == "__main__":
 
     tp_reference = TensorProductReference(irreps1, irreps2, target_irreps, nchannels, device="cuda")
 
-    X1 = torch.randn(n_edges, nchannels, irreps1.dim).cuda()
-    X2 = torch.randn(n_edges, 1, irreps2.dim).cuda()
+    X1 = torch.randn(n_edges, irreps1.dim, nchannels).cuda()
+    X2 = torch.randn(n_edges, irreps2.dim, 1).cuda()
 
     out = tp_reference.forward(X1, X2)
 
-    print (out)
+    #print (out)
