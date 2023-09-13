@@ -13,6 +13,44 @@ from mace.modules.irreps_tools import (
 from mace.tools.scatter import scatter_sum
 
 
+
+
+class shape_irreps(torch.nn.Module):
+    # code the reverse of reshape_irreps
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = irreps
+    
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        # the reverse of reshape_irreps
+        ix = 0
+        out = []
+        batch, _, _ = tensor.shape
+        for mul, ir in self.irreps:
+            d = ir.dim
+            field = tensor[:, :, ix: ix + d]
+            field = field.reshape(batch, mul * d)
+            ix = ix + d
+            out.append(field)
+        return torch.cat(out, dim=-1)
+    
+class reshape_irreps(torch.nn.Module):
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = irreps
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        ix = 0
+        out = []
+        batch, _ = tensor.shape
+        for mul, ir in self.irreps:
+            d = ir.dim
+            field = tensor[:, ix : ix + mul * d]  # [batch, sample, mul * repr]
+            ix += mul * d
+            field = field.reshape(batch, mul, d)
+            out.append(field)
+        return torch.cat(out, dim=-1)
+    
 class TensorProduct(torch.nn.Module):
 
     def __init__(self, irreps_in1, irreps_in2, target_irreps, device="cuda", dtype=torch.float64):
@@ -77,6 +115,12 @@ class TensorProduct(torch.nn.Module):
 
         self.mu_list = []
         self.cg_sparse_list = []
+        self.weight_index_list = []
+
+        shifts = []
+        local_ordering = []
+        output_ordering = []
+        shift = 0
 
         for i, ins in enumerate(self.instructions):
 
@@ -104,6 +148,9 @@ class TensorProduct(torch.nn.Module):
             self.mu_list += [(mu1, mu2, mu3)]
             self.cg_sparse_list += [cg_sparse]
 
+            for j in range(mu1.shape[0]):
+                self.weight_index_list.append(i)
+
             mu1 = mu1 + offset1
             mu2 = mu2 + offset2
             mu3 = mu3 + offset3
@@ -114,9 +161,32 @@ class TensorProduct(torch.nn.Module):
 
             cg_coeffs.append(cg_sparse)
 
+            local_ordering.append(np.arange(l3 * 2 + 1))
+            shifts.append(shift)
+            shift += l3 * 2 + 1
+
+            print(ins.i_out, l3 * 2 + 1)
+
+            output_ordering.insert(ins.i_out, i)
+
+        print(shifts)
+        print (local_ordering)
+        print(output_ordering)
+
+        # shifts = [shifts[i] for i in out]
+        output_ordering = [local_ordering[i] + shifts[i] for i in output_ordering]
+
+        # print (shifts)
+        print(output_ordering)
+
+        self.ordering = torch.cat([torch.tensor(o)
+                                  for o in output_ordering]).cuda().int()
+
         self.mu1 = torch.cat(mu_1).cuda().type(torch.int32)
         self.mu2 = torch.cat(mu_2).cuda().type(torch.int32)
         self.mu3 = torch.cat(mu_3).cuda().type(torch.int32)
+        self.weight_index_list = torch.tensor(
+            self.weight_index_list).cuda().type(torch.int32)
 
         # count the size of the output
         nmax1 = self.mu1.max().item() + 1
@@ -166,7 +236,7 @@ class TensorProduct(torch.nn.Module):
 
                 assert len(outputs) == ins.i_out, (len(outputs), ins.i_out)
 
-                outputs.append(output)
+                outputs.insert(ins.i_out, output)
 
             output_i = torch.cat(outputs, dim=0)
 
@@ -183,9 +253,9 @@ if __name__ == "__main__":
 
     benchmark = False
 
-    nedges = 30000
-    nnodes = 1000
-    nfeatures = 96
+    nedges = 3000
+    nnodes = 100
+    nfeatures = 32
 
     irreps1, irreps2, target_irreps = (
         o3.Irreps(f"0e + 1o"),
@@ -207,9 +277,9 @@ if __name__ == "__main__":
     neighbour_cuda = torch.ops.mace_ops_equivariant_tp.calculate_neighbours(
         indices_cuda, nnodes, 64)
 
-    X = torch.randn(nedges, irreps1.dim, nfeatures,
+    X = torch.randn(nedges, (irreps1.lmax + 1) ** 2, nfeatures,
                     requires_grad=True, device='cuda', dtype=dtype)
-    Y = torch.randn(nedges, irreps2.dim, requires_grad=True,
+    Y = torch.randn(nedges, (irreps2.lmax + 1) ** 2, requires_grad=True,
                     device='cuda', dtype=dtype)
 
     tp_cuda = TensorProduct(
@@ -222,17 +292,30 @@ if __name__ == "__main__":
 
     output.index_add_(0, indices_cuda, out_ref)
 
-    # print (output.shape)
-    print(output[-1])
+    node_feats_irreps, edge_attrs_irreps, target_irreps = (
+        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o"),
+        o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"),
+        o3.Irreps(
+            f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
+    )
+
+    irreps_mid, instructions = tp_out_irreps_with_instructions(
+        node_feats_irreps,
+        edge_attrs_irreps,
+        target_irreps,
+    )
+
+    tp_torch = o3.TensorProduct(node_feats_irreps, edge_attrs_irreps, irreps_mid, instructions, shared_weights=False, internal_weights=False,).to("cuda")
 
     mu1 = tp_cuda.mu1[tp_cuda.mu_3_sort]
     mu2 = tp_cuda.mu2[tp_cuda.mu_3_sort]
     mu3 = tp_cuda.mu3[tp_cuda.mu_3_sort]
+
     cg_coeffs = tp_cuda.cg_coeffs[tp_cuda.mu_3_sort]
 
-    # print (mu1)
-    # print (mu2)
-    # print (mu3)
+    weight_indices = tp_cuda.weight_index_list[tp_cuda.mu_3_sort]
+
+    print("weight_indices:", weight_indices)
 
     last_val = 0
     last_idx = 0
@@ -278,21 +361,9 @@ if __name__ == "__main__":
     print(indices_start)
     print(nwork)
 
-    for i in range(len(indices_start)):
-
-        for j in range(nwork[i]):
-            idx = indices_start[i] + j
-            print("thread: ", i, "index:", idx, "mu3: ", mu3[idx])
-
-    # 192x0e+288x1o+288x2e+192x3o
-    # 192x0e : 2 x 1 : 2
-    # 288x1o : 3 x 3 : 9
-    # 288x2e : 3 x 5 : 15
-    # 192x3o : 2 x 7 : 14
-
     start = time()
     for i in range(1000):
-        out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward_v2(
+        out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward(
             X,
             Y,
             indices_cuda,
@@ -305,12 +376,43 @@ if __name__ == "__main__":
             nwork,
             tp_cuda.nmax3,
             nnodes,
+            tp_cuda.ordering,
             32, 4, 1)
     torch.cuda.synchronize()
     end = time()
-    print(end - start)
+    print("unweighted CUDA TP:", end - start)
 
-    out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward_v2(
+    # weights = torch.rand(Y.shape[0], len(
+    #     instructions), nfeatures, device='cuda', dtype=torch.float32)
+
+    # for i, ins in enumerate(instructions):
+    #     print(i, ins)
+
+    # print(weight_indices)
+    # print(weights.shape)
+    # start = time()
+    # for i in range(1000):
+    #     out_weighted = torch.ops.mace_ops_equivariant_tp.weighted_equivariant_outer_product_forward(
+    #         X,
+    #         Y,
+    #         indices_cuda,
+    #         neighbour_cuda,
+    #         mu1,
+    #         mu2,
+    #         mu3,
+    #         cg_coeffs,
+    #         indices_start,
+    #         nwork,
+    #         weight_indices,
+    #         weights,
+    #         tp_cuda.nmax3,
+    #         nnodes,
+    #         32, 4, 1)
+    # torch.cuda.synchronize()
+    # end = time()
+    # print("weighted CUDA TP:", end - start)
+
+    out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward(
         X,
         Y,
         indices_cuda,
@@ -323,27 +425,16 @@ if __name__ == "__main__":
         nwork,
         tp_cuda.nmax3,
         nnodes,
-        32, 2, 1)
+        tp_cuda.ordering,
+        32, 4, 1)
 
-    print(out[-1])
+    print(output[-1], output.shape)
+    print(out[-1], out.shape)
     idx = torch.where(out - output > 1e-4)
 
     print(idx)
     print(out[idx])
     print(output[idx])
-
-    node_feats_irreps, edge_attrs_irreps, target_irreps = (
-        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o"),
-        o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"),
-        o3.Irreps(
-            f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
-    )
-
-    irreps_mid, instructions = tp_out_irreps_with_instructions(
-        node_feats_irreps,
-        edge_attrs_irreps,
-        target_irreps,
-    )
 
     print(instructions)
 
@@ -353,35 +444,61 @@ if __name__ == "__main__":
     print("irreps simplify")
     print(irreps_mid.simplify())
 
-    conv_tp = o3.TensorProduct(
-        node_feats_irreps,
-        edge_attrs_irreps,
-        irreps_mid,
-        instructions=instructions,
-        shared_weights=True,
-        internal_weights=True,
-    ).to("cuda")
+    # conv_tp = o3.TensorProduct(
+    #     node_feats_irreps,
+    #     edge_attrs_irreps,
+    #     irreps_mid,
+    #     instructions=instructions,
+    #     shared_weights=False,
+    #     internal_weights=False,
+    # ).to('cuda')
 
-    X_copy = X.clone().detach().cuda().requires_grad_(
-        True).transpose(-1, -2).flatten(start_dim=1).float().contiguous()
-    Y_copy = Y.clone().detach().cuda().requires_grad_(True).float()
-    indices_cuda = indices_cuda.long()
-    print(X.dtype, Y.dtype)
-    print(node_feats_irreps.dim)
-    print(edge_attrs_irreps.dim)
+    # X_copy = X.clone().detach().cuda().requires_grad_(
+    #     True).transpose(-1, -2).flatten(start_dim=1).float().contiguous()
+    # Y_copy = Y.clone().detach().cuda().requires_grad_(True).float()
+    # indices_cuda = indices_cuda.long()
+    # print(X.dtype, Y.dtype)
+    # print(node_feats_irreps.dim)
+    # print(edge_attrs_irreps.dim)
 
-    start = time()
-    for i in range(1000):
-        mji = conv_tp(
-            X_copy, Y_copy
-        )
-        message = scatter_sum(
-            src=mji, index=indices_cuda, dim=0, dim_size=nnodes
-        )  # [n_nodes, irreps]
-        torch.cuda.synchronize()
-    end = time()
+    # start = time()
+    # for i in range(1000):
+    #     mji = conv_tp(
+    #         X_copy, Y_copy, weights.flatten(start_dim=1)
+    #     )
+    #     message = scatter_sum(
+    #         src=mji, index=indices_cuda, dim=0, dim_size=nnodes
+    #     )  # [n_nodes, irreps]
+    #     torch.cuda.synchronize()
+    # end = time()
 
-    print(end - start)
+    # print(end - start)
 
-    print(mji.shape)
-    print(message.shape)
+    # print(mji.shape)
+    # print(message.shape)
+
+    # print(out_weighted[0])
+    # print(message[0].reshape(40, nfeatures))
+
+    #X1 = torch.randn(n_edges, nchannels, (irreps1.lmax + 1) ** 2).cuda()
+    #X2 = torch.randn(n_edges, 1, irreps2.dim).cuda()
+
+    
+    X1_torch = shape_irreps(node_feats_irreps)(X.transpose(-1, -2))
+    X2_torch = shape_irreps(edge_attrs_irreps)(Y[:, None, :])
+
+    out_unweighted_torch = tp_torch(X1_torch, X2_torch, torch.ones((1, tp_torch.weight_numel), device="cuda"))
+
+    out_unweighted_torch =  reshape_irreps(irreps_mid)(out_unweighted_torch)
+
+    print (out_unweighted_torch[-1].transpose(-1, -2))
+
+
+    from reference import TensorProductReference as tpr 
+    
+    tp_reference = tpr(
+    irreps1, irreps2, target_irreps, nfeatures, device="cuda")
+
+    out = tp_reference.forward(X.transpose(-1, -2), Y[:, None, :])
+
+    print (out[-1])

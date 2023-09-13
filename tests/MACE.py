@@ -69,6 +69,8 @@ class RealAgnosticInteractionBlock(InteractionBlock):
         )
 
         print ("RealAgnosticInteractionBlock: node_feats_irreps = ", self.node_feats_irreps)
+        print ("RealAgnosticInteractionBlock: edge_attrs_irreps = ", self.edge_attrs_irreps)
+
         # TensorProduct
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.node_feats_irreps,
@@ -78,7 +80,7 @@ class RealAgnosticInteractionBlock(InteractionBlock):
         
         print (instructions)
 
-        print ("RealAgnosticInteractionBlock: edge_attrs_irreps = ", self.edge_attrs_irreps)
+        
         print ("RealAgnosticInteractionBlock: irreps_mid = ", irreps_mid)
 
         self.conv_tp = o3.TensorProduct(
@@ -92,6 +94,8 @@ class RealAgnosticInteractionBlock(InteractionBlock):
 
         # Convolution weights
         input_dim = self.edge_feats_irreps.num_irreps
+
+        print("RealAgnosticInteractionBlock: input dim = ", input_dim, self.conv_tp.weight_numel)
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
             torch.nn.functional.silu,
@@ -125,6 +129,8 @@ class RealAgnosticInteractionBlock(InteractionBlock):
         num_nodes = node_feats.shape[0]
         node_feats = self.linear_up(node_feats)
         tp_weights = self.conv_tp_weights(edge_feats)
+
+        print ("RealAgnosticInteractionBlock: TP weights shape =", tp_weights.shape)
         mji = self.conv_tp(
             node_feats[sender], edge_attrs, tp_weights
         )  # [n_edges, irreps]
@@ -200,6 +206,9 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
         self.skip_tp = o3.FullyConnectedTensorProduct(
             self.node_feats_irreps, self.node_attrs_irreps, self.hidden_irreps
         )
+
+        print ("RealAgnosticResidualInteractionBlock: skip_tp = ", self.node_feats_irreps, self.node_attrs_irreps, self.hidden_irreps)
+
         self.reshape = reshape_irreps(self.irreps_out)
 
     def forward(
@@ -216,6 +225,10 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
         sc = self.skip_tp(node_feats, node_attrs)
         node_feats = self.linear_up(node_feats)
         tp_weights = self.conv_tp_weights(edge_feats)
+
+        print ("RealAgnosticResidualInteractionBlock: TP weights shape =", tp_weights.shape)
+        print ("RealAgnosticResidualInteractionBlock: node_feats[sender] shape =", node_feats[sender].shape, "edge_attrs shape = ", edge_attrs.shape)
+        print ("TP weights shape: ", tp_weights.shape)
         mji = self.conv_tp(
             node_feats[sender], edge_attrs, tp_weights
         )  # [n_edges, irreps]
@@ -887,7 +900,7 @@ def run_test(benchmark_file):
                    correlation=3,
                    gate=None).to("cuda")
     
-    nrepeats = 1000
+    nrepeats = 1
 
     start = time()
     for i in range (nrepeats):
@@ -902,7 +915,8 @@ def run_test(benchmark_file):
 
 
 def main(args=None):
-    run_test("small_mol.xyz")
+    import os
+    run_test(os.path.dirname(__file__) + "/small_mol.xyz")
 
 
 if __name__ == "__main__":
