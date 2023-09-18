@@ -259,7 +259,7 @@ __global__ void equivariant_outer_product_forward_kernel(const torch::PackedTens
 
     __syncthreads();
 
-    for (int32_t edge_idx = 0; edge_idx < nedges; edge_idx++)
+    for (int32_t edge_idx = threadIdx.z; edge_idx < nedges; edge_idx += blockDim.z)
     {
         int edge = edge_start + edge_idx;
 
@@ -482,7 +482,7 @@ torch::Tensor equivariant_outer_product_forward_gpu(torch::Tensor X,
 
     dim3 block_dim(natoms, nby);
 
-    dim3 grid_dim(nthreadx, nthready, 1);
+    dim3 grid_dim(nthreadx, nthready, nthreadz);
 
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "equivariant_outer_product_forward_gpu", ([&]
