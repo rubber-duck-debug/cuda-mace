@@ -259,22 +259,22 @@ __global__ void equivariant_outer_product_forward_kernel(const torch::PackedTens
 
     __syncthreads();
 
-    for (int32_t edge_idx = threadIdx.z; edge_idx < nedges; edge_idx += blockDim.z)
+    for (int32_t instruction = threadIdx.y; instruction < warp_indices.size(0); instruction += blockDim.y)
     {
-        int edge = edge_start + edge_idx;
+        int32_t index_start = buffer_index_start[instruction];
+        int32_t nwork = buffer_nwork[instruction];
 
-        for (int32_t instruction = threadIdx.y; instruction < warp_indices.size(0); instruction += blockDim.y)
+        for (int32_t j = 0; j < nwork; j++)
         {
-            int32_t index_start = buffer_index_start[instruction];
-            int32_t nwork = buffer_nwork[instruction];
+            int32_t instruction_idx = index_start + j;
 
-            for (int32_t j = 0; j < nwork; j++)
+            int32_t x_idx = buffer_mu_1[instruction_idx];
+            int32_t y_idx = buffer_mu_2[instruction_idx];
+            int32_t out_idx = buffer_mu_3[instruction_idx];
+
+            for (int32_t edge_idx = 0; edge_idx < nedges; edge_idx++)
             {
-                int32_t instruction_idx = index_start + j;
-
-                int32_t x_idx = buffer_mu_1[instruction_idx];
-                int32_t y_idx = buffer_mu_2[instruction_idx];
-                int32_t out_idx = buffer_mu_3[instruction_idx];
+                int edge = edge_start + edge_idx;
 
                 scalar_t x = 0.0;
 
@@ -482,7 +482,7 @@ torch::Tensor equivariant_outer_product_forward_gpu(torch::Tensor X,
 
     dim3 block_dim(natoms, nby);
 
-    dim3 grid_dim(nthreadx, nthready, nthreadz);
+    dim3 grid_dim(nthreadx, nthready, 1);
 
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "equivariant_outer_product_forward_gpu", ([&]
