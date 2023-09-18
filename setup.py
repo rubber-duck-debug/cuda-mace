@@ -68,6 +68,13 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         ],
          extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
+    
+    invariant_outer_product = CUDAExtension(
+        '.cuda.invariant_outer_product', [
+            'mace_ops/cuda/invariant_outer_product.cu'
+        ],
+         extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
 
     symmetric_contraction = CUDAExtension(
         '.cuda.symmetric_contraction', [
@@ -77,6 +84,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
                             'nvcc': nvcc_flags})
     
     ext_modules.append(tensor_contraction)
+    ext_modules.append(invariant_outer_product)
     ext_modules.append(equivariant_outer_product)
     ext_modules.append(symmetric_contraction)
     

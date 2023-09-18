@@ -92,7 +92,6 @@ __global__ void symmetric_contraction_L0_forwards_new_kernel(
 
 	dim3 thread_idx = get_thread_indices(nthreadx, nthready, nthreadz);
 
-
 	for (int i = thread_idx.y; i < nl; i += nthready)
 	{
 		for (int j = thread_idx.x; j < nl; j += nthreadx)
@@ -118,7 +117,7 @@ __global__ void symmetric_contraction_L0_forwards_new_kernel(
 	int atom_id = blockIdx.x;
 
 	int element = atom_types[atom_id];
-	
+
 	nthreadx = WARP_SIZE;
 	nthready = 4;
 	nthreadz = 1;
@@ -215,7 +214,7 @@ __global__ void symmetric_contraction_L0_forwards_new_kernel(
 
 					scalar_t Xk = buffer_X[u3_kdx * WARP_SIZE + buffer_channel_id];
 
-					output_3 +=  u3 * w3_1 * Xk;
+					output_3 += u3 * w3_1 * Xk;
 
 					if (requires_grad)
 					{
@@ -384,7 +383,7 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_new_gpu(
 	return {output, grad};
 }
 template <typename scalar_t>
-__global__ void 
+__global__ void
 //__launch_bounds__(256, 4)
 symmetric_contraction_L0_forwards_kernel(
 	const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> X,
@@ -432,7 +431,6 @@ symmetric_contraction_L0_forwards_kernel(
 	volatile short *buffer_u3_nonzeros = shared_array<short>(nl * nl, sptr);
 	volatile short *buffer_u2_nonzero = shared_array<short>(nl * nl, sptr);
 	volatile short *buffer_u2_indices = shared_array<short>(nl * nl, sptr);
-
 
 	__syncthreads();
 
@@ -504,7 +502,7 @@ symmetric_contraction_L0_forwards_kernel(
 
 		if (requires_grad)
 			deriv1_tmp = uw1;
-		
+
 		for (int j = 0; j < nl; j++)
 		{
 			scalar_t Xj = buffer_X[j * blockDim.x + threadIdx.x];

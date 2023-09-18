@@ -4,7 +4,6 @@ from opt_einsum import contract
 import torch
 import logging
 import traceback
-from mace_ops.cuda import SymmetricContraction
 from mace.tools.cg import U_matrix_real
 from typing import Dict, Optional, Union
 import opt_einsum_fx
@@ -385,6 +384,8 @@ for i in range(len(symm_contract.contractions)):
     all_weights[str(i)][3] =  symm_contract.contractions[i].weights_max.detach().clone().type(dtype)
     all_weights[str(i)][2] =  symm_contract.contractions[i].weights[0].detach().clone().type(dtype)
     all_weights[str(i)][1] =  symm_contract.contractions[i].weights[1].detach().clone().type(dtype)
+
+
 
 cuda_contraction = CUDAContraction_(coupling_irreps, hidden_irreps, all_weights,nthreadX = 32, nthreadY = 4, nthreadZ = 1, dtype=dtype)
 

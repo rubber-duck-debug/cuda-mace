@@ -13,6 +13,7 @@ EXT_SUFFIX = sysconfig.get_config_var('EXT_SUFFIX')
 
 torch.ops.load_library(_HERE + '/tensor_product.so')
 torch.ops.load_library(_HERE + '/symmetric_contraction.so')
+torch.ops.load_library(_HERE + '/invariant_outer_product.so')
 torch.ops.load_library(_HERE + '/equivariant_outer_product.so')
 
 def _sum_weighted_tensor_product(
