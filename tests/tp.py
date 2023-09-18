@@ -258,7 +258,7 @@ if __name__ == "__main__":
     nfeatures = 64
 
     irreps1, irreps2, target_irreps = (
-        o3.Irreps(f"0e + 1o + 2e"),
+        o3.Irreps(f"0e + 1o + 2e + 3o"),
         o3.Irreps("0e + 1o + 2e + 3o"),
         o3.Irreps(f"0e + 1o + 2e + 3o"),
     )
@@ -285,15 +285,15 @@ if __name__ == "__main__":
     tp_cuda = TensorProduct(
         irreps1, irreps2, target_irreps, device="cuda", dtype=dtype)
 
-    out_ref = tp_cuda.forward(X, Y.unsqueeze(-1))
+    #out_ref = tp_cuda.forward(X, Y.unsqueeze(-1))
 
-    output = torch.zeros(
-        nnodes, out_ref.shape[1], out_ref.shape[2], device="cuda", dtype=dtype)
+    #output = torch.zeros(
+    #    nnodes, out_ref.shape[1], out_ref.shape[2], device="cuda", dtype=dtype)
 
-    output.index_add_(0, indices_cuda, out_ref)
+    #output.index_add_(0, indices_cuda, out_ref)
 
     node_feats_irreps, edge_attrs_irreps, target_irreps = (
-        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o"),
+        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
         o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"),
         o3.Irreps(
             f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
@@ -377,7 +377,7 @@ if __name__ == "__main__":
             tp_cuda.nmax3,
             nnodes,
             tp_cuda.ordering,
-            32, 8, 1)
+            64, 4, 1)
     torch.cuda.synchronize()
     end = time()
     print("unweighted CUDA TP:", end - start)
@@ -428,7 +428,7 @@ if __name__ == "__main__":
         tp_cuda.ordering,
         32, 4, 1)
 
-    print (torch.min(output[-1]), torch.max(output[-1]))
+    #print (torch.min(output[-1]), torch.max(output[-1]))
 
     print(instructions)
 

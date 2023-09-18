@@ -93,7 +93,7 @@ class TensorProduct(torch.nn.Module):
 
         self.irreps_out = Irreps(irreps_out)
 
-        print(self.irreps_out)
+        #print(self.irreps_out)
 
         self.instructions = _normalize_instruction_path_weights(
             instructions,
@@ -132,9 +132,9 @@ class TensorProduct(torch.nn.Module):
             offset2 = self.irreps_in2[: ins.i_in2].dim
             offset3 = self.irreps_out[: ins.i_out].dim
 
-            print(i, ins)
-            print(l1, l2, l3)
-            print(ins.i_in1, ins.i_in2, ins.i_out)
+            #print(i, ins)
+            #print(l1, l2, l3)
+            #print(ins.i_in1, ins.i_in2, ins.i_out)
 
             cg = o3.wigner_3j(l1, l2, l3).to(self.device).type(dtype)
 
@@ -165,20 +165,20 @@ class TensorProduct(torch.nn.Module):
             shifts.append(shift)
             shift += l3 * 2 + 1
 
-            print(ins.i_out, l3 * 2 + 1)
+            #print(ins.i_out, l3 * 2 + 1)
 
             output_ordering.insert(ins.i_out, i)
 
-        print(shifts)
-        print(local_ordering)
-        print(output_ordering)
+        #print(shifts)
+        #print(local_ordering)
+        #print(output_ordering)
 
         # shifts = [shifts[i] for i in out]
         output_ordering = [local_ordering[i] + shifts[i]
                            for i in output_ordering]
 
         # print (shifts)
-        print(output_ordering)
+        #print(output_ordering)
 
         self.ordering = torch.cat([torch.tensor(o)
                                   for o in output_ordering]).cuda().int()
@@ -196,7 +196,7 @@ class TensorProduct(torch.nn.Module):
 
         self.nmax3 = nmax3
 
-        print("nmax:", nmax1, nmax2, nmax3)
+        #print("nmax:", nmax1, nmax2, nmax3)
 
         self.cg_coeffs = torch.cat(cg_coeffs).type(self.dtype).cuda()
 
@@ -254,7 +254,7 @@ if __name__ == "__main__":
 
     benchmark = False
 
-    nedges = 80000
+    nedges = 30000
     nnodes = 1000
     nfeatures = 64
 
@@ -264,7 +264,7 @@ if __name__ == "__main__":
         o3.Irreps(f"0e + 1o + 2e + 3o"),
     )
 
-    print("nnodes: ", nnodes)
+    print("nedges: ", nedges)
     print("nfeatures: ", nfeatures)
     print("irreps1: ", irreps1, irreps1.dim)
     print("irreps2: ", irreps2, irreps2.dim)
@@ -292,7 +292,7 @@ if __name__ == "__main__":
 
     cg_coeffs = tp_cuda.cg_coeffs[tp_cuda.mu_3_sort]
 
-    print(mu1, mu2, mu3)
+    #print(mu1, mu2, mu3)
     start = time()
     for i in range(1000):
         out = torch.ops.mace_ops_equivariant_tp.edge_equivariant_outer_product_forward(
@@ -308,6 +308,7 @@ if __name__ == "__main__":
     end = time()
     print("unweighted CUDA edge TP:", end - start)
 
-    print (out[-1])
+    print (out.shape)
+    #print (out[-1])
 
-    print(torch.max(out), torch.min(out))
+    #print(torch.max(out), torch.min(out))
