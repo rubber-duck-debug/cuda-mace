@@ -13,6 +13,84 @@ from mace.modules.irreps_tools import (
 from mace.tools.scatter import scatter_sum
 
 
+def find_pivot_locations(numbers, num_pivots):
+    total_sum = sum(numbers)
+    pivot_indices = []
+
+    # Calculate the target sum for each partition
+    target_sum = total_sum / (num_pivots + 1)
+
+    current_sum = 0
+    current_partition_sum = 0
+    pivot_index = 0
+
+    for i, num in enumerate(numbers):
+        current_sum += num
+        current_partition_sum += num
+
+        if current_partition_sum >= target_sum:
+            # Adjust the pivot point if it's closer to the previous or current element
+            if abs(current_partition_sum - target_sum) < abs(current_partition_sum - num - target_sum):
+                pivot_index = i
+                current_partition_sum = num
+            else:
+                current_partition_sum -= num
+
+            pivot_indices.append(pivot_index)
+            num_pivots -= 1
+
+            if num_pivots == 0:
+                break
+
+    return pivot_indices
+
+
+def maximum_partition(sequence, M, nr_partitions, sum_array):
+    for n in range(2, len(sequence) + 1):
+        for k in range(2, nr_partitions + 1):
+            array = []
+            for i in range(1, n + 1):
+                select = max(M[i][k - 1], sum_array[n - 1] - sum_array[i - 1])
+                array.append(select)
+            M[n][k] = min(array)
+    return M[len(sequence)][nr_partitions]
+
+
+def init_matrix(sequence, nr_partitions, M, sum_array):
+    for index in range(len(sequence)):
+        sum_array.append(sum(sequence[: index + 1]))
+    for k in range(1, nr_partitions + 1):
+        M[1][k] = sequence[0]
+    for n in range(1, len(sequence) + 1):
+        M[n][1] = sum(sequence[:n])
+
+
+def find_partitions(elements, npartitions):
+
+    M = np.zeros((len(nelements) + 1, npartitions + 1), dtype=int)
+    sum_array = []
+    init_matrix(nelements, npartitions, M, sum_array)
+    # call the main function
+    range_sum_max = maximum_partition(nelements, M, npartitions, sum_array)
+    print("Sum of the maximum range:", range_sum_max)
+    # split the sequence by using maximum sum of one range
+    current_sum = 0
+
+    all_partitions = []
+    sub_partition = []
+    for index in range(len(nelements)):
+        if (current_sum + nelements[index]) > range_sum_max:
+            print("| ", end="")
+            current_sum = 0
+            all_partitions.append(sub_partition)
+            sub_partition = []
+        current_sum += nelements[index]
+        sub_partition.append(nelements[index])
+        print(nelements[index], end=" ")
+    all_partitions.append(sub_partition)
+    print()
+
+    return all_partitions
 
 
 class shape_irreps(torch.nn.Module):
@@ -20,7 +98,7 @@ class shape_irreps(torch.nn.Module):
     def __init__(self, irreps: o3.Irreps) -> None:
         super().__init__()
         self.irreps = irreps
-    
+
     def forward(self, tensor: torch.Tensor) -> torch.Tensor:
         # the reverse of reshape_irreps
         ix = 0
@@ -33,7 +111,8 @@ class shape_irreps(torch.nn.Module):
             ix = ix + d
             out.append(field)
         return torch.cat(out, dim=-1)
-    
+
+
 class reshape_irreps(torch.nn.Module):
     def __init__(self, irreps: o3.Irreps) -> None:
         super().__init__()
@@ -45,12 +124,13 @@ class reshape_irreps(torch.nn.Module):
         batch, _ = tensor.shape
         for mul, ir in self.irreps:
             d = ir.dim
-            field = tensor[:, ix : ix + mul * d]  # [batch, sample, mul * repr]
+            field = tensor[:, ix: ix + mul * d]  # [batch, sample, mul * repr]
             ix += mul * d
             field = field.reshape(batch, mul, d)
             out.append(field)
         return torch.cat(out, dim=-1)
-    
+
+
 class TensorProduct(torch.nn.Module):
 
     def __init__(self, irreps_in1, irreps_in2, target_irreps, device="cuda", dtype=torch.float64):
@@ -170,11 +250,12 @@ class TensorProduct(torch.nn.Module):
             output_ordering.insert(ins.i_out, i)
 
         print(shifts)
-        print (local_ordering)
+        print(local_ordering)
         print(output_ordering)
 
         # shifts = [shifts[i] for i in out]
-        output_ordering = [local_ordering[i] + shifts[i] for i in output_ordering]
+        output_ordering = [local_ordering[i] + shifts[i]
+                           for i in output_ordering]
 
         # print (shifts)
         print(output_ordering)
@@ -285,15 +366,16 @@ if __name__ == "__main__":
     tp_cuda = TensorProduct(
         irreps1, irreps2, target_irreps, device="cuda", dtype=dtype)
 
-    #out_ref = tp_cuda.forward(X, Y.unsqueeze(-1))
+    # out_ref = tp_cuda.forward(X, Y.unsqueeze(-1))
 
-    #output = torch.zeros(
+    # output = torch.zeros(
     #    nnodes, out_ref.shape[1], out_ref.shape[2], device="cuda", dtype=dtype)
 
-    #output.index_add_(0, indices_cuda, out_ref)
+    # output.index_add_(0, indices_cuda, out_ref)
 
     node_feats_irreps, edge_attrs_irreps, target_irreps = (
-        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
+        o3.Irreps(
+            f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
         o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"),
         o3.Irreps(
             f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
@@ -305,7 +387,8 @@ if __name__ == "__main__":
         target_irreps,
     )
 
-    tp_torch = o3.TensorProduct(node_feats_irreps, edge_attrs_irreps, irreps_mid, instructions, shared_weights=False, internal_weights=False,).to("cuda")
+    tp_torch = o3.TensorProduct(node_feats_irreps, edge_attrs_irreps, irreps_mid,
+                                instructions, shared_weights=False, internal_weights=False,).to("cuda")
 
     mu1 = tp_cuda.mu1[tp_cuda.mu_3_sort]
     mu2 = tp_cuda.mu2[tp_cuda.mu_3_sort]
@@ -320,43 +403,43 @@ if __name__ == "__main__":
     last_val = 0
     last_idx = 0
 
+    indices_start = torch.tensor([0, 22, 44, 65]).int().cuda()
+    nwork = torch.tensor([22, 22, 21, 21]).int().cuda()
+
     nelements = []
     for i in range(len(mu3)):
         if (mu3[i] != last_val):
             nelements.append(i - last_idx)
             last_idx = i
+            last_val = mu3[i]
+
     nelements.append(len(mu3)-last_idx)
 
-    csum = np.cumsum(nelements)
-    # print (csum, len(csum))
+    print(nelements, np.sum(nelements))
 
-    lsum = 0
-    nwork_per_thread_y = len(mu3) / 4
-    csum = np.insert(csum, 0, 0)
+    nthready = 8
 
-    ends = []
-    for i in range(len(nelements)):
-        lsum += nelements[i]
-        if (lsum > nwork_per_thread_y):
-            ends.append(i)
-            lsum = 0
-    ends.append(len(mu3))
-    # print ("ends:", ends)
+    partitions = find_partitions(nelements, nthready)
 
-    for v in ends:
-        if (v+1 < len(mu3)):
-            print(mu3[v-1], mu3[v], mu3[v+1])
+    print("partitions", partitions)
 
-    indices_start = torch.tensor([0, 22, 44, 65]).int().cuda()
-    nwork = torch.tensor([22, 22, 21, 21]).int().cuda()
+    indices = []
+    nwork = []
+    idx_start = 0
+    for i, partition in enumerate(partitions):
 
-    print(mu3)
+        indices.append(idx_start)
 
-    # tensor([ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16, 17,
-    #    18, 19, 19, 19, 20, 20, 21, 21, 22, 22, 22, 23, 23, 24, 24, 25, 25, 25,
-    #    25, 26, 26, 26, 27, 27, 27, 27, 28, 28, 29, 29, 29, 30, 30, 30, 30, 31,
-    #    31, 31, 32, 32, 32, 32, 33, 33, 33, 34, 34, 35, 35, 35, 35, 35, 36, 36,
-    #    36, 36, 37, 37, 37, 38, 38, 38, 38, 39, 39, 39, 39, 39],
+        print(idx_start, mu3[idx_start-1].item(),
+              mu3[idx_start].item(), mu3[idx_start+1].item())
+
+        sum_partition = np.sum(partition)
+
+        nwork.append(sum_partition)
+        idx_start += np.sum(partition)
+
+    indices_start = torch.tensor(indices).int().cuda()
+    nwork = torch.tensor(nwork).int().cuda()
 
     print(indices_start)
     print(nwork)
@@ -377,7 +460,7 @@ if __name__ == "__main__":
             tp_cuda.nmax3,
             nnodes,
             tp_cuda.ordering,
-            64, 4, 1)
+            32, nthready, 1)
     torch.cuda.synchronize()
     end = time()
     print("unweighted CUDA TP:", end - start)
@@ -428,7 +511,7 @@ if __name__ == "__main__":
         tp_cuda.ordering,
         32, 4, 1)
 
-    #print (torch.min(output[-1]), torch.max(output[-1]))
+    # print (torch.min(output[-1]), torch.max(output[-1]))
 
     print(instructions)
 
@@ -474,27 +557,26 @@ if __name__ == "__main__":
     # print(out_weighted[0])
     # print(message[0].reshape(40, nfeatures))
 
-    #X1 = torch.randn(n_edges, nchannels, (irreps1.lmax + 1) ** 2).cuda()
-    #X2 = torch.randn(n_edges, 1, irreps2.dim).cuda()
+    # X1 = torch.randn(n_edges, nchannels, (irreps1.lmax + 1) ** 2).cuda()
+    # X2 = torch.randn(n_edges, 1, irreps2.dim).cuda()
 
-    
-    X1_torch = shape_irreps(node_feats_irreps)(X.transpose(-1, -2).contiguous())
+    X1_torch = shape_irreps(node_feats_irreps)(
+        X.transpose(-1, -2).contiguous())
     X2_torch = shape_irreps(edge_attrs_irreps)(Y[:, None, :])
 
-    out_unweighted_torch = tp_torch(X1_torch, X2_torch, torch.ones((1, tp_torch.weight_numel), device="cuda"))
+    out_unweighted_torch = tp_torch(X1_torch, X2_torch, torch.ones(
+        (1, tp_torch.weight_numel), device="cuda"))
 
-    out_unweighted_torch =  reshape_irreps(irreps_mid)(out_unweighted_torch)
+    out_unweighted_torch = reshape_irreps(irreps_mid)(out_unweighted_torch)
 
-    print (out_unweighted_torch.shape)
-    
-    print (torch.min(out_unweighted_torch[-1]), torch.max(out_unweighted_torch[-1]))
+    print(out_unweighted_torch.shape)
 
+    print(torch.min(out_unweighted_torch[-1]),
+          torch.max(out_unweighted_torch[-1]))
 
-    #from reference import TensorProductReference as tpr 
-    
-    #tp_reference = tpr(
-    #irreps1, irreps2, target_irreps, nfeatures, device="cuda")
+    # from reference import TensorProductReference as tpr
 
-    #out = tp_reference.forward(X.transpose(-1, -2).contiguous(), Y[:, None, :])
+    # tp_reference = tpr(
+    # irreps1, irreps2, target_irreps, nfeatures, device="cuda")
 
-    
+    # out = tp_reference.forward(X.transpose(-1, -2).contiguous(), Y[:, None, :])
