@@ -6,8 +6,8 @@ from mace_ops.cuda.irreps import Irreps
 
 def benchmark(dtype, device):
 
-    nedges = 300000
-    nnodes = 10000
+    nedges = 30000
+    nnodes = 1000
     nfeatures = 64
     nl = 16
 
@@ -31,31 +31,17 @@ def benchmark(dtype, device):
     print(f"The indices for CUDA implementation took {finish-start:.3f} seconds")
 
     X = a.clone().detach().cuda().requires_grad_(True)
-    Y = b.clone().detach().cuda().cuda().requires_grad_(True).transpose(-1, -2).contiguous()
+    Y = b.clone().detach().cuda().cuda().requires_grad_(True).contiguous()
 
     print (X.shape)
     print (Y.shape)
 
     start = time()
     for i in range (1000):
-        out = torch.ops.invariant_tp.forward2(
-            X,
-            Y,
-            indices_cuda, neighbour_cuda, nnodes)
-    end = time()
-
-    print (out[0])
-
-    print (end - start)
-    
-    Y = b.clone().detach().cuda().cuda().requires_grad_(True).contiguous()
-
-    start = time()
-    for i in range (1000):
         out = torch.ops.invariant_tp.forward(
             X,
             Y,
-            indices_cuda, neighbour_cuda, nnodes, 4, 32, 1)
+            indices_cuda, neighbour_cuda, nnodes, 32, 8, 1)
     end = time()
     print (out[0])
     

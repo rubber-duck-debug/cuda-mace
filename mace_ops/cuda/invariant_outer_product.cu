@@ -61,163 +61,29 @@ __global__ void forward_kernel(
     }
 
     int32_t feat_start = blockIdx.y * blockDim.x;
+    int lm_start = blockIdx.z * blockDim.y;
 
     bool valid = feat_start + threadIdx.x < X.size(1);
 
     __syncthreads();
 
-    for (int32_t m = threadIdx.y; m < Y.size(1); m += blockDim.y)
+    scalar_t tmp_output = 0.0;
+
+    for (int32_t i = edge_start; i < edge_end; i++)
     {
-        scalar_t tmp_output = 0.0;
-
-        for (int32_t i = edge_start; i < edge_end; i++)
-        {
-
-            scalar_t y = Y[i][m];
-            scalar_t x = 0.0;
-
-            if (valid)
-            {
-                x = X[i][feat_start + threadIdx.x];
-            }
-
-            tmp_output += x * y;
-        }
+        scalar_t y = Y[i][lm_start + threadIdx.y];
+        scalar_t x = 0.0;
 
         if (valid)
-            output[node_index][m][feat_start + threadIdx.x] = tmp_output;
-    }
-}
-
-template <typename scalar_t>
-__global__ void forward_kernel2(
-    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> X,
-    const torch::PackedTensorAccessor32<scalar_t, 2, torch::RestrictPtrTraits> Y,
-    const torch::PackedTensorAccessor32<int32_t, 1, torch::RestrictPtrTraits> receiver_list,
-    const torch::PackedTensorAccessor32<int32_t, 1, torch::RestrictPtrTraits> neighbour_indices,
-    torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> output)
-{
-
-    extern __shared__ char buffer[];
-
-    void *sptr = buffer;
-    size_t space = 0;
-
-    scalar_t *buffer_out = shared_array<scalar_t>(Y.size(0) * 32, sptr, &space);
-
-    int32_t edge_start = neighbour_indices[blockIdx.x];
-    int32_t edge_end = 0;
-
-    int32_t node_index = receiver_list[edge_start]; // get the idnex of the node we need to sum into.
-
-    if (blockIdx.x == neighbour_indices.size(0) - 1) // nnodes -1
-    {
-        edge_end = Y.size(1); // nedges -1
-    }
-    else
-    {
-        edge_end = neighbour_indices[blockIdx.x + 1];
-    }
-
-    int nedges = edge_end - edge_start;
-    // check if this node has neighbours
-    if (nedges == 0)
-    {
-        return;
-    }
-
-    for (int m = threadIdx.y; m < Y.size(0); m += blockDim.y)
-    {
-        buffer_out[m * blockDim.x + threadIdx.x] = 0.0;
-    }
-
-    __syncthreads();
-
-    int32_t feat_start = blockIdx.y * blockDim.y;
-    bool valid = feat_start + threadIdx.y < X.size(1);
-
-    __syncthreads();
-
-    int ni = find_integer_divisor(nedges, blockDim.x);
-
-    for (int32_t m = 0; m < Y.size(0); m++)
-    {
-        scalar_t tmp_output = 0.0;
-
-        for (int32_t i = 0; i < ni; i++)
         {
-            int32_t edge = i * blockDim.x + threadIdx.x;
-
-            scalar_t x = 0.0;
-            scalar_t y = 0.0;
-
-            if (edge < nedges && valid)
-            {
-                X[edge_start + edge][feat_start + threadIdx.y];
-                y = Y[m][edge_start + edge];
-            }
-
-            scalar_t out = x * y;
-
-            for (int offset = blockDim.x / 2; offset > 0; offset /= 2)
-            {
-                out += __shfl_down_sync(FULL_MASK, out, offset);
-            }
-
-            tmp_output += out;
+            x = X[i][feat_start + threadIdx.x];
         }
 
-        if (threadIdx.x == 0)
-        {
-            buffer_out[m * 32 + threadIdx.y] = tmp_output;
-        }
+        tmp_output += x * y;
     }
 
-    __syncthreads();
-
-    for (int m = threadIdx.y; m < Y.size(0); m += blockDim.y)
-    {
-        output[node_index][m][feat_start + threadIdx.x] = buffer_out[m * blockDim.x + threadIdx.x];
-    }
-}
-
-torch::Tensor forward_gpu2(torch::Tensor X,
-                           torch::Tensor Y,
-                           torch::Tensor receiver_list,
-                           torch::Tensor neighbour_indices,
-                           int64_t natoms)
-{
-
-    torch::Tensor output = torch::empty({natoms, Y.size(0), X.size(1)},
-                                        torch::TensorOptions()
-                                            .dtype(X.dtype())
-                                            .device(X.device()));
-
-    int32_t nby = find_integer_divisor(X.size(1), 32);
-
-    dim3 block_dim(natoms, nby);
-
-    dim3 grid_dim(32, 32, 1);
-
-    AT_DISPATCH_FLOATING_TYPES(
-        X.type(), "forward_gpu2", ([&]
-                                   {
-
-                    size_t shared_size = 0;
-                    void* sptr = nullptr;
-                    
-                    shared_array<scalar_t>(Y.size(0) * 32, sptr, &shared_size);
-
-                    forward_kernel2<scalar_t><<<block_dim, grid_dim, shared_size>>>(
-                        X.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                        Y.packed_accessor32<scalar_t, 2, torch::RestrictPtrTraits>(),
-                        receiver_list.packed_accessor32<int32_t, 1, torch::RestrictPtrTraits>(),
-                        neighbour_indices.packed_accessor32<int32_t, 1, torch::RestrictPtrTraits>(),
-                        output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>()); }));
-
-    cudaDeviceSynchronize();
-
-    return output;
+    if (valid)
+        output[node_index][lm_start + threadIdx.y][feat_start + threadIdx.x] = tmp_output;
 }
 
 torch::Tensor forward_gpu(torch::Tensor X,
@@ -236,8 +102,9 @@ torch::Tensor forward_gpu(torch::Tensor X,
                                             .device(X.device()));
 
     int32_t nby = find_integer_divisor(X.size(1), nthreadx);
+    int32_t nbz = find_integer_divisor(Y.size(1), nthready);
 
-    dim3 block_dim(natoms, nby);
+    dim3 block_dim(natoms, nby, nbz);
 
     dim3 grid_dim(nthreadx, nthready, 1);
 
@@ -658,15 +525,6 @@ torch::Tensor calculate_neighbours_gpu(torch::Tensor sender_list, int64_t natoms
     return output_indices;
 }
 
-/*
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
-{
-    m.def("calculate_neighbours", &calculate_neighbours_gpu, "computes neighbourlist starts from sender list.");
-    m.def("forward", &forward_gpu, "ops forward GPU.");
-    m.def("backward", &backward_gpu, "ops backward GPU.");
-}
-*/
-
 class OuterProductAutograd : public Function<OuterProductAutograd>
 {
 public:
@@ -722,6 +580,5 @@ TORCH_LIBRARY(invariant_tp, m)
     m.def("invariant_outer_product_scattersum", &invariant_outer_product_scattersum);
     m.def("calculate_neighbours", &calculate_neighbours_gpu);
     m.def("forward", &forward_gpu);
-    m.def("forward2", &forward_gpu2);
     m.def("backward", &backward_gpu);
 }
