@@ -339,7 +339,7 @@ if __name__ == "__main__":
     nfeatures = 64
 
     irreps1, irreps2, target_irreps = (
-        o3.Irreps(f"0e + 1o + 2e + 3o"),
+        o3.Irreps(f"0e + 1o"),
         o3.Irreps("0e + 1o + 2e + 3o"),
         o3.Irreps(f"0e + 1o + 2e + 3o"),
     )
@@ -374,8 +374,9 @@ if __name__ == "__main__":
     # output.index_add_(0, indices_cuda, out_ref)
 
     node_feats_irreps, edge_attrs_irreps, target_irreps = (
-        o3.Irreps(
-            f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
+        #o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
+        #o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e"),
+        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o"),
         o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"),
         o3.Irreps(
             f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
@@ -444,6 +445,10 @@ if __name__ == "__main__":
     print(indices_start)
     print(nwork)
 
+    print (len(mu1))
+
+    print (mu3)
+    
     start = time()
     for i in range(1000):
         out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward(
@@ -461,9 +466,9 @@ if __name__ == "__main__":
             nnodes,
             tp_cuda.ordering,
             32, nthready, 1)
-    torch.cuda.synchronize()
+    #torch.cuda.synchronize()
     end = time()
-    print("unweighted CUDA TP:", end - start)
+    print("unweighted CUDA TP %.3f ms" % (end - start))
 
     # weights = torch.rand(Y.shape[0], len(
     #     instructions), nfeatures, device='cuda', dtype=torch.float32)

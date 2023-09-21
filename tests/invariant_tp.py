@@ -36,12 +36,26 @@ def benchmark(dtype, device):
     print (X.shape)
     print (Y.shape)
 
+    print ("forwards_only")
+
     start = time()
     for i in range (1000):
-        out = torch.ops.invariant_tp.forward(
-            X,
-            Y,
-            indices_cuda, neighbour_cuda, nnodes, 32, 8, 1)
+        #out = torch.ops.invariant_tp.forward(X,Y,indices_cuda, neighbour_cuda, nnodes, 32, 8, 1)
+        out = torch.ops.invariant_tp.invariant_outer_product_scattersum(X,Y, indices_cuda, nnodes)
+
+    end = time()
+    print (end - start)
+    
+
+    start = time()
+    for i in range (1000):
+        #out = torch.ops.invariant_tp.forward(X,Y,indices_cuda, neighbour_cuda, nnodes, 32, 8, 1)
+
+        out = torch.ops.invariant_tp.invariant_outer_product_scattersum(X,Y, indices_cuda, nnodes)
+        
+        loss = out.sum()
+
+        loss.backward()
     end = time()
     print (out[0])
     

@@ -99,8 +99,11 @@ __global__ void message_passing_tensor_product_kernel(
 
         buffer_out[i * blockDim.x + threadIdx.x] = tmp;
     }
-    
+
     __syncthreads();
+
+    // Cij = sum_k Aik Bkj
+    // A[feat, lm] ,B[lm, 1]
 
     for (int i = threadIdx.y; i < X.size(1); i += blockDim.y)
     {

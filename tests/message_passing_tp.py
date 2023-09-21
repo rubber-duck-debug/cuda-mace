@@ -6,8 +6,8 @@ from mace_ops.cuda.irreps import Irreps
 
 def benchmark(dtype, device):
 
-    nedges = 30000
-    nnodes = 1000
+    nedges = 300000
+    nnodes = 10000
     nfeatures = 64
     nl = 16
     l_max = 3

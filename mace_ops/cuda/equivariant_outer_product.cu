@@ -491,7 +491,7 @@ __global__ void weighted_equivariant_outer_product_forward_kernel(const torch::P
 
                 scalar_t cg_coeff = buffer_cg_coefficients[instruction_idx];
 
-                atomicAdd(&buffer_out[out_idx * blockDim.x + threadIdx.x], cg_coeff * weight * x * y);
+                buffer_out[out_idx * blockDim.x + threadIdx.x] += cg_coeff * weight * x * y;
             }
         }
     }
