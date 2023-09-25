@@ -6,8 +6,6 @@ using namespace std;
 using namespace torch::indexing;
 using namespace torch::autograd;
 
-
-
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) \
@@ -274,8 +272,7 @@ __global__ void test_equivariant_outer_product_forward_kernel(const torch::Packe
         // lets first load X and Y into shared memory since they're re-used.
         for (int i = threadIdx.y; i < X.size(1); i += blockDim.y)
         {
-#ifdef __CUDA_ARCH__
-#if __CUDA_ARCH__ >= 800
+
             if (valid)
             {
                 __pipeline_memcpy_async(&buffer_X[i * blockDim.x + threadIdx.x],
@@ -292,31 +289,6 @@ __global__ void test_equivariant_outer_product_forward_kernel(const torch::Packe
                 buffer_X[i * blockDim.x + threadIdx.x] = .0;
                 buffer_Y[i * blockDim.x + threadIdx.x] = 0.0;
             }
-
-#else
-            scalar_t x = 0.0;
-            scalar_t y = 0.0;
-            // async copy from global into shared memory on Ampere
-            if (valid)
-            {
-                /*__pipeline_memcpy_async(&buffer_X[i * blockDim.x + threadIdx.x],
-                                        &X[edge][i][feat], sizeof(scalar_t));
-
-                __pipeline_memcpy_async(&buffer_Y[i * blockDim.x + threadIdx.x],
-                                        &Y[edge][i][feat], sizeof(scalar_t));
-
-                __pipeline_commit();
-                __pipeline_wait_prior(0);*/
-
-                x = X[edge][i][feat];
-                y = Y[edge][i][feat];
-            }
-
-            buffer_X[i * blockDim.x + threadIdx.x] = x;
-            buffer_Y[i * blockDim.x + threadIdx.x] = y;
-
-#endif
-#endif
         }
 
         __syncwarp();
