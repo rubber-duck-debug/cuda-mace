@@ -131,10 +131,13 @@ def U_matrix_real(
     out += [last_ir, stack]
     return out
 
+natoms = 100
+nelements =  3
+
 nchannels = 96
 max_ell = 3
 correlation = 3
-natoms = 100
+
 dtype = torch.float32
 torch.set_default_dtype(dtype)
 
@@ -162,6 +165,8 @@ for nu in range(1, correlation + 1):
             sparse_max=10
         )[-1]
         U_matrices[nu][ir_id] = U_matrix
+
+        weights = torch.randn(nelements, U_matrix.shape[-1], nchannels)
 
         idx =  torch.where(U_matrix !=0)
 

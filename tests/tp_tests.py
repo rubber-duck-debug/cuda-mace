@@ -149,8 +149,8 @@ class TensorProduct(torch.nn.Module):
         for i, (mul, ir_in) in enumerate(self.irreps_in1):
             for j, (_, ir_edge) in enumerate(self.irreps_in2):
                 for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
-                    #if ir_out in target_irreps:
-                    if ir_out in target_irreps and ir_in.l + ir_edge.l <= 3:
+                    if ir_out in target_irreps:
+                    #if ir_out in target_irreps and ir_in.l + ir_edge.l <= 3:
 
                         l1 = ir_in.l
                         l2 = ir_edge.l
@@ -420,7 +420,7 @@ if __name__ == "__main__":
 
     print(nelements, np.sum(nelements))
 
-    nthready = 8
+    nthready = 4
 
     partitions = find_partitions(nelements, nthready)
 
@@ -443,9 +443,6 @@ if __name__ == "__main__":
 
     indices_start = torch.tensor(indices).int().cuda()
     nwork = torch.tensor(nwork).int().cuda()
-
-    print(indices_start)
-    print(nwork)
 
     print (len(mu1))
 
@@ -474,118 +471,31 @@ if __name__ == "__main__":
     end = time()
     print("unweighted CUDA TP %.3f ms" % (end - start))
 
-    # weights = torch.rand(Y.shape[0], len(
-    #     instructions), nfeatures, device='cuda', dtype=torch.float32)
 
-    # for i, ins in enumerate(instructions):
-    #     print(i, ins)
+    Y = torch.rand(X.shape[0], X.shape[1], X.shape[2], device='cuda', dtype=torch.float32)
 
-    # print(weight_indices)
-    # print(weights.shape)
-    # start = time()
-    # for i in range(1000):
-    #     out_weighted = torch.ops.mace_ops_equivariant_tp.weighted_equivariant_outer_product_forward(
-    #         X,
-    #         Y,
-    #         indices_cuda,
-    #         neighbour_cuda,
-    #         mu1,
-    #         mu2,
-    #         mu3,
-    #         cg_coeffs,
-    #         indices_start,
-    #         nwork,
-    #         weight_indices,
-    #         weights,
-    #         tp_cuda.nmax3,
-    #         nnodes,
-    #         32, 4, 1)
-    # torch.cuda.synchronize()
-    # end = time()
-    # print("weighted CUDA TP:", end - start)
+    print (X.shape)
+    print (Y.shape)
 
-    out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward(
-        X,
-        Y,
-        indices_cuda,
-        neighbour_cuda,
-        mu1,
-        mu2,
-        mu3,
-        cg_coeffs,
-        indices_start,
-        nwork,
-        tp_cuda.nmax3,
-        nnodes,
-        tp_cuda.ordering,
-        32, 4, 1)
+    start = time()
+    for i in range(1000):
+                out = torch.ops.mace_ops_equivariant_tp.test_equivariant_outer_product_forward(
+            X,
+            Y,
+            indices_cuda,
+            neighbour_cuda,
+            mu1,
+            mu2,
+            mu3,
+            cg_coeffs,
+            indices_start,
+            nwork,
+            tp_cuda.nmax3,
+            nnodes,
+            tp_cuda.ordering,
+            32, nthready, 1)
+                
+    torch.cuda.synchronize()
+    end = time()
+    print("unweighted CUDA TP %.3f ms" % (end - start))
 
-    # print (torch.min(output[-1]), torch.max(output[-1]))
-
-    print(instructions)
-
-    # print ("RealAgnosticInteractionBlock: edge_attrs_irreps = ", self.edge_attrs_irreps)
-    # print ("RealAgnosticInteractionBlock: irreps_mid = ", irreps_mid)
-
-    print("irreps simplify")
-    print(irreps_mid.simplify())
-
-    # conv_tp = o3.TensorProduct(
-    #     node_feats_irreps,
-    #     edge_attrs_irreps,
-    #     irreps_mid,
-    #     instructions=instructions,
-    #     shared_weights=False,
-    #     internal_weights=False,
-    # ).to('cuda')
-
-    # X_copy = X.clone().detach().cuda().requires_grad_(
-    #     True).transpose(-1, -2).flatten(start_dim=1).float().contiguous()
-    # Y_copy = Y.clone().detach().cuda().requires_grad_(True).float()
-    # indices_cuda = indices_cuda.long()
-    # print(X.dtype, Y.dtype)
-    # print(node_feats_irreps.dim)
-    # print(edge_attrs_irreps.dim)
-
-    # start = time()
-    # for i in range(1000):
-    #     mji = conv_tp(
-    #         X_copy, Y_copy, weights.flatten(start_dim=1)
-    #     )
-    #     message = scatter_sum(
-    #         src=mji, index=indices_cuda, dim=0, dim_size=nnodes
-    #     )  # [n_nodes, irreps]
-    #     torch.cuda.synchronize()
-    # end = time()
-
-    # print(end - start)
-
-    # print(mji.shape)
-    # print(message.shape)
-
-    # print(out_weighted[0])
-    # print(message[0].reshape(40, nfeatures))
-
-    # X1 = torch.randn(n_edges, nchannels, (irreps1.lmax + 1) ** 2).cuda()
-    # X2 = torch.randn(n_edges, 1, irreps2.dim).cuda()
-
-    X1_torch = shape_irreps(node_feats_irreps)(
-        X.transpose(-1, -2).contiguous())
-    X2_torch = shape_irreps(edge_attrs_irreps)(Y[:, None, :])
-
-    out_unweighted_torch = tp_torch(X1_torch, X2_torch, torch.ones(
-        (1, tp_torch.weight_numel), device="cuda"))
-
-    out_unweighted_torch = reshape_irreps(irreps_mid)(out_unweighted_torch)
-
-    print(out_unweighted_torch.shape)
-
-    print(torch.min(out_unweighted_torch[-1]),
-          torch.max(out_unweighted_torch[-1]))
-
-    # from reference import TensorProductReference as tpr
-
-    # tp_reference = tpr(
-    # irreps1, irreps2, target_irreps, nfeatures, device="cuda")
-
-    # out = tp_reference.forward(X.transpose(-1, -2).contiguous(), Y[:, None, :])
