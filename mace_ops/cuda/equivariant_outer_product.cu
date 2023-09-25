@@ -286,12 +286,12 @@ __global__ void test_equivariant_outer_product_forward_kernel(const torch::Packe
             }
             else
             {
-                buffer_X[i * blockDim.x + threadIdx.x] = .0;
+                buffer_X[i * blockDim.x + threadIdx.x] = 0.0;
                 buffer_Y[i * blockDim.x + threadIdx.x] = 0.0;
             }
         }
 
-        __syncwarp();
+        __syncthreads();
 
         for (int instruction = threadIdx.y; instruction < warp_indices.size(0); instruction += blockDim.y)
         {
