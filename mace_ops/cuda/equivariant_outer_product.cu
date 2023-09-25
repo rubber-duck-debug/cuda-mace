@@ -187,7 +187,7 @@ __global__ void test_equivariant_outer_product_forward_kernel(const torch::Packe
 
     /* SHARED BUFFERS */
     // scalar_t *buffer_x = shared_array<scalar_t>(blockDim.x * X.size(1), sptr, &space);
-    scalar_t *buffer_out = shared_array<scalar_t>(blockDim.x * output.size(1), sptr, &space);
+    scalar_t *buffer_out = shared_array<scalar_t>(blockDim.x * X.size(1), sptr, &space);
     // scalar_t *buffer_y = shared_array<scalar_t>(Y.size(1), sptr, &space);
     scalar_t *buffer_X = shared_array<scalar_t>(blockDim.x * X.size(1), sptr, &space);
     scalar_t *buffer_Y = shared_array<scalar_t>(blockDim.x * Y.size(1), sptr, &space);
@@ -256,7 +256,7 @@ __global__ void test_equivariant_outer_product_forward_kernel(const torch::Packe
     __syncthreads();
 
     // zero out shared memory
-    for (int32_t i = threadIdx.y; i < output.size(1); i += blockDim.y)
+    for (int32_t i = threadIdx.y; i < X.size(1); i += blockDim.y)
     {
         buffer_out[i * blockDim.x + threadIdx.x] = 0.0;
     }
@@ -311,14 +311,14 @@ __global__ void test_equivariant_outer_product_forward_kernel(const torch::Packe
                 scalar_t x = buffer_X[x_idx * blockDim.x + threadIdx.x];
                 scalar_t y = buffer_Y[y_idx * blockDim.x + threadIdx.x];
 
-                buffer_out[out_idx * blockDim.x + threadIdx.x] += cg_coeff * x * y;
+                buffer_out[0 * blockDim.x + threadIdx.x] += cg_coeff * x * y;
             }
         }
     }
 
     __syncthreads();
 
-    for (int i = threadIdx.y; i < output.size(1); i += blockDim.y)
+    for (int i = threadIdx.y; i < X.size(1); i += blockDim.y)
     {
         if (valid)
         {
@@ -364,7 +364,7 @@ torch::Tensor test_equivariant_outer_product_forward_gpu(torch::Tensor X,
                     size_t shared_size = 0;
                     void* sptr = nullptr;
                     
-                    shared_array<scalar_t>(nthreadx * output.size(1), sptr, &shared_size); // output
+                    shared_array<scalar_t>(nthreadx * X.size(1), sptr, &shared_size); // output
                     shared_array<scalar_t>(nthreadx * X.size(1), sptr, &shared_size); // X
                     shared_array<scalar_t>(nthreadx * Y.size(1), sptr, &shared_size); // Y
 
