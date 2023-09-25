@@ -1,5 +1,6 @@
 #include <torch/script.h>
 #include <iostream>
+#include <cuda_pipeline.h>
 
 using namespace std;
 using namespace torch::indexing;
