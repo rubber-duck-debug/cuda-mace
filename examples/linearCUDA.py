@@ -81,8 +81,8 @@ if __name__ == "__main__":
    
     print (weight_indices, weight_indices.shape)
     print (output_indices, output_indices.shape)
-    """ 
-        
+    
+    """   
     torch::Tensor forward_gpu(
         torch::Tensor X,
         torch::Tensor weights,
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         int64_t nthreadx,
         int64_t nthready,
         int64_t nthreadz)
-    { """
+    """
 
     X = torch.randn(nnodes, len(weight_indices), nfeatures, device='cuda', requires_grad=True)
     weights = torch.randn(max_ell +1, nfeatures, device='cuda', requires_grad=False)
