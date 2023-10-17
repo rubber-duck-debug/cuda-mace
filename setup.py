@@ -69,9 +69,9 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
          extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
     
-    invariant_outer_product = CUDAExtension(
-        '.cuda.invariant_outer_product', [
-            'mace_ops/cuda/invariant_outer_product.cu'
+    invariant_message_passing = CUDAExtension(
+        '.cuda.invariant_message_passing', [
+            'mace_ops/cuda/invariant_message_passing.cu'
         ],
          extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
@@ -83,10 +83,18 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
          extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
     
+    linear = CUDAExtension(
+        '.cuda.linear', [
+            'mace_ops/cuda/linear.cu'
+        ],
+         extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
+    
     ext_modules.append(tensor_contraction)
-    ext_modules.append(invariant_outer_product)
+    ext_modules.append(invariant_message_passing)
     ext_modules.append(equivariant_outer_product)
     ext_modules.append(symmetric_contraction)
+    ext_modules.append(linear)
     
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")

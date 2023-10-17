@@ -1,7 +1,6 @@
 import numpy as np
 from time import time
 from opt_einsum import contract
-import torch
 import logging
 import traceback
 from mace.tools.cg import U_matrix_real
@@ -18,6 +17,17 @@ try:
     from mace_ops.cuda import SymmetricContraction as CUDAContraction_
 except ImportError:
     pass
+
+import os
+import sys
+import tempfile
+import torch.distributed as dist
+import torch.nn as nn
+import torch.optim as optim
+import torch.multiprocessing as mp
+
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 
 BATCH_EXAMPLE = 10
 ALPHABET = ["w", "x", "v", "n", "z", "r", "t", "y", "u", "o", "p", "s"]
@@ -332,102 +342,100 @@ class CUDAContraction(torch.nn.Module):
         )
         return out
 
-nchannels = 96
-max_ell = 3
-correlation = 3
-natoms = 1000
-dtype = torch.float32
-torch.set_default_dtype(dtype)
-
-#hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o + " + str(nchannels) + "x2e" )
-hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o")
-#hidden_irreps=o3.Irreps(str(nchannels) + "x0e")
-
-sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
-num_features = hidden_irreps.count(o3.Irrep(0, 1))
-interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
-
-print (interaction_irreps)
-print (num_features)
-
-cuda_optimized = False
-
-symm_contract = SymmetricContraction(interaction_irreps, hidden_irreps, correlation, num_elements=3, cuda_optimized=cuda_optimized).to("cuda")
-
-for param in symm_contract.parameters():
-    param.requires_grad = False
-
-X = np.fromfile('symm_contraction_data/X.npy').reshape(21, 128, 16)
-Y = np.fromfile('symm_contraction_data/Y.npy').reshape(21, 3)
-
-nrepeats = int(math.ceil(float (natoms) / X.shape[0]))
-
-print ("n_repeats:", nrepeats)
-
-nelements = Y.shape[-1]
-X_torch = torch.from_numpy(X).cuda().repeat(nrepeats, 1, 1).type(dtype)
-X_torch_copy = torch.from_numpy(X).cuda().repeat(nrepeats, 1, 1).type(dtype)
-Y_torch = torch.from_numpy(Y).cuda().repeat(nrepeats, 1).type(dtype)
-
-X_torch = X_torch[:natoms, :nchannels, :]
-X_torch_copy = X_torch_copy[:natoms, :nchannels, :]
-Y_torch = Y_torch[:natoms]
-
-coupling_irreps = o3.Irreps([irrep.ir for irrep in interaction_irreps])
-
-print (hidden_irreps.num_irreps, hidden_irreps.lmax)
-
-all_weights = {}
-
-for i in range(len(symm_contract.contractions)):
-    all_weights[str(i)] = {}
-    all_weights[str(i)][3] =  symm_contract.contractions[i].weights_max.detach().clone().type(dtype)
-    all_weights[str(i)][2] =  symm_contract.contractions[i].weights[0].detach().clone().type(dtype)
-    all_weights[str(i)][1] =  symm_contract.contractions[i].weights[1].detach().clone().type(dtype)
 
 
-cuda_contraction = CUDAContraction_(coupling_irreps, hidden_irreps, all_weights,nthreadX = 32, nthreadY = 8, nthreadZ = 1, dtype=dtype)
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
 
-torch.matmul(torch.randn(1024, 1024, device='cuda'),torch.randn(1024, 1024, device='cuda'))
+    # initialize the process group
+    dist.init_process_group("gloo", rank=rank, world_size=world_size)
 
-X_torch.requires_grad=True
+def cleanup():
+    dist.destroy_process_group()
 
-ntrials = 1000
-torch.cuda.synchronize()
+def run_demo(demo_fn, world_size, natoms_per_gpu):
+    print (natoms_per_gpu)
+    mp.spawn(demo_fn,
+             args=(world_size, natoms_per_gpu),
+             nprocs=world_size,
+             join=True)
 
-start = time()
-for i in range (ntrials):
-    output = symm_contract.forward(X_torch, Y_torch)
+def demo(rank, world_size, natoms_per_gpu):
 
-    os = output.sum()
+    setup(rank, world_size)
 
-    os.backward()
+    ntrials = 1000
+    nchannels = 128
+    max_ell = 3
+    correlation = 3
+    nelements = 3
+    dtype = torch.float32
+    torch.set_default_dtype(dtype)
 
-torch.cuda.synchronize()
+    #hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o + " + str(nchannels) + "x2e" )
+    hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o")
+    #hidden_irreps=o3.Irreps(str(nchannels) + "x0e")
 
-end = time()
+    sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
+    num_features = hidden_irreps.count(o3.Irrep(0, 1))
+    interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
 
-print ("forward dense:", end - start)
+    print (interaction_irreps)
+    print (num_features)
 
-X_torch_copy = X_torch_copy.transpose(-1, -2).contiguous()
-X_torch_copy.requires_grad = True
+    symm_contract = SymmetricContraction(interaction_irreps, hidden_irreps, correlation, num_elements=3, cuda_optimized=False).to(rank)
+    symm_contract.eval()
 
+    
+    Y_torch = torch.randint(high=nelements,size=(natoms_per_gpu,), device=rank, dtype=torch.int32)
 
-atom_types = torch.argmax(Y_torch, dim=-1).int()
+    coupling_irreps = o3.Irreps([irrep.ir for irrep in interaction_irreps])
 
-torch.cuda.synchronize()
+    print (hidden_irreps.num_irreps, hidden_irreps.lmax)
 
-start = time()
-for i in range (ntrials):
-    out_cuda = cuda_contraction.forward(X_torch_copy, atom_types)
-    os = out_cuda.sum()
-    os.backward()
+    all_weights = {}
 
-torch.cuda.synchronize()
-end = time()
-print (end - start)
+    for i in range(len(symm_contract.contractions)):
+        all_weights[str(i)] = {}
+        all_weights[str(i)][3] =  symm_contract.contractions[i].weights_max.detach().clone().type(dtype)
+        all_weights[str(i)][2] =  symm_contract.contractions[i].weights[0].detach().clone().type(dtype)
+        all_weights[str(i)][1] =  symm_contract.contractions[i].weights[1].detach().clone().type(dtype)
 
-print (out_cuda[0], out_cuda.shape)
-print (output[0], output.shape)
+    cuda_contraction = CUDAContraction_(coupling_irreps, hidden_irreps, all_weights,nthreadX = 32, nthreadY = 8, nthreadZ = 1, dtype=dtype, device=rank)
+    cuda_contraction.eval()
 
-#print (X_torch.grad[0] - X_torch_copy.grad[0].transpose(-1, -2))
+    torch.matmul(torch.randn(1024, 1024, device=rank),torch.randn(1024, 1024, device=rank))
+
+    torch.cuda.synchronize(device=rank)
+
+    dist.barrier()
+    start = time()
+
+    for i in range (ntrials):
+        X_torch = torch.randn(natoms_per_gpu, (max_ell + 1) ** 2, nchannels, device=rank, dtype=torch.float32, requires_grad=True)
+        out_cuda = cuda_contraction.forward(X_torch, Y_torch)
+        os = out_cuda.sum()
+        os.backward()
+
+    dist.barrier()
+    end = time()
+    print (end - start)
+
+    cleanup()
+
+if __name__ == "__main__":
+
+    from argparse import ArgumentParser
+
+    parser = ArgumentParser()
+
+    parser.add_argument('-ngpus', default=-1, type=int)
+    parser.add_argument('-natoms_per_gpu', default=2500, type=int)
+
+    args = parser.parse_args()
+
+    if (args.ngpus  == -1):
+        args.ngpus = torch.cuda.device_count()
+
+    run_demo(demo, args.ngpus, args.natoms_per_gpu)

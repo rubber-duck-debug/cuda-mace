@@ -13,8 +13,9 @@ EXT_SUFFIX = sysconfig.get_config_var('EXT_SUFFIX')
 
 torch.ops.load_library(_HERE + '/tensor_product.so')
 torch.ops.load_library(_HERE + '/symmetric_contraction.so')
-torch.ops.load_library(_HERE + '/invariant_outer_product.so')
+torch.ops.load_library(_HERE + '/invariant_message_passing.so')
 torch.ops.load_library(_HERE + '/equivariant_outer_product.so')
+torch.ops.load_library(_HERE + '/linear.so')
 
 def _sum_weighted_tensor_product(
     X1,
@@ -271,8 +272,8 @@ class SymmetricContraction(torch.nn.Module):
                     irreps_in=irreps_in,
                     irreps_out=o3.Irreps(str(ir_out.ir)),
                     correlation=nu,
-                    dtype=torch.float32,
-                )[-1]
+                    dtype=torch.float32
+                )[-1].to(self.device)
                 self.U_matrices[nu][ir_id] = U_matrix
 
         self.W_tensors = W_tensors
@@ -335,9 +336,9 @@ class SymmetricContraction(torch.nn.Module):
     
     def setup_sparse_matrices(self):
         lout_counter = 0
-        self.U3_num_nonsparse_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
-        self.U3_num_nonsparse_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
-        self.U3_num_nonsparse_3 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U3_num_nonsparse_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
+        self.U3_num_nonsparse_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
+        self.U3_num_nonsparse_3 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
         for ir_id, ir_out in enumerate(self.irreps_out):
             U_matrix = self.U_matrices[3][ir_id]
             if (len(U_matrix.shape) == 4):
@@ -370,14 +371,14 @@ class SymmetricContraction(torch.nn.Module):
         self.u3_max_nonsparse = torch.max( torch.tensor([self.U3_num_nonsparse_1.max().item(), self.U3_num_nonsparse_2.max().item(), self.U3_num_nonsparse_3.max().item()])).item()
 
         lout_counter = 0
-        self.U3_indices_0 = torch.zeros((self.u3_max_nonsparse, 16, 16), dtype=torch.int32).cuda()
-        self.U3_values_0 = torch.zeros((self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
-        self.U3_indices_1  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).cuda()
-        self.U3_indices_2  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).cuda()
-        self.U3_indices_3  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).cuda()
-        self.U3_values_1 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
-        self.U3_values_2 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
-        self.U3_values_3 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).cuda()
+        self.U3_indices_0 = torch.zeros((self.u3_max_nonsparse, 16, 16), dtype=torch.int32).to(self.device)
+        self.U3_values_0 = torch.zeros((self.u3_max_nonsparse, 16, 16), dtype=torch.float32).to(self.device)
+        self.U3_indices_1  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).to(self.device)
+        self.U3_indices_2  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).to(self.device)
+        self.U3_indices_3  = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.int16).to(self.device)
+        self.U3_values_1 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).to(self.device)
+        self.U3_values_2 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).to(self.device)
+        self.U3_values_3 = torch.zeros((self.nlout, self.u3_max_nonsparse, 16, 16), dtype=torch.float32).to(self.device)
         for ir_id, ir_out in enumerate(self.irreps_out):
             U_matrix = self.U_matrices[3][ir_id]
             if (len(U_matrix.shape) == 4):
@@ -418,8 +419,8 @@ class SymmetricContraction(torch.nn.Module):
                     lout_counter+=1
 
         lout_counter = 0
-        self.U2_num_nonsparse_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
-        self.U2_num_nonsparse_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U2_num_nonsparse_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
+        self.U2_num_nonsparse_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
         for ir_id, ir_out in enumerate(self.irreps_out):
             U_matrix = self.U_matrices[2][ir_id]
             if (len(U_matrix.shape) == 3):
@@ -444,10 +445,10 @@ class SymmetricContraction(torch.nn.Module):
 
         lout_counter = 0
         self.u2_max_nonsparse = torch.max( torch.tensor([self.U2_num_nonsparse_1.max().item(), self.U2_num_nonsparse_2.max().item()])).item()
-        self.U2_values_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.float32).cuda()
-        self.U2_indices_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
-        self.U2_values_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.float32).cuda()
-        self.U2_indices_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).cuda()
+        self.U2_values_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.float32).to(self.device)
+        self.U2_indices_1 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
+        self.U2_values_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.float32).to(self.device)
+        self.U2_indices_2 = torch.zeros((self.nlout, 16, 16), dtype=torch.int16).to(self.device)
         for ir_id, ir_out in enumerate(self.irreps_out):
             U_matrix = self.U_matrices[2][ir_id]
             if (len(U_matrix.shape) == 3):
@@ -481,8 +482,8 @@ class SymmetricContraction(torch.nn.Module):
                     lout_counter+=1
 
         lout_counter = 0
-        self.U1_num_values = torch.zeros((self.nlout, 16), dtype=torch.int16).cuda()
-        self.U1_index = torch.zeros((self.nlout, 16), dtype=torch.int16).cuda()
+        self.U1_num_values = torch.zeros((self.nlout, 16), dtype=torch.int16).to(self.device)
+        self.U1_index = torch.zeros((self.nlout, 16), dtype=torch.int16).to(self.device)
         for ir_id, ir_out in enumerate(self.irreps_out):
             U_matrix =  self.U_matrices[1][ir_id]
             if (len(U_matrix.shape) == 2):
@@ -523,9 +524,9 @@ class SymmetricContraction(torch.nn.Module):
         nelements = self.W_tensors[str(0)][3].shape[0]
 
         for nu in range(1, self.correlation + 1):
-            weights_c = torch.zeros(self.nlout, nelements, self.weight_max_size[nu], self.W_tensors[str(0)][3].shape[-1], device='cuda', dtype=self.dtype)  
+            weights_c = torch.zeros(self.nlout, nelements, self.weight_max_size[nu], self.W_tensors[str(0)][3].shape[-1], device=self.device, dtype=self.dtype)  
             weights_dict[str(nu)] = weights_c
-            nweights[str(nu)] = torch.zeros(self.nlout, device='cuda', dtype=torch.int32)
+            nweights[str(nu)] = torch.zeros(self.nlout, device=self.device, dtype=torch.int32)
 
         count = 0
         for i in range(len(self.W_tensors.keys())):

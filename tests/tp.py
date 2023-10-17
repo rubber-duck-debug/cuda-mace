@@ -149,8 +149,7 @@ class TensorProduct(torch.nn.Module):
         for i, (mul, ir_in) in enumerate(self.irreps_in1):
             for j, (_, ir_edge) in enumerate(self.irreps_in2):
                 for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
-                    #if ir_out in target_irreps:
-                    if ir_out in target_irreps and ir_in.l + ir_edge.l <= 3:
+                    if ir_out in target_irreps:
 
                         l1 = ir_in.l
                         l2 = ir_edge.l
