@@ -16,6 +16,7 @@ torch.ops.load_library(_HERE + '/symmetric_contraction.so')
 torch.ops.load_library(_HERE + '/invariant_message_passing.so')
 torch.ops.load_library(_HERE + '/equivariant_outer_product.so')
 torch.ops.load_library(_HERE + '/linear.so')
+torch.ops.load_library(_HERE + '/linear_wmma.so')
 
 def _sum_weighted_tensor_product(
     X1,

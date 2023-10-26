@@ -90,11 +90,19 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
          extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
     
+    linear_wmma = CUDAExtension(
+        '.cuda.linear_wmma', [
+            'mace_ops/cuda/linear_wmma.cu'
+        ],
+         extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
+    
     ext_modules.append(tensor_contraction)
     ext_modules.append(invariant_message_passing)
     ext_modules.append(equivariant_outer_product)
     ext_modules.append(symmetric_contraction)
     ext_modules.append(linear)
+    ext_modules.append(linear_wmma)
     
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")
