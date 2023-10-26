@@ -161,7 +161,7 @@ max_l = 3
 
 nnodes = 1000
 
-x = torch.randn(nnodes, n_channels*(max_l+1)**2, device='cuda')
+x = torch.randn(nnodes, n_channels*(max_l+1)**2, device='cuda', dtype=torch.float32)
 ## E3NN LINEAR##
 irreps_in = o3.Irreps(
     (n_channels * o3.Irreps.spherical_harmonics(max_l))
@@ -193,7 +193,7 @@ for mul, ir in irreps_in:
     ix += mul * ir.dim
     x_reshape.append(field)
 
-x_r = torch.cat(x_reshape, dim=1)
+x_r = torch.cat(x_reshape, dim=1).contiguous()
 
 print(x_r.shape)
 
@@ -337,7 +337,7 @@ print("bwd simple linear:", end - start)
 start = time()
 for i in range(1000):
     _ = linear_cuda(x_r)
-    torch.cuda.synchronize()
+torch.cuda.synchronize()
 end = time()
 print("fwd CUDA linear:", end - start)
 
@@ -345,7 +345,7 @@ print("fwd CUDA linear:", end - start)
 start = time()
 for i in range(1000):
     _ = torch.ops.linear_wmma.matmul(x_r, linear_cuda.weights[0])
-    torch.cuda.synchronize()
+torch.cuda.synchronize()
 end = time()
 print("MATMUL time:", end - start)
 
