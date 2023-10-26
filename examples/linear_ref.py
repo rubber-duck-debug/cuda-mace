@@ -332,7 +332,7 @@ for i in range(1000):
     torch.cuda.synchronize()
 
 end = time()
-
+print(_[0])
 print("bwd simple linear:", end - start)
 
 
@@ -341,6 +341,8 @@ for i in range(1000):
     _ = linear_cuda(x_r)
 torch.cuda.synchronize()
 end = time()
+
+print(_[0])
 print("fwd CUDA linear:", end - start)
 
 
@@ -349,4 +351,4 @@ for i in range(1000):
     _ = torch.ops.linear_wmma.matmul(x_r, linear_cuda.weights[0], False)
 torch.cuda.synchronize()
 end = time()
-print("MATMUL time:", end - start)
+print("MATMUL WMMA time:", end - start)
