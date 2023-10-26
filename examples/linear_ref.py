@@ -297,6 +297,8 @@ print("fwd e3nn linear:", end - start)
 print(x.shape)
 x = x.requires_grad_(True)
 
+linear.weight = linear.weight.requires_grad_(False)
+
 start = time()
 for i in range(1000):
     _ = linear(x)
@@ -310,6 +312,8 @@ for i in range(1000):
 end = time()
 
 print("bwd e3nn linear:", end - start)
+
+print (linear.weight.grad)
 
 
 start = time()
@@ -332,7 +336,6 @@ for i in range(1000):
     torch.cuda.synchronize()
 
 end = time()
-print(_[0])
 print("bwd simple linear:", end - start)
 
 
@@ -352,3 +355,14 @@ for i in range(1000):
 torch.cuda.synchronize()
 end = time()
 print("MATMUL WMMA time:", end - start)
+
+print (_[0])
+start = time()
+for i in range(1000):
+    _ =torch.matmul(x_r, linear_cuda.weights[0])
+torch.cuda.synchronize()
+end = time()
+print (_[0])
+print("TORCH WMMA time:", end - start)
+
+
