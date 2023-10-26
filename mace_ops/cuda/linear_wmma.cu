@@ -263,7 +263,7 @@ torch::Tensor linear_wmma(
     TORCH_CHECK(N % 16 == 0, "W dim=2 must be a multiple of 16");
     TORCH_CHECK(K % 16 == 0, "X dim=2 must be a multiple of 16");
 
-    torch::Tensor output = torch::zeros({NNODES, X.size(1), N},
+    torch::Tensor output = torch::zeros({NNODES, M, N},
                                         torch::TensorOptions()
                                             .dtype(X.dtype())
                                             .device(X.device()));

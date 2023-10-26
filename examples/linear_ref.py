@@ -4,6 +4,7 @@ from typing import List
 from math import prod
 import torch
 from e3nn import o3
+from mace_ops import cuda
 
 
 class shape_irreps(torch.nn.Module):
@@ -140,17 +141,17 @@ class LinearCUDA(torch.nn.Module):
             self.l_start.append(start)
             self.l_end.append(end)
             self.path_weights.append(ins.path_weight)
-            self.weights.append(ins.w)
+            self.weights.append(w)
 
             flat_weight_index += path_nweight
 
         self.l_start = torch.tensor(self.l_start).int().cuda()
         self.l_end = torch.tensor(self.l_end).int().cuda()
-        self.weights = torch.tensor(self.weights).float().cuda()
+        self.weights = torch.stack(self.weights).contiguous().float().cuda()
         self.path_weights = torch.tensor(self.path_weights).float().cuda()
 
     def forward(self, x):
-        return torch.ops.linear_wmma.linear_wmma(x, self.weights, self.l_start, self.l_end, self.path_weights)
+        return torch.ops.linear_wmma.linear_wmma(x, self.weights, self.l_start, self.l_end, self.path_weights, False)
 
 
 # INPUTS#
@@ -161,7 +162,8 @@ max_l = 3
 
 nnodes = 1000
 
-x = torch.randn(nnodes, n_channels*(max_l+1)**2, device='cuda', dtype=torch.float32)
+x = torch.randn(nnodes, n_channels*(max_l+1)**2,
+                device='cuda', dtype=torch.float32)
 ## E3NN LINEAR##
 irreps_in = o3.Irreps(
     (n_channels * o3.Irreps.spherical_harmonics(max_l))
@@ -199,7 +201,7 @@ print(x_r.shape)
 
 
 linear_ref = LinearRef(irreps_in, irreps_out, instructions, ws)
-linear_cuda = LinearRef(irreps_in, irreps_out, instructions, ws)
+linear_cuda = LinearCUDA(irreps_in, irreps_out, instructions, ws)
 
 # print("LIN REF")
 # print(linear_ref(x_r))
@@ -316,7 +318,7 @@ for i in range(1000):
     torch.cuda.synchronize()
 end = time()
 print("fwd simple linear:", end - start)
-print (_[0])
+print(_[0])
 x_r = x_r.requires_grad_(True)
 
 start = time()
@@ -344,8 +346,7 @@ print("fwd CUDA linear:", end - start)
 
 start = time()
 for i in range(1000):
-    _ = torch.ops.linear_wmma.matmul(x_r, linear_cuda.weights[0])
+    _ = torch.ops.linear_wmma.matmul(x_r, linear_cuda.weights[0], False)
 torch.cuda.synchronize()
 end = time()
 print("MATMUL time:", end - start)
-
