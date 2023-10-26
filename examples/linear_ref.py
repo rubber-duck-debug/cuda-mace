@@ -154,12 +154,13 @@ class LinearCUDA(torch.nn.Module):
 
 
 # INPUTS#
-n_channels = 16
-n_out_channels = 32
+n_channels = 128
+n_out_channels = 128
 
 max_l = 3
 
-nnodes = 10
+nnodes = 1000
+
 x = torch.randn(nnodes, n_channels*(max_l+1)**2, device='cuda')
 ## E3NN LINEAR##
 irreps_in = o3.Irreps(
