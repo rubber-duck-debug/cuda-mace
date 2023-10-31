@@ -148,10 +148,11 @@ class LinearCUDA(torch.nn.Module):
         self.l_start = torch.tensor(self.l_start).int().cuda()
         self.l_end = torch.tensor(self.l_end).int().cuda()
         self.weights = torch.stack(self.weights).contiguous().float().cuda()
+        self.weights_transposed = self.weights.clone().transpose(-1, -2).cuda().contiguous()
         self.path_weights = torch.tensor(self.path_weights).float().cuda()
 
     def forward(self, x):
-        return torch.ops.linear_wmma.linear_wmma(x, self.weights, self.l_start, self.l_end, self.path_weights, False)
+        return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed, self.l_start, self.l_end, self.path_weights)
 
 
 # INPUTS#
@@ -196,6 +197,8 @@ for mul, ir in irreps_in:
     x_reshape.append(field)
 
 x_r = torch.cat(x_reshape, dim=1).contiguous()
+
+grad_check_x_c = x_r.clone().detach().requires_grad_(True)
 
 print(x_r.shape)
 
@@ -299,68 +302,36 @@ x = x.requires_grad_(True)
 
 linear.weight = linear.weight.requires_grad_(False)
 
-start = time()
-for i in range(1000):
-    _ = linear(x)
 
-    t = _.sum()
+_ = linear(x)
 
-    t.backward()
+t = _.sum()
 
-    torch.cuda.synchronize()
+t.backward()
 
-end = time()
+torch.cuda.synchronize()
 
-print("bwd e3nn linear:", end - start)
+print(x.grad)
 
-print(linear.weight.grad)
-
-
-start = time()
-for i in range(1000):
-    _ = linear_ref(x_r)
-    torch.cuda.synchronize()
-end = time()
-print("fwd simple linear:", end - start)
-print(_[0])
 x_r = x_r.requires_grad_(True)
 
-start = time()
-for i in range(1000):
-    _ = linear_ref(x_r)
+_ = linear_ref(x_r)
 
-    t = _.sum()
+t = _.sum()
 
-    t.backward()
+t.backward()
 
-    torch.cuda.synchronize()
+print("linear ref grad [-1]:", x_r.grad[-1])
 
-end = time()
-print("bwd simple linear:", end - start)
+print (linear_cuda.path_weights, linear_cuda.l_start, linear_cuda.l_end)
+cuda_lin_out = linear_cuda(grad_check_x_c)
+print("linear ref:", _[0])
+print("cuda linear:", cuda_lin_out[0])
 
+loss = cuda_lin_out.sum()
 
-start = time()
-for i in range(1000):
-    _ = linear_cuda(x_r)
-torch.cuda.synchronize()
-end = time()
-
-print(_[0])
-print("fwd CUDA linear:", end - start)
+loss.backward()
 
 
-start = time()
-for i in range(1000):
-    _ = torch.ops.linear_wmma.matmul(x_r, linear_cuda.weights[0], False)
-torch.cuda.synchronize()
-end = time()
-print("MATMUL WMMA time:", end - start)
-
-print(_[0])
-start = time()
-for i in range(1000):
-    _ = torch.matmul(x_r, linear_cuda.weights[0])
-    torch.cuda.synchronize()
-end = time()
-print(_[0])
-print("TORCH WMMA time:", end - start)
+print(grad_check_x_c.shape)
+print(grad_check_x_c.grad[-1])
