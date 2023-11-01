@@ -27,12 +27,12 @@ class MatMul(torch.autograd.Function):
 
 
 # INPUTS#
-n_channels = 96
+n_channels = 64
 n_out_channels = 64
 
 max_l = 3
 
-nnodes = 4
+nnodes = 1
 
 x = torch.randn(nnodes, (max_l+1)**2, n_channels,
                 device='cuda', dtype=torch.float32, requires_grad=True)
@@ -42,19 +42,21 @@ W = torch.randn(n_channels, n_out_channels, device='cuda',
 
 W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
 x_wmma = x.clone().detach().requires_grad_(True).cuda().contiguous()
-x_py = x.clone().detach().requires_grad_(True).cuda().contiguous().requires_grad_(True)
+x_py = x.clone().detach().requires_grad_(
+    True).cuda().contiguous().requires_grad_(True)
 
 print(W)
 print(W_T)
-
-print(W.shape)
-print(W_T.shape)
+print(x_wmma)
 
 wmma_out = torch.ops.linear_wmma.matmul(x_wmma, W, W_T)
 
-print(wmma_out[0])
+print("Contains NaNs?", torch.isnan(wmma_out).any())
+print(wmma_out[0], wmma_out.is_contiguous())
 
-wmma_loss = wmma_out.sum() ** 0.5
+wmma_loss = wmma_out.sum() ** 2
+print(wmma_loss)
+
 wmma_loss.backward()
 print("x WMMA grad:")
 print(x_wmma.grad[0])
@@ -62,13 +64,13 @@ print(x_wmma.grad[0])
 
 torch_out = torch.matmul(x, W)
 
-torch_loss = torch_out.sum() ** 0.5
+torch_loss = torch_out.sum() ** 2
 torch_loss.backward()
 print("x grad:")
 print(x.grad[0])
 
 
-output_fn = MatMul.apply(x_py, W)
-t_fn = output_fn.sum() ** 0.5
+output_fn = MatMul.apply(x_py, W) 
+t_fn = output_fn.sum() ** 2
 t_fn.backward()
 print(x_py.grad[0])

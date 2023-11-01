@@ -59,6 +59,7 @@ __global__ void matmul_wmma_kernel(const float *X, const float *W, float *OUT, c
     size_t space = 0;
 
     float *buffer_X = shared_array<float>(K_TOTAL * M_TOTAL, sptr, &space);
+    float *buffer_output = shared_array<float>(M_TOTAL * N_TOTAL, sptr, &space);
 
     for (int i = 0; i < find_integer_divisor(M_TOTAL, blockDim.y); i++)
     {
@@ -68,6 +69,14 @@ __global__ void matmul_wmma_kernel(const float *X, const float *W, float *OUT, c
             {
                 buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = X[blockIdx.x * M_TOTAL * K_TOTAL + (i * blockDim.y + threadIdx.y) * K_TOTAL + (j * blockDim.x + threadIdx.x)];
             }
+        }
+    }
+
+    for (int i = threadIdx.y; i < M_TOTAL; i += blockDim.y)
+    {
+        for (int j = threadIdx.x; j < N_TOTAL; j += blockDim.x)
+        {
+            buffer_output[i * N_TOTAL + j] = 0.0;
         }
     }
 
@@ -106,7 +115,19 @@ __global__ void matmul_wmma_kernel(const float *X, const float *W, float *OUT, c
 
     if (a_row < M_TOTAL && b_col < N_TOTAL)
     {
-        wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + b_col + a_row * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
+        // wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + b_col + a_row * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
+
+        wmma::store_matrix_sync(buffer_output + b_col + a_row * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
+    }
+
+    __syncthreads();
+
+    for (int i = threadIdx.y; i < M_TOTAL; i += blockDim.y)
+    {
+        for (int j = threadIdx.x; j < N_TOTAL; j += blockDim.x)
+        {
+            OUT[blockIdx.x * M_TOTAL * N_TOTAL + i * N_TOTAL + j] = buffer_output[i * N_TOTAL + j];
+        }
     }
 }
 
@@ -143,6 +164,7 @@ torch::Tensor matmul_wmma(torch::Tensor X, torch::Tensor W)
     void *sptr = nullptr;
 
     shared_array<float>(M * K, sptr, &shared_size); // X
+    shared_array<float>(M * N, sptr, &shared_size); // output
 
     matmul_wmma_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
                                                            NNODES, M, N, K);
