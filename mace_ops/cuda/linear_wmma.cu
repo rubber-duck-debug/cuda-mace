@@ -7,6 +7,7 @@
 #include <cuda/barrier>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
+#include <cuda_fp16.h>
 
 using namespace nvcuda;
 using namespace std;
@@ -17,7 +18,7 @@ using namespace torch::autograd;
 // MMA matrix tile dimensions.
 #define WMMA_M 16
 #define WMMA_N 16
-#define WMMA_K 8
+#define WMMA_K 16
 
 __host__ __device__ int32_t find_integer_divisor(int32_t x, int32_t bdim)
 {
@@ -50,8 +51,11 @@ __host__ __device__ T *align_array(std::size_t n_elements, void *&ptr, const std
     return reinterpret_cast<T *>(aligned);
 }
 
-__global__ void matmul_wmma_kernel(const float *X, const float *W, float *OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
+__global__ void very_dumb_matmul(const float *X, const float *W, float *OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
 {
+
+    // load X into shared memory, but column-major
+    // load 32 by 32 chunk of W into shared memory
 
     extern __shared__ char buffer[];
 
@@ -59,77 +63,135 @@ __global__ void matmul_wmma_kernel(const float *X, const float *W, float *OUT, c
     size_t space = 0;
 
     float *buffer_X = shared_array<float>(K_TOTAL * M_TOTAL, sptr, &space);
-    // float *buffer_output = shared_array<float>(M_TOTAL * N_TOTAL, sptr, &space);
+    float *buffer_out = shared_array<float>(N_TOTAL * M_TOTAL, sptr, &space);
 
     for (int i = 0; i < find_integer_divisor(M_TOTAL, blockDim.y); i++)
     {
         for (int j = 0; j < find_integer_divisor(K_TOTAL, blockDim.x); j++)
         {
-            if ((i * blockDim.y + threadIdx.y) < M_TOTAL && (j * blockDim.x + threadIdx.x) < K_TOTAL)
-            {
-                buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = X[blockIdx.x * M_TOTAL * K_TOTAL + (i * blockDim.y + threadIdx.y) * K_TOTAL + (j * blockDim.x + threadIdx.x)];
-            }
+            buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = X[blockIdx.x * M_TOTAL * K_TOTAL + (i * blockDim.y + threadIdx.y) * K_TOTAL + (j * blockDim.x + threadIdx.x)];
         }
     }
-
-    /*for (int i = threadIdx.y; i < M_TOTAL; i += blockDim.y)
-    {
-        for (int j = threadIdx.x; j < N_TOTAL; j += blockDim.x)
-        {
-            buffer_output[i * N_TOTAL + j] = 0.0;
-        }
-    }*/
-
     __syncthreads();
-
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
-
-    wmma::fill_fragment(ab_frag, 0.0f);
-
-    int a_row = 0;
-    int b_col = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
-
-    if (a_row < M_TOTAL && b_col < N_TOTAL)
-    {
-        for (int k = 0; k < K_TOTAL; k += WMMA_K)
-        {
-            wmma::load_matrix_sync(a_frag, buffer_X + k * M_TOTAL + a_row, M_TOTAL);
-            wmma::load_matrix_sync(b_frag, W + b_col + k * N_TOTAL, N_TOTAL);
-
-            for (int i = 0; i < a_frag.num_elements; i++)
-            {
-                a_frag.x[i] = wmma::__float_to_tf32(a_frag.x[i]);
-            }
-
-            for (int i = 0; i < b_frag.num_elements; i++)
-            {
-                b_frag.x[i] = wmma::__float_to_tf32(b_frag.x[i]);
-            }
-
-            // Perform the matrix multiplication
-            wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
-        }
-    }
-
-    if (a_row < M_TOTAL && b_col < N_TOTAL)
-    {
-        wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + b_col + a_row * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
-
-        // wmma::store_matrix_sync(buffer_output + b_col + a_row * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
-    }
-
-    /*__syncthreads();
 
     for (int i = threadIdx.y; i < M_TOTAL; i += blockDim.y)
     {
         for (int j = threadIdx.x; j < N_TOTAL; j += blockDim.x)
         {
-            OUT[blockIdx.x * M_TOTAL * N_TOTAL + i * N_TOTAL + j] = buffer_output[i * N_TOTAL + j];
+
+            float output = 0.0;
+
+            for (int k = 0; k < K_TOTAL; k++)
+            {
+                output += buffer_X[k * M_TOTAL + i] * W[k * N_TOTAL + j];
+            }
+
+            buffer_out[i * N_TOTAL + j] = output;
         }
-    }*/
+    }
+
+    __syncthreads();
+
+    for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < M_TOTAL * N_TOTAL; tid += blockDim.x * blockDim.y)
+        OUT[blockIdx.x * M_TOTAL * N_TOTAL + tid] = buffer_out[tid];
 }
+
+__global__ void matmul_wmma_kernel(float *X, float *W, float *OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
+{
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    half *buffer_X = shared_array<half>(K_TOTAL * M_TOTAL, sptr, &space);
+    half *buffer_delta_X = shared_array<half>(K_TOTAL * M_TOTAL, sptr, &space);
+    half *buffer_W = shared_array<half>(WMMA_K * N_TOTAL, sptr, &space);
+    half *buffer_delta_W = shared_array<half>(WMMA_K * N_TOTAL, sptr, &space);
+
+    for (int i = 0; i < find_integer_divisor(M_TOTAL, blockDim.y); i++)
+    {
+        for (int j = 0; j < find_integer_divisor(K_TOTAL, blockDim.x); j++)
+        {
+            float x = X[blockIdx.x * M_TOTAL * K_TOTAL + (i * blockDim.y + threadIdx.y) * K_TOTAL + (j * blockDim.x + threadIdx.x)];
+
+            half x_h = __float2half(x);
+
+            buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = x_h;
+            buffer_delta_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = __float2half(x - __half2float(x_h));
+        }
+    }
+
+    __syncthreads();
+
+    int lda = K_TOTAL;
+    int ldb = N_TOTAL;
+    int ldc = N_TOTAL;
+
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> a_frag, delta_a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag, delta_b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
+
+    wmma::fill_fragment(ab_frag, 0.0f);
+
+    int warpM = threadIdx.x / warpSize;
+    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
+
+    for (int i = 0; i < K_TOTAL; i += WMMA_K)
+    {
+
+        // need to load tiles of W in here... need threadIdx.y * WMMA_N x WMMA_K tiles...
+        for (int j = threadIdx.y; j < WMMA_K; j += blockDim.y)
+        {
+            for (int k = threadIdx.x; k < N_TOTAL; k += blockDim.x)
+            {
+                float w = W[(i + j) * N_TOTAL + k];
+                half w_h = __float2half(w);
+
+                buffer_W[j * N_TOTAL + k] = __float2half(w);
+                buffer_delta_W[j * N_TOTAL + k] = __float2half(w - __half2float(w_h));
+            }
+        }
+
+        // Now need to compute C_{32} = A_{16}B_{16} + \Delta A_{16} B_{16} + A_{16}\Delta B_{16} + \Delta A_{16}\Delta B_{16}
+        __syncthreads();
+
+        int aCol = i;
+        int aRow = warpM * WMMA_M;
+        int bCol = warpN * WMMA_N;
+        int bRow = i;
+
+        if (aRow < M_TOTAL && aCol < K_TOTAL && bRow < K_TOTAL && bCol < N_TOTAL)
+        {
+            wmma::load_matrix_sync(a_frag, buffer_X + aCol * M_TOTAL + aRow, M_TOTAL);
+            wmma::load_matrix_sync(delta_a_frag, buffer_delta_X + aCol * M_TOTAL + aRow, M_TOTAL);
+
+            // wmma::load_matrix_sync(b_frag, buffer_W + bCol + bRow * ldb, ldb);
+            // wmma::load_matrix_sync(delta_b_frag, buffer_W + bCol + bRow * ldb, ldb);
+
+            wmma::load_matrix_sync(b_frag, buffer_W + bCol, ldb);
+            wmma::load_matrix_sync(delta_b_frag, buffer_delta_W + bCol, ldb);
+
+            // Perform the matrix multiplication
+            wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
+            wmma::mma_sync(ab_frag, delta_a_frag, b_frag, ab_frag);
+            wmma::mma_sync(ab_frag, a_frag, delta_b_frag, ab_frag);
+            wmma::mma_sync(ab_frag, delta_a_frag, delta_b_frag, ab_frag);
+        }
+    }
+
+    __syncthreads();
+
+    int cCol = warpN * WMMA_N;
+    int cRow = warpM * WMMA_M;
+
+    if (cRow < M_TOTAL && cCol < N_TOTAL)
+    {
+        wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + cCol + cRow * ldc, ab_frag, ldc, wmma::mem_row_major);
+    }
+}
+
+void deleter(void *arg){};
 
 torch::Tensor matmul_wmma(torch::Tensor X, torch::Tensor W)
 {
@@ -145,31 +207,45 @@ torch::Tensor matmul_wmma(torch::Tensor X, torch::Tensor W)
     TORCH_CHECK(N % 16 == 0, "W dim=2 must be a multiple of 16");
     TORCH_CHECK(K % 16 == 0, "X dim=2 must be a multiple of 16");
 
+    // float *output_ptr = NULL;
+
+    // cudaMalloc(reinterpret_cast<void **>(&output_ptr),          sizeof(float) * M * N);
+
     torch::Tensor output = torch::empty({NNODES, M, N},
                                         torch::TensorOptions()
                                             .dtype(X.dtype())
                                             .device(X.device()));
 
     dim3 gridDim, blockDim;
+
     blockDim.x = WARP_SIZE;
-    blockDim.y = min(8, find_integer_divisor(N, WMMA_N)); // want at most 8 warps to deal with 8*16 = 128 channels...
+    blockDim.y = 8;
 
     gridDim.x = NNODES;
-    gridDim.y = find_integer_divisor(N, blockDim.y * WMMA_N);
-
-    std::cout << "gridDim.x: " << gridDim.x << " gridDim.y: " << gridDim.y << " blockDim.x: " << blockDim.x << " blockDim.y: " << blockDim.y << std::endl;
-    std::cout << "M: " << M << " N: " << N << " K: " << K << std::endl;
+    gridDim.y = 1; // find_integer_divisor(N, blockDim.y * WMMA_N);
 
     size_t shared_size = 0;
     void *sptr = nullptr;
 
-    shared_array<float>(M * K, sptr, &shared_size); // X
-    // shared_array<float>(M * N, sptr, &shared_size); // output
+    shared_array<half>(K * M, sptr, &shared_size);
+    shared_array<half>(K * M, sptr, &shared_size);
+    shared_array<half>(WMMA_K * N, sptr, &shared_size);
+    shared_array<half>(WMMA_K * N, sptr, &shared_size);
+
+    assert(((unsigned long long)X.data_ptr<float>()) % 128 == 0);
+    assert(((unsigned long long)W.data_ptr<float>()) % 128 == 0);
+    assert(((unsigned long long)output.data_ptr<float>()) % 128 == 0);
+
+    // printf("launching wmma kernel...\n");
+    // printf("grid dim.x: %d grid dim.y: %d grid dim.z: %d\n", gridDim.x, gridDim.y, gridDim.z);
+    // printf("block dim.x: %d block dim.y: %d block dim.z: %d\n", blockDim.x, blockDim.y, blockDim.z);
 
     matmul_wmma_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
                                                            NNODES, M, N, K);
 
     cudaDeviceSynchronize();
+
+    // torch::Tensor output = torch::from_blob(output_ptr, {NNODES, M, N}, deleter, torch::TensorOptions().dtype(X.dtype()).device(X.device()));
 
     return output;
 }
@@ -190,7 +266,6 @@ public:
 
         torch::Tensor result = matmul_wmma(X, W);
 
-        std::cout << result.is_contiguous() << " " << X.is_contiguous() << " " << W.is_contiguous() << " " << W_transposed.is_contiguous() << std::endl;
         return result;
     }
 
@@ -199,13 +274,6 @@ public:
         auto saved_variables = ctx->get_saved_variables();
 
         auto W_T = saved_variables[0];
-
-        std::cout << "backward grad_output sizes: " << grad_outputs[0].sizes() << std::endl;
-        std::cout << "W_T sizes: " << W_T.sizes() << std::endl;
-
-        std::cout << "grad output contiguous? " << grad_outputs[0].is_contiguous() << std::endl;
-
-        // torch::Tensor dX = matmul_wmma(grad_outputs[0].contiguous(), W_T); // grad_outputs isn't contiguous for some reason?
 
         torch::Tensor dX = matmul_wmma(grad_outputs[0].contiguous(), W_T);
 
@@ -264,9 +332,9 @@ __global__ void linear_wmma_kernel(
 
     for (int instruction = 0; instruction < ninstructions; instruction++)
     {
-        wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag;
-        wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag;
-        wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
+        wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, 8, wmma::precision::tf32, wmma::col_major> a_frag;
+        wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, 8, wmma::precision::tf32, wmma::row_major> b_frag;
+        wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, 8, float> ab_frag;
 
         int lstart = l_start[instruction];
         int lend = l_end[instruction];
@@ -274,7 +342,7 @@ __global__ void linear_wmma_kernel(
 
         wmma::fill_fragment(ab_frag, 0.0f);
 
-        for (int k = 0; k < K_TOTAL; k += WMMA_K)
+        for (int k = 0; k < K_TOTAL; k += 8)
         {
 
             wmma::load_matrix_sync(a_frag, buffer_X + k * M_TOTAL + a_row, M_TOTAL);

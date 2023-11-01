@@ -3,6 +3,8 @@ from time import time
 import torch
 from mace_ops import cuda
 
+torch.backends.cuda.matmul.allow_tf32 = True
+
 
 class MatMul(torch.autograd.Function):
     @staticmethod
@@ -27,12 +29,12 @@ class MatMul(torch.autograd.Function):
 
 
 # INPUTS#
-n_channels = 64
-n_out_channels = 64
+n_channels = 128
+n_out_channels = 128
 
 max_l = 3
 
-nnodes = 1
+nnodes = 1000
 
 x = torch.randn(nnodes, (max_l+1)**2, n_channels,
                 device='cuda', dtype=torch.float32, requires_grad=True)
@@ -41,36 +43,23 @@ W = torch.randn(n_channels, n_out_channels, device='cuda',
                 dtype=torch.float32, requires_grad=False)
 
 W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
-x_wmma = x.clone().detach().requires_grad_(True).cuda().contiguous()
-x_py = x.clone().detach().requires_grad_(
-    True).cuda().contiguous().requires_grad_(True)
 
-print(W)
-print(W_T)
-print(x_wmma)
+print("orch double", torch.matmul(x.double(), W.double())[0])
 
-wmma_out = torch.ops.linear_wmma.matmul(x_wmma, W, W_T)
+wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T)
 
-print("Contains NaNs?", torch.isnan(wmma_out).any())
-print(wmma_out[0], wmma_out.is_contiguous())
-
-wmma_loss = wmma_out.sum() ** 2
-print(wmma_loss)
-
-wmma_loss.backward()
-print("x WMMA grad:")
-print(x_wmma.grad[0])
-
+print("cuda_out", wmma_out[0])
 
 torch_out = torch.matmul(x, W)
 
-torch_loss = torch_out.sum() ** 2
-torch_loss.backward()
-print("x grad:")
-print(x.grad[0])
+print(torch_out[0])
 
 
-output_fn = MatMul.apply(x_py, W) 
-t_fn = output_fn.sum() ** 2
-t_fn.backward()
-print(x_py.grad[0])
+start = time()
+
+for i in range(1000):
+    wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T)
+
+end = time()
+
+print(end - start)
