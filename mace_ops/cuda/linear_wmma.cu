@@ -168,6 +168,7 @@ public:
 
         torch::Tensor result = matmul_wmma(X, W);
 
+        std::cout << result.is_contiguous() << " " << X.is_contiguous() << " " << W.is_contiguous() << " " << W_transposed.is_contiguous() << std::endl;
         return result;
     }
 
@@ -180,7 +181,11 @@ public:
         std::cout << "backward grad_output sizes: " << grad_outputs[0].sizes() << std::endl;
         std::cout << "W_T sizes: " << W_T.sizes() << std::endl;
 
-        torch::Tensor dX = matmul_wmma(grad_outputs[0], W_T);
+        std::cout << "grad output contiguous? " << grad_outputs[0].is_contiguous() << std::endl;
+
+        // torch::Tensor dX = matmul_wmma(grad_outputs[0].contiguous(), W_T); // grad_outputs isn't contiguous for some reason?
+
+        torch::Tensor dX = matmul_wmma(grad_outputs[0].contiguous(), W_T);
 
         torch::Tensor undef;
 

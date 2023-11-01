@@ -13,8 +13,8 @@ class MatMul(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        
-        print (grad_output.shape)
+
+        print(grad_output.shape)
 
         x, weights = ctx.saved_tensors
 
@@ -40,10 +40,12 @@ x = torch.randn(nnodes, (max_l+1)**2, n_channels,
 W = torch.randn(n_channels, n_out_channels, device='cuda',
                 dtype=torch.float32, requires_grad=False)
 
-W_T = W.clone().detach().transpose(-1, -2).contiguous().cuda()
-x_wmma = x.clone().detach().cuda().requires_grad_(True)
-x_py = x.clone().detach().cuda().requires_grad_(True)
+W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
+x_wmma = x.clone().detach().requires_grad_(True).cuda().contiguous()
+x_py = x.clone().detach().requires_grad_(True).cuda().contiguous().requires_grad_(True)
 
+print(W)
+print(W_T)
 
 print(W.shape)
 print(W_T.shape)
