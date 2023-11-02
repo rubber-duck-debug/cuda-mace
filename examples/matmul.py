@@ -44,22 +44,35 @@ W = torch.randn(n_channels, n_out_channels, device='cuda',
 
 W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
 
-print("orch double", torch.matmul(x.double(), W.double())[0])
+print("torch double", torch.matmul(x.double(), W.double())[0])
 
-wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T)
+wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, False)
 
 print("cuda_out", wmma_out[0])
 
 torch_out = torch.matmul(x, W)
 
 print(torch_out[0])
-
+torch.cuda.synchronize()
 
 start = time()
-
 for i in range(1000):
-    wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T)
-
+    torch_out = torch.matmul(x, W)
+    torch.cuda.synchronize()
 end = time()
 
-print(end - start)
+print("torch matmul:", end - start)
+
+start = time()
+for i in range(1000):
+    wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, False)
+end = time()
+
+print("wmma without correction:", end - start)
+
+start = time()
+for i in range(1000):
+    wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
+end = time()
+
+print("wmma with correction:", end - start)
