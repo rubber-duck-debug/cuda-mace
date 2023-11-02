@@ -18,7 +18,7 @@ using namespace torch::autograd;
 // MMA matrix tile dimensions.
 #define WMMA_M 16
 #define WMMA_N 16
-#define WMMA_K 16
+#define WMMA_K 8
 
 __host__ __device__ int32_t find_integer_divisor(int32_t x, int32_t bdim)
 {
@@ -104,10 +104,10 @@ __global__ void matmul_wmma_kernel(float *X, float *W, float *OUT, const int NNO
     void *sptr = buffer;
     size_t space = 0;
 
-    half *buffer_X = shared_array<half>(K_TOTAL * M_TOTAL, sptr, &space);
-    half *buffer_delta_X = shared_array<half>(K_TOTAL * M_TOTAL, sptr, &space);
-    half *buffer_W = shared_array<half>(WMMA_K * N_TOTAL, sptr, &space);
-    half *buffer_delta_W = shared_array<half>(WMMA_K * N_TOTAL, sptr, &space);
+    float *buffer_X = shared_array<float>(K_TOTAL * M_TOTAL, sptr, &space);
+    float *buffer_delta_X = shared_array<float>(K_TOTAL * M_TOTAL, sptr, &space);
+    float *buffer_W = shared_array<float>(WMMA_K * N_TOTAL, sptr, &space);
+    float *buffer_delta_W = shared_array<float>(WMMA_K * N_TOTAL, sptr, &space);
 
     for (int i = 0; i < find_integer_divisor(M_TOTAL, blockDim.y); i++)
     {
@@ -115,10 +115,10 @@ __global__ void matmul_wmma_kernel(float *X, float *W, float *OUT, const int NNO
         {
             float x = X[blockIdx.x * M_TOTAL * K_TOTAL + (i * blockDim.y + threadIdx.y) * K_TOTAL + (j * blockDim.x + threadIdx.x)];
 
-            half x_h = __float2half(x);
+            float xtf32 = wmma::__float_to_tf32(x);
 
-            buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = x_h;
-            buffer_delta_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = __float2half(x - __half2float(x_h));
+            buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = xtf32;
+            buffer_delta_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = wmma::__float_to_tf32(x - xtf32);
         }
     }
 
@@ -128,8 +128,8 @@ __global__ void matmul_wmma_kernel(float *X, float *W, float *OUT, const int NNO
     int ldb = N_TOTAL;
     int ldc = N_TOTAL;
 
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> a_frag, delta_a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag, delta_b_frag;
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag, delta_a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag, delta_b_frag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
 
     wmma::fill_fragment(ab_frag, 0.0f);
@@ -146,10 +146,10 @@ __global__ void matmul_wmma_kernel(float *X, float *W, float *OUT, const int NNO
             for (int k = threadIdx.x; k < N_TOTAL; k += blockDim.x)
             {
                 float w = W[(i + j) * N_TOTAL + k];
-                half w_h = __float2half(w);
+                float wtf32 = wmma::__float_to_tf32(w);
 
-                buffer_W[j * N_TOTAL + k] = __float2half(w);
-                buffer_delta_W[j * N_TOTAL + k] = __float2half(w - __half2float(w_h));
+                buffer_W[j * N_TOTAL + k] = wtf32;
+                buffer_delta_W[j * N_TOTAL + k] = wmma::__float_to_tf32(w - wtf32);
             }
         }
 
@@ -227,10 +227,10 @@ torch::Tensor matmul_wmma(torch::Tensor X, torch::Tensor W)
     size_t shared_size = 0;
     void *sptr = nullptr;
 
-    shared_array<half>(K * M, sptr, &shared_size);
-    shared_array<half>(K * M, sptr, &shared_size);
-    shared_array<half>(WMMA_K * N, sptr, &shared_size);
-    shared_array<half>(WMMA_K * N, sptr, &shared_size);
+    shared_array<float>(K * M, sptr, &shared_size);
+    shared_array<float>(K * M, sptr, &shared_size);
+    shared_array<float>(WMMA_K * N, sptr, &shared_size);
+    shared_array<float>(WMMA_K * N, sptr, &shared_size);
 
     assert(((unsigned long long)X.data_ptr<float>()) % 128 == 0);
     assert(((unsigned long long)W.data_ptr<float>()) % 128 == 0);
