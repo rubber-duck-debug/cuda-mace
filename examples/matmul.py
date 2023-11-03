@@ -6,6 +6,11 @@ from mace_ops import cuda
 torch.backends.cuda.matmul.allow_tf32 = True
 
 
+def get_gflops(time_in_ms):
+    nops = 2 * n_channels*n_out_channels*nnodes * ((max_l+1)**2)
+    return 1.0e-9 * nops / (time_in_ms / 1000.0)
+
+
 class MatMul(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, weights):
@@ -46,13 +51,11 @@ W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
 
 print("torch double", torch.matmul(x.double(), W.double())[0])
 
-wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, False)
+wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
 
 print("cuda_out", wmma_out[0])
 
 torch_out = torch.matmul(x, W)
-
-print(torch_out[0])
 torch.cuda.synchronize()
 
 start = time()
@@ -61,18 +64,22 @@ for i in range(1000):
     torch.cuda.synchronize()
 end = time()
 
-print("torch matmul:", end - start)
+print("torch matmul:", end - start, get_gflops(end-start))
 
 start = time()
 for i in range(1000):
     wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, False)
 end = time()
 
-print("wmma without correction:", end - start)
+print(wmma_out[0])
+print("wmma without correction:", end - start, get_gflops(end-start))
+
+torch.cuda.synchronize()
 
 start = time()
 for i in range(1000):
     wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
 end = time()
 
-print("wmma with correction:", end - start)
+print(wmma_out[0])
+print("wmma with correction:", end - start, get_gflops(end-start))
