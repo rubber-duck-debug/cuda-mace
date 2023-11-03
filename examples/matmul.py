@@ -69,16 +69,28 @@ print("torch matmul:", end - start, get_gflops(end-start))
 start = time()
 for i in range(1000):
     wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, False)
+    torch.cuda.synchronize()
 end = time()
 
 print(wmma_out[0])
 print("wmma without correction:", end - start, get_gflops(end-start))
+torch.cuda.synchronize()
+
+start = time()
+for i in range(1000):
+    wmma_out = torch.ops.linear_wmma.matmul_base(x, W, False)
+    torch.cuda.synchronize()
+end = time()
+
+print(wmma_out[0])
+print("wmma without correction (base):", end - start, get_gflops(end-start))
 
 torch.cuda.synchronize()
 
 start = time()
 for i in range(1000):
     wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
+    torch.cuda.synchronize()
 end = time()
 
 print(wmma_out[0])
