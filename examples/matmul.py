@@ -90,6 +90,7 @@ torch.cuda.synchronize()
 start = time()
 for i in range(1000):
     wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
+
     torch.cuda.synchronize()
 end = time()
 
