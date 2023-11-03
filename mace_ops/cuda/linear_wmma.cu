@@ -273,11 +273,11 @@ torch::Tensor matmul_wmma(torch::Tensor X, torch::Tensor W, bool error_corrected
 
     if (!error_corrected)
     {
-        // shared_array<float>(K * M, sptr, &shared_size);
-        shared_array<float>(WARP_SIZE * M, sptr, &shared_size);
-        shared_array<float>(WARP_SIZE * N, sptr, &shared_size);
+        shared_array<float>(K * M, sptr, &shared_size);
+        //shared_array<float>(WARP_SIZE * M, sptr, &shared_size);
+        //shared_array<float>(WARP_SIZE * N, sptr, &shared_size);
 
-        matmul_wmma_pipeline_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
+        matmul_wmma_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
                                                                         NNODES, M, N, K);
     }
     else
