@@ -87,7 +87,6 @@ __global__ void matmul_wmma_pipeline_kernel(float *X, float *W, float *OUT, cons
             __pipeline_memcpy_async(buffer_X + j * blockDim.x + threadIdx.x, X_i + j * K_TOTAL + threadIdx.x, sizeof(float));
         }
 
-
         for (int j = threadIdx.y; j < blockDim.x; j += blockDim.y)
         {
             for (int i = threadIdx.x; i < N_TOTAL; i += blockDim.x)
@@ -274,11 +273,11 @@ torch::Tensor matmul_wmma(torch::Tensor X, torch::Tensor W, bool error_corrected
     if (!error_corrected)
     {
         shared_array<float>(K * M, sptr, &shared_size);
-        //shared_array<float>(WARP_SIZE * M, sptr, &shared_size);
-        //shared_array<float>(WARP_SIZE * N, sptr, &shared_size);
+        // shared_array<float>(WARP_SIZE * M, sptr, &shared_size);
+        // shared_array<float>(WARP_SIZE * N, sptr, &shared_size);
 
         matmul_wmma_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
-                                                                        NNODES, M, N, K);
+                                                               NNODES, M, N, K);
     }
     else
     {
@@ -363,15 +362,11 @@ __global__ void linear_wmma_kernel(
     float *buffer_X = shared_array<float>(K_TOTAL * M_TOTAL, sptr, &space);
     float *buffer_tmp_output = shared_array<float>(M_TOTAL * N_TOTAL, sptr, &space);
 
-    // const float *X_i = X + blockIdx.x * M_TOTAL * K_TOTAL;
-    // float *OUT_i = OUT + blockIdx.x * M_TOTAL * N_TOTAL;
-
-    for (int i = 0; i < M_TOTAL / blockDim.y; i++)
+    for (int i = threadIdx.y; i < M_TOTAL; i += blockDim.y)
     {
-        for (int j = 0; j < K_TOTAL / blockDim.x; j++)
+        for (int j = threadIdx.x; j < K_TOTAL; j += blockDim.x)
         {
-
-            buffer_X[(j * blockDim.x + threadIdx.x) * M_TOTAL + (i * blockDim.y + threadIdx.y)] = X[blockIdx.x * M_TOTAL * K_TOTAL + (i * blockDim.y + threadIdx.y) * K_TOTAL + (j * blockDim.x + threadIdx.x)];
+            buffer_X[j * M_TOTAL + i] = X[blockIdx.x * M_TOTAL * K_TOTAL + i * K_TOTAL + j];
         }
     }
 
@@ -397,16 +392,6 @@ __global__ void linear_wmma_kernel(
 
             wmma::load_matrix_sync(a_frag, buffer_X + k * M_TOTAL + a_row, M_TOTAL);
             wmma::load_matrix_sync(b_frag, W + (instruction * K_TOTAL * N_TOTAL) + b_col + k * N_TOTAL, N_TOTAL);
-
-            for (int i = 0; i < a_frag.num_elements; i++)
-            {
-                // a_frag.x[i] = wmma::__float_to_tf32(a_frag.x[i]);
-            }
-
-            for (int i = 0; i < b_frag.num_elements; i++)
-            {
-                // b_frag.x[i] = wmma::__float_to_tf32(b_frag.x[i]);
-            }
 
             // Perform the matrix multiplication
             wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
@@ -467,13 +452,13 @@ torch::Tensor linear_(
 
     dim3 gridDim, blockDim;
     blockDim.x = WARP_SIZE;
-    blockDim.y = 4; // 8 * WMMA_N = 64
+    blockDim.y = 8; // 8 * WMMA_N = 64
 
     gridDim.x = NNODES;
     gridDim.y = find_integer_divisor(N, blockDim.y * WMMA_N);
 
-    std::cout << "grid dim: " << gridDim.x << " " << gridDim.y << " " << gridDim.z << std::endl;
-    std::cout << "block dim: " << blockDim.x << " " << blockDim.y << std::endl;
+    // std::cout << "grid dim: " << gridDim.x << " " << gridDim.y << " " << gridDim.z << std::endl;
+    // std::cout << "block dim: " << blockDim.x << " " << blockDim.y << std::endl;
 
     size_t shared_size = 0;
     void *sptr = nullptr;

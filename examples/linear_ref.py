@@ -297,6 +297,12 @@ for i in range(1000):
 end = time()
 print("fwd e3nn linear:", end - start)
 
+start = time()
+for i in range(1000):
+    cuda_lin_out = linear_cuda(grad_check_x_c)
+end = time()
+print("fwd CUDA linear:", end - start)
+
 print(x.shape)
 x = x.requires_grad_(True)
 
@@ -323,7 +329,7 @@ t.backward()
 
 print("linear ref grad [-1]:", x_r.grad[-1])
 
-print (linear_cuda.path_weights, linear_cuda.l_start, linear_cuda.l_end)
+print(linear_cuda.path_weights, linear_cuda.l_start, linear_cuda.l_end)
 cuda_lin_out = linear_cuda(grad_check_x_c)
 print("linear ref:", _[0])
 print("cuda linear:", cuda_lin_out[0])

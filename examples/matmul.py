@@ -64,6 +64,7 @@ for i in range(1000):
     torch.cuda.synchronize()
 end = time()
 
+print("torch matmul", torch_out[0])
 print("torch matmul:", end - start, get_gflops(end-start))
 
 start = time()
