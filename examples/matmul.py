@@ -51,7 +51,7 @@ W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
 
 print("torch double", torch.matmul(x.double(), W.double())[0])
 
-wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
+wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T, True)
 
 print("cuda_out", wmma_out[0])
 
@@ -69,7 +69,7 @@ print("torch matmul:", end - start, get_gflops(end-start))
 
 start = time()
 for i in range(1000):
-    wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, False)
+    wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T, False)
     torch.cuda.synchronize()
 end = time()
 
@@ -90,10 +90,20 @@ torch.cuda.synchronize()
 
 start = time()
 for i in range(1000):
-    wmma_out = torch.ops.linear_wmma.matmul(x, W, W_T, True)
+    wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T, True)
 
     torch.cuda.synchronize()
 end = time()
 
 print(wmma_out[0])
 print("wmma with correction:", end - start, get_gflops(end-start))
+
+
+start = time()
+for i in range(1000):
+    matmul_out = torch.ops.linear_wmma.matmul(x, W)
+    torch.cuda.synchronize()
+end = time()
+
+print(matmul_out[0])
+print("simple matmul:", end - start, get_gflops(end-start))

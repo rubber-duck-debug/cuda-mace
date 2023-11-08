@@ -51,6 +51,110 @@ __host__ __device__ T *align_array(std::size_t n_elements, void *&ptr, const std
     ptr = reinterpret_cast<void *>(end);
     return reinterpret_cast<T *>(aligned);
 }
+#define M_BATCH 16
+#define N_BATCH 32
+#define K_BATCH 32
+
+__global__ void matmul_kernel(float *X, float *W, float *OUT, const int NNODES, const int M, const int N, const int K)
+{
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    float *buffer_X = shared_array<float>((K_BATCH + 1) * K_BATCH, sptr, &space); // use double the space for X for now just to deal with bank conflicts
+    float *buffer_W = shared_array<float>(K_BATCH * N_BATCH, sptr, &space);
+
+    // define some registers to help increase arithmetic intensity
+    float output_reg[4] = {0.0, 0.0, 0.0, 0.0};
+
+    int nk_iter = find_integer_divisor(K, K_BATCH);
+
+    for (int k_id = 0; k_id < nk_iter; k_id++)
+    {
+
+        int kstart = k_id * K_BATCH;
+
+        // 0 * (16+1)   = 0         |  0 * (32 + 1)     = 0  % 32 = 0
+        // 1            = 17        |  1 * (32 + 1)     = 33 % 32 = 1
+        // 2            = 34        |  2 * (32 + 1)     = 66 % 32 = 2
+        // 3
+        // load 16x32 tile of X
+        for (int m = threadIdx.y; m < M_BATCH; m += blockDim.y)
+        {
+            buffer_X[threadIdx.x * (K_BATCH + 1) + m] = X[blockIdx.x * M * K + m * K + kstart + threadIdx.x];
+        }
+
+        // load 32x32 tile of W
+        for (int k = threadIdx.y; k < K_BATCH; k += blockDim.y)
+        {
+            buffer_W[k * N_BATCH + threadIdx.x] = reinterpret_cast<float 4 *>(W)[(kstart + k) * N + (blockIdx.y * N_BATCH) + j];
+        }
+
+        __syncthreads();
+
+        // now we're ready to do the matmul of [16, 32] x [32,32] -> [16, 32]
+        // M: 16, blockDim.y = 8, so 2 passes to do per thread...need register of size 2...
+        for (int i = threadIdx.y; i < M; i += blockDim.y)
+        {
+            float tmp = 0.0;
+
+            for (int k = 0; k < K_BATCH; k++)
+            {
+                tmp += buffer_X[k * (K_BATCH + 1) + i] * buffer_W[k * N_BATCH + threadIdx.x];
+            }
+
+            output_reg[i / blockDim.y] += tmp;
+        }
+    }
+    // write sub matrix to output
+
+    for (int i = threadIdx.y; i < M; i += blockDim.y)
+    {
+        OUT[blockIdx.x * M * N + i * N + (blockIdx.y * N_BATCH) + threadIdx.x] = output_reg[i / blockDim.y];
+    }
+}
+
+torch::Tensor matmul(torch::Tensor X, torch::Tensor W)
+{
+    const int NNODES = X.size(0);
+    const int M = X.size(1);
+    const int N = W.size(1);
+    const int K = W.size(0);
+
+    TORCH_CHECK(X.device().is_cuda(), "X must be a CUDA tensor");
+    TORCH_CHECK(W.device().is_cuda(), "W must be a CUDA tensor");
+
+    TORCH_CHECK(M == 16, "X dim=1 must have dimension 16 [(lmax +1)**2]");
+    TORCH_CHECK(N % 16 == 0, "W dim=2 must be a multiple of 16");
+    TORCH_CHECK(K % 16 == 0, "X dim=2 must be a multiple of 16");
+
+    torch::Tensor output = torch::empty({NNODES, M, N},
+                                        torch::TensorOptions()
+                                            .dtype(X.dtype())
+                                            .device(X.device()));
+
+    dim3 gridDim, blockDim;
+
+    blockDim.x = WARP_SIZE;
+    blockDim.y = 4;
+
+    gridDim.x = NNODES;
+    gridDim.y = find_integer_divisor(N, N_BATCH);
+
+    size_t shared_size = 0;
+    void *sptr = nullptr;
+
+    shared_array<float>((K_BATCH + 1) * K_BATCH, sptr, &shared_size); // use double the space for X for now just to deal with bank conflicts
+    shared_array<float>(K_BATCH * N_BATCH, sptr, &shared_size);
+    // shared_array<float>(M_BATCH * N_BATCH, sptr, &shared_size);
+
+    matmul_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
+                                                      NNODES, M, N, K);
+
+    return output;
+}
 
 __global__ void matmul_wmma_pipeline_kernel(float *X, float *W, float *OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
 {
@@ -331,7 +435,7 @@ public:
     }
 };
 
-torch::Tensor matmul(
+torch::Tensor matmul_fwd(
     torch::Tensor X,
     torch::Tensor W,
     torch::Tensor W_T,
@@ -541,5 +645,6 @@ TORCH_LIBRARY(linear_wmma, m)
 {
     m.def("linear", &linear);
     m.def("matmul", &matmul);
+    m.def("matmul_fwd", &matmul_fwd);
     m.def("matmul_base", &matmul_wmma);
 }
