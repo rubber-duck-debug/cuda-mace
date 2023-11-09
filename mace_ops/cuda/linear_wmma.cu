@@ -9,7 +9,10 @@
 #include "device_launch_parameters.h"
 #include <cuda_fp16.h>
 #include <cuda_pipeline_primitives.h>
+#include <cooperative_groups.h>
+#include <cuda/pipeline>
 
+using namespace cooperative_groups;
 using namespace nvcuda;
 using namespace std;
 using namespace torch::autograd;
@@ -156,67 +159,6 @@ torch::Tensor matmul(torch::Tensor X, torch::Tensor W)
     return output;
 }
 
-__global__ void matmul_wmma_pipeline_kernel(float *X, float *W, float *OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
-{
-
-    extern __shared__ char buffer[];
-
-    void *sptr = buffer;
-    size_t space = 0;
-
-    float *buffer_X = shared_array<float>(blockDim.x * M_TOTAL, sptr, &space);
-    float *buffer_W = shared_array<float>(blockDim.x * N_TOTAL, sptr, &space);
-
-    float *X_i = X + blockIdx.x * M_TOTAL * K_TOTAL;
-
-    __syncthreads();
-
-    // wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
-
-    wmma::fill_fragment(ab_frag, 0.0f);
-
-    int aRow = 0;
-    int bCol = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
-
-    // do matmuls over 32 chunk of K_TOTAL
-    for (int kchunk = 0; kchunk < find_integer_divisor(K_TOTAL, blockDim.x); kchunk++)
-    {
-
-        // pre-fetch 16x32 chunk of X, and 32x128 chunk of W
-        for (int j = threadIdx.y; j < M_TOTAL; j += blockDim.y)
-        {
-            __pipeline_memcpy_async(buffer_X + j * blockDim.x + threadIdx.x, X_i + j * K_TOTAL + threadIdx.x, sizeof(float));
-        }
-
-        for (int j = threadIdx.y; j < blockDim.x; j += blockDim.y)
-        {
-            for (int i = threadIdx.x; i < N_TOTAL; i += blockDim.x)
-            {
-                __pipeline_memcpy_async(buffer_W + j * N_TOTAL + i, W + j * N_TOTAL + i, sizeof(float));
-            }
-        }
-
-        __pipeline_commit();
-
-        __pipeline_wait_prior(0);
-
-        // do the computation over K
-        for (int i = 0; i < blockDim.x; i += WMMA_K)
-        {
-            wmma::load_matrix_sync(a_frag, buffer_X + aRow * blockDim.x + i, blockDim.x);
-            wmma::load_matrix_sync(b_frag, buffer_W + bCol + i * N_TOTAL, N_TOTAL);
-
-            // Perform the matrix multiplication
-            wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
-        }
-    }
-
-    wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + bCol + aRow * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
-}
-
 __global__ void matmul_wmma_no_conflicts_kernel(float *__restrict__ X, float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
 {
 
@@ -229,19 +171,18 @@ __global__ void matmul_wmma_no_conflicts_kernel(float *__restrict__ X, float *__
 
     float *X_i = X + blockIdx.x * M_TOTAL * K_TOTAL;
 
-    for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < K_BATCH * (K_BATCH + 1); tid += blockDim.x * blockDim.y)
-    {
-        buffer_X[tid] = 0.0f;
-    }
-
-    // wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag;
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag, delta_a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag, delta_b_frag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
 
     wmma::fill_fragment(ab_frag, 0.0f);
 
-    // we consume 16x8 every WMMA, so we pre-load 16x32
+    for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < K_BATCH * (K_BATCH + 1); tid += blockDim.x * blockDim.y)
+    {
+        buffer_X[tid] = 0.0;
+    }
+
+    __syncthreads();
 
     int aRow = 0;
     int bCol = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
@@ -251,10 +192,20 @@ __global__ void matmul_wmma_no_conflicts_kernel(float *__restrict__ X, float *__
 
         int k_start = k_batch * K_BATCH;
 
+        cuda::pipeline<cuda::thread_scope_thread> pipe = cuda::make_pipeline();
+
+        // we consume 16x8 every WMMA, so we pre-load 16x32
         for (int j = threadIdx.y; j < M_TOTAL; j += blockDim.y)
         {
-            buffer_X[threadIdx.x * (K_BATCH + 1) + j] = X_i[j * K_TOTAL + k_start + threadIdx.x];
+            // buffer_X[threadIdx.x * (K_BATCH + 1) + j] = X_i[j * K_TOTAL + k_start + threadIdx.x];
+            // buffer_X[j * K_BATCH + threadIdx.x] = X_i[j * K_TOTAL + k_start + threadIdx.x];
+
+            cuda::memcpy_async(buffer_X + threadIdx.x * (K_BATCH + 1) + j, X_i + j * K_TOTAL + k_start + threadIdx.x, sizeof(float), pipe);
         }
+
+        pipe.producer_commit();
+
+        cuda::pipeline_consumer_wait_prior<0>(pipe);
 
         __syncthreads();
 
@@ -263,9 +214,28 @@ __global__ void matmul_wmma_no_conflicts_kernel(float *__restrict__ X, float *__
             int k = k_start + k_sub;
 
             wmma::load_matrix_sync(a_frag, buffer_X + k_sub * (K_BATCH + 1), (K_BATCH + 1));
+            // wmma::load_matrix_sync(a_frag, buffer_X + k_sub * K_BATCH, K_BATCH);
             wmma::load_matrix_sync(b_frag, W + bCol + k * N_TOTAL, N_TOTAL);
 
+            for (int l = 0; l < a_frag.num_elements; l++)
+            {
+                float curr = a_frag.x[l];
+                float tf32 = wmma::__float_to_tf32(curr);
+                delta_a_frag.x[l] = wmma::__float_to_tf32(curr - tf32);
+                a_frag.x[l] = tf32;
+            }
+
+            for (int l = 0; l < b_frag.num_elements; l++)
+            {
+                float curr = b_frag.x[l];
+                float tf32 = wmma::__float_to_tf32(curr);
+                delta_b_frag.x[l] = wmma::__float_to_tf32(curr - tf32);
+                b_frag.x[l] = tf32;
+            }
+
             wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
+            wmma::mma_sync(ab_frag, a_frag, delta_b_frag, ab_frag);
+            wmma::mma_sync(ab_frag, delta_a_frag, b_frag, ab_frag);
         }
     }
 
@@ -306,6 +276,7 @@ torch::Tensor matmul_wmma_no_conflicts(torch::Tensor X, torch::Tensor W)
     assert(((unsigned long long)W.data_ptr<float>()) % 128 == 0);
     assert(((unsigned long long)output.data_ptr<float>()) % 128 == 0);
 
+    // shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
     shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
 
     matmul_wmma_no_conflicts_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
