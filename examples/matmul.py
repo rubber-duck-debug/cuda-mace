@@ -107,3 +107,13 @@ end = time()
 
 print(matmul_out[0])
 print("simple matmul:", end - start, get_gflops(end-start))
+
+
+start = time()
+for i in range(1000):
+    matmul_out = torch.ops.linear_wmma.matmul_no_conflicts(x, W)
+    torch.cuda.synchronize()
+end = time()
+
+print(matmul_out[0])
+print("simple matmul no conflicts:", end - start, get_gflops(end-start))

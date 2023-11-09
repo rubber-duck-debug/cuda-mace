@@ -89,7 +89,7 @@ __global__ void matmul_kernel(float *X, float *W, float *OUT, const int NNODES, 
         // load 32x32 tile of W
         for (int k = threadIdx.y; k < K_BATCH; k += blockDim.y)
         {
-            buffer_W[k * N_BATCH + threadIdx.x] = reinterpret_cast<float 4 *>(W)[(kstart + k) * N + (blockIdx.y * N_BATCH) + j];
+            buffer_W[k * N_BATCH + threadIdx.x] = W[(kstart + k) * N + (blockIdx.y * N_BATCH) + threadIdx.x];
         }
 
         __syncthreads();
@@ -215,6 +215,103 @@ __global__ void matmul_wmma_pipeline_kernel(float *X, float *W, float *OUT, cons
     }
 
     wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + bCol + aRow * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
+}
+
+__global__ void matmul_wmma_no_conflicts_kernel(float *__restrict__ X, float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
+{
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    float *buffer_X = shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &space);
+
+    float *X_i = X + blockIdx.x * M_TOTAL * K_TOTAL;
+
+    for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < K_BATCH * (K_BATCH + 1); tid += blockDim.x * blockDim.y)
+    {
+        buffer_X[tid] = 0.0f;
+    }
+
+    // wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
+
+    wmma::fill_fragment(ab_frag, 0.0f);
+
+    // we consume 16x8 every WMMA, so we pre-load 16x32
+
+    int aRow = 0;
+    int bCol = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
+
+    for (int k_batch = 0; k_batch < K_TOTAL / K_BATCH; k_batch++)
+    {
+
+        int k_start = k_batch * K_BATCH;
+
+        for (int j = threadIdx.y; j < M_TOTAL; j += blockDim.y)
+        {
+            buffer_X[threadIdx.x * (K_BATCH + 1) + j] = X_i[j * K_TOTAL + k_start + threadIdx.x];
+        }
+
+        __syncthreads();
+
+        for (int k_sub = 0; k_sub < K_BATCH; k_sub += WMMA_K)
+        {
+            int k = k_start + k_sub;
+
+            wmma::load_matrix_sync(a_frag, buffer_X + k_sub * (K_BATCH + 1), (K_BATCH + 1));
+            wmma::load_matrix_sync(b_frag, W + bCol + k * N_TOTAL, N_TOTAL);
+
+            wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
+        }
+    }
+
+    wmma::store_matrix_sync(OUT + blockIdx.x * M_TOTAL * N_TOTAL + bCol + aRow * N_TOTAL, ab_frag, N_TOTAL, wmma::mem_row_major);
+}
+
+torch::Tensor matmul_wmma_no_conflicts(torch::Tensor X, torch::Tensor W)
+{
+    const int NNODES = X.size(0);
+    const int M = X.size(1);
+    const int N = W.size(1);
+    const int K = W.size(0);
+
+    TORCH_CHECK(X.device().is_cuda(), "X must be a CUDA tensor");
+    TORCH_CHECK(W.device().is_cuda(), "W must be a CUDA tensor");
+
+    TORCH_CHECK(M == 16, "X dim=1 must have dimension 16 [(lmax +1)**2]");
+    TORCH_CHECK(N % 16 == 0, "W dim=2 must be a multiple of 16");
+    TORCH_CHECK(K % 16 == 0, "X dim=2 must be a multiple of 16");
+
+    torch::Tensor output = torch::empty({NNODES, M, N},
+                                        torch::TensorOptions()
+                                            .dtype(X.dtype())
+                                            .device(X.device()));
+
+    dim3 gridDim, blockDim;
+
+    blockDim.x = WARP_SIZE;
+    blockDim.y = 8;
+
+    gridDim.x = NNODES;
+    gridDim.y = find_integer_divisor(N, blockDim.y * WMMA_N);
+
+    size_t shared_size = 0;
+    void *sptr = nullptr;
+
+    assert(((unsigned long long)X.data_ptr<float>()) % 128 == 0);
+    assert(((unsigned long long)W.data_ptr<float>()) % 128 == 0);
+    assert(((unsigned long long)output.data_ptr<float>()) % 128 == 0);
+
+    shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
+
+    matmul_wmma_no_conflicts_kernel<<<gridDim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(),
+                                                                        NNODES, M, N, K);
+
+    return output;
 }
 
 __global__ void matmul_wmma_kernel(float *X, float *W, float *OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
@@ -645,6 +742,7 @@ TORCH_LIBRARY(linear_wmma, m)
 {
     m.def("linear", &linear);
     m.def("matmul", &matmul);
+    m.def("matmul_no_conflicts", &matmul_wmma_no_conflicts);
     m.def("matmul_fwd", &matmul_fwd);
     m.def("matmul_base", &matmul_wmma);
 }
