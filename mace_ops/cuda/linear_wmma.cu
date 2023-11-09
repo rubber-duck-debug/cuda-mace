@@ -214,28 +214,32 @@ __global__ void matmul_wmma_no_conflicts_kernel(float *__restrict__ X, float *__
             int k = k_start + k_sub;
 
             wmma::load_matrix_sync(a_frag, buffer_X + k_sub * (K_BATCH + 1), (K_BATCH + 1));
-            // wmma::load_matrix_sync(a_frag, buffer_X + k_sub * K_BATCH, K_BATCH);
-            wmma::load_matrix_sync(b_frag, W + bCol + k * N_TOTAL, N_TOTAL);
 
-            for (int l = 0; l < a_frag.num_elements; l++)
+            for (int test = 0; test < 4; test++)
             {
-                float curr = a_frag.x[l];
-                float tf32 = wmma::__float_to_tf32(curr);
-                delta_a_frag.x[l] = wmma::__float_to_tf32(curr - tf32);
-                a_frag.x[l] = tf32;
-            }
+                // wmma::load_matrix_sync(a_frag, buffer_X + k_sub * K_BATCH, K_BATCH);
+                wmma::load_matrix_sync(b_frag, W + bCol + k * N_TOTAL, N_TOTAL);
 
-            for (int l = 0; l < b_frag.num_elements; l++)
-            {
-                float curr = b_frag.x[l];
-                float tf32 = wmma::__float_to_tf32(curr);
-                delta_b_frag.x[l] = wmma::__float_to_tf32(curr - tf32);
-                b_frag.x[l] = tf32;
-            }
+                for (int l = 0; l < a_frag.num_elements; l++)
+                {
+                    float curr = a_frag.x[l];
+                    float tf32 = wmma::__float_to_tf32(curr);
+                    delta_a_frag.x[l] = wmma::__float_to_tf32(curr - tf32);
+                    a_frag.x[l] = tf32;
+                }
 
-            wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
-            wmma::mma_sync(ab_frag, a_frag, delta_b_frag, ab_frag);
-            wmma::mma_sync(ab_frag, delta_a_frag, b_frag, ab_frag);
+                for (int l = 0; l < b_frag.num_elements; l++)
+                {
+                    float curr = b_frag.x[l];
+                    float tf32 = wmma::__float_to_tf32(curr);
+                    delta_b_frag.x[l] = wmma::__float_to_tf32(curr - tf32);
+                    b_frag.x[l] = tf32;
+                }
+
+                wmma::mma_sync(ab_frag, a_frag, b_frag, ab_frag);
+                wmma::mma_sync(ab_frag, a_frag, delta_b_frag, ab_frag);
+                wmma::mma_sync(ab_frag, delta_a_frag, b_frag, ab_frag);
+            }
         }
     }
 
