@@ -3,7 +3,7 @@ from time import time
 import torch
 from mace_ops import cuda
 
-torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cuda.matmul.allow_tf32 = False
 
 
 def get_gflops(time_in_ms):
@@ -51,7 +51,7 @@ W_T = W.clone().detach().transpose(-1, -2).cuda().contiguous()
 
 print("torch double", torch.matmul(x.double(), W.double())[0])
 
-wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T, True)
+wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T)
 
 print("cuda_out", wmma_out[0])
 
@@ -67,53 +67,45 @@ end = time()
 print("torch matmul", torch_out[0])
 print("torch matmul:", end - start, get_gflops(end-start))
 
-start = time()
-for i in range(1000):
-    wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T, False)
-    torch.cuda.synchronize()
-end = time()
-
-print(wmma_out[0])
-print("wmma without correction:", end - start, get_gflops(end-start))
 torch.cuda.synchronize()
-
 start = time()
 for i in range(1000):
-    wmma_out = torch.ops.linear_wmma.matmul_base(x, W, False)
+    wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T)
     torch.cuda.synchronize()
 end = time()
 
 print(wmma_out[0])
-print("wmma without correction (base):", end - start, get_gflops(end-start))
+print("wmma autograd:", end - start, get_gflops(end-start))
 
 torch.cuda.synchronize()
-
 start = time()
 for i in range(1000):
-    wmma_out = torch.ops.linear_wmma.matmul_fwd(x, W, W_T, True)
-
+    wmma_out = torch.ops.linear_wmma.matmul_wmma(x, W)
     torch.cuda.synchronize()
 end = time()
 
-print(wmma_out[0])
-print("wmma with correction:", end - start, get_gflops(end-start))
+print(wmma_out[1])
+print("wmma base:", end - start, get_gflops(end-start))
 
-
+torch.cuda.synchronize()
 start = time()
 for i in range(1000):
     matmul_out = torch.ops.linear_wmma.matmul(x, W)
     torch.cuda.synchronize()
 end = time()
 
-print(matmul_out[0])
+print(matmul_out[1])
 print("simple matmul:", end - start, get_gflops(end-start))
 
 
+x_t = x.clone().detach().transpose(-1, -2).contiguous().cuda()
+
+torch.cuda.synchronize()
 start = time()
 for i in range(1000):
-    matmul_out = torch.ops.linear_wmma.matmul_no_conflicts(x, W)
+    wmma_out = torch.ops.linear_wmma.producer_consumer_matmul(x_t, W)
     torch.cuda.synchronize()
 end = time()
 
-print(matmul_out[0])
-print("simple matmul no conflicts:", end - start, get_gflops(end-start))
+print(wmma_out[1])
+print("producer consumer matmul:", end - start, get_gflops(end-start))

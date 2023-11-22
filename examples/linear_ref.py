@@ -6,6 +6,11 @@ import torch
 from e3nn import o3
 from mace_ops import cuda
 
+torch.backends.cuda.matmul.allow_tf32 = False
+
+def get_gflops(m, n, k, time_in_ms):
+    nops = 2 * m*n*k
+    return 1.0e-9 * nops / (time_in_ms / 1000.0)
 
 class shape_irreps(torch.nn.Module):
     # code the reverse of reshape_irreps
@@ -164,7 +169,7 @@ max_l = 3
 nnodes = 1000
 
 x = torch.randn(nnodes, n_channels*(max_l+1)**2,
-                device='cuda', dtype=torch.float32)
+                device='cuda', dtype=torch.float32, requires_grad=True)
 ## E3NN LINEAR##
 irreps_in = o3.Irreps(
     (n_channels * o3.Irreps.spherical_harmonics(max_l))
@@ -184,9 +189,6 @@ linear = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out).to('cuda')
 instructions = linear.instructions
 ws = linear.weight
 
-print("INSTRUCTIONS")
-print(instructions)
-
 x_reshape = []
 ix = 0
 for mul, ir in irreps_in:
@@ -198,9 +200,7 @@ for mul, ir in irreps_in:
 
 x_r = torch.cat(x_reshape, dim=1).contiguous()
 
-grad_check_x_c = x_r.clone().detach().requires_grad_(True)
-
-print(x_r.shape)
+grad_check_x_c = x_r.clone().detach().cuda().contiguous().requires_grad_(True)
 
 
 linear_ref = LinearRef(irreps_in, irreps_out, instructions, ws)
@@ -216,25 +216,24 @@ for ins in instructions:
     # extract the weights for the current path
     w = ws.narrow(-1, flat_weight_index, path_nweight)
     w = w.reshape(ins.path_shape)
-    # 0 | 1 2 3 | 4 5 6
+    # 0 | 1 2 3 | 4 5 6 
     start = ins.i_in ** 2
     end = start + (2 * ins.i_in + 1)
 
-    print(ins, w.reshape(ins.path_shape).shape,
-          start, end, x_r[:, start:end, :].shape)
+    #print(ins, w.reshape(ins.path_shape).shape,start, end, x_r[:, start:end, :].shape)
 
     out = ins.path_weight * torch.matmul(x_r[:, start:end, :], w)
 
-    print(out.shape)
+    #print(out.shape)
 
-    print(out[0])
+    #print(out[0])
     flat_weight_index += path_nweight
 
 
 ### LINEAR###
 # Prepare variables
 
-print("ws.shape: ", ws.shape)
+#print("ws.shape: ", ws.shape)
 shared_weights = linear.shared_weights
 
 irreps_in = linear.irreps_in
@@ -254,7 +253,7 @@ x_list = [
 
 flat_weight_index = 0
 for ins in instructions:
-    print(ins)
+    #print(ins)
     path_nweight = prod(ins.path_shape)
     mul_ir_out = irreps_out[ins.i_out]
     # extract the weights for the current path
@@ -289,55 +288,21 @@ out = out.reshape(outsize)
 # print(out[0])
 print(torch.allclose(linear(x), out, atol=1e-5))
 
-
+torch.cuda.synchronize()
 start = time()
 for i in range(1000):
     _ = linear(x)
     torch.cuda.synchronize()
 end = time()
-print("fwd e3nn linear:", end - start)
 
+print("fwd e3nn linear:", end - start, get_gflops(4 * nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
+
+
+torch.cuda.synchronize()
 start = time()
 for i in range(1000):
     cuda_lin_out = linear_cuda(grad_check_x_c)
+    torch.cuda.synchronize()
 end = time()
-print("fwd CUDA linear:", end - start)
 
-print(x.shape)
-x = x.requires_grad_(True)
-
-linear.weight = linear.weight.requires_grad_(False)
-
-
-_ = linear(x)
-
-t = _.sum()
-
-t.backward()
-
-torch.cuda.synchronize()
-
-print(x.grad)
-
-x_r = x_r.requires_grad_(True)
-
-_ = linear_ref(x_r)
-
-t = _.sum()
-
-t.backward()
-
-print("linear ref grad [-1]:", x_r.grad[-1])
-
-print(linear_cuda.path_weights, linear_cuda.l_start, linear_cuda.l_end)
-cuda_lin_out = linear_cuda(grad_check_x_c)
-print("linear ref:", _[0])
-print("cuda linear:", cuda_lin_out[0])
-
-loss = cuda_lin_out.sum()
-
-loss.backward()
-
-
-print(grad_check_x_c.shape)
-print(grad_check_x_c.grad[-1])
+print("fwd CUDA linear:", end - start, get_gflops(4 * nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
