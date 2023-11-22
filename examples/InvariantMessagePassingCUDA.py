@@ -17,6 +17,10 @@ def reference(X, Y,  radial, lm_to_L, receiver_list, nnodes ):
 
     return output
 
+def get_gflops(time_in_ms, features, max_l, nodes, edges):
+    nops = edges * 3 * features * (max_l+1)**2 
+    return 1.0e-9 * nops / (time_in_ms / 1000.0)
+
 
 def benchmark(dtype, device):
 
@@ -32,8 +36,9 @@ def benchmark(dtype, device):
     print(f"nodes: {nnodes} and edges: {nedges}")
     print(f"nfeatures: {nfeatures} and nsphericalharmonics: {nl}")
 
-    X = torch.rand((nedges, nfeatures), dtype=dtype,
+    X_nodes = torch.rand((nnodes, nfeatures), dtype=dtype,
                    device=device, requires_grad=True)
+    
     Y = torch.rand((nedges, nl), dtype=dtype,
                    device=device, requires_grad=True)
     radial = torch.randn((nedges, L_MAX+1, nfeatures), dtype=dtype,
@@ -44,6 +49,8 @@ def benchmark(dtype, device):
     indices = torch.sort(torch.randint(nnodes, (nedges,), device=device))[0]
 
     indices_cuda = indices.cuda().int()
+    
+    X = X_nodes[indices].clone().detach().cuda().float().requires_grad_(True)
     
     X_ref = X.clone().detach().requires_grad_(True)
     Y_ref = Y.clone().detach().requires_grad_(True)
@@ -74,13 +81,13 @@ def benchmark(dtype, device):
     neighbour_cuda = torch.ops.invariant_tp.calculate_neighbours(indices_cuda, nnodes, 64)
     
 
-    Y = Y.clone().detach().transpose(-1, -2).contiguous().requires_grad_(True)
+    Y_T = Y.clone().detach().transpose(-1, -2).contiguous().requires_grad_(True)
 
     start = time()
     for i in range (1000):
         out =  torch.ops.invariant_tp.forward_test(
             X,
-            Y,
+            Y_T,
             radial,
             lm_to_L,
             indices_cuda, 
@@ -94,29 +101,40 @@ def benchmark(dtype, device):
     
     print (end - start)
 
+    print (out[0])
+    
+    print (Y.shape)
+    print (X.shape)
+    
     start = time()
     for i in range (1000):
-        out = torch.ops.invariant_tp.forward(
+        out =  torch.ops.invariant_tp.forward_test2(
             X,
             Y,
             radial,
             lm_to_L,
             indices_cuda, 
-            nnodes)
+            neighbour_cuda,
+            nnodes,
+            32,
+            4,
+            1)
         
-        test = out.sum()
+        #test = out.sum()
 
-        test.backward()
+        #test.backward()
+        
+    print (out.shape)
 
         
     end = time()
-    #print (out[0])
+    print (end - start, get_gflops(end - start, nfeatures, L_MAX, nnodes, nedges))
+    
+    
+    
+    print (out[0])
 
-    print ("x_grad:", X.grad / 1000)
-    print ("radial_grad:", radial.grad / 1000)
-    print ("Y_grad:", Y.grad / 1000 )
 
-    print (end - start)
     
     
 if __name__ == "__main__":
