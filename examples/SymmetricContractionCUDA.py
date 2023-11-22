@@ -335,13 +335,13 @@ class CUDAContraction(torch.nn.Module):
 nchannels = 96
 max_ell = 3
 correlation = 3
-natoms = 1000
+natoms = 5000
 dtype = torch.float32
 torch.set_default_dtype(dtype)
 
 #hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o + " + str(nchannels) + "x2e" )
-hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o")
-#hidden_irreps=o3.Irreps(str(nchannels) + "x0e")
+#hidden_irreps=o3.Irreps(str(nchannels) + "x0e + " + str(nchannels) + "x1o")
+hidden_irreps=o3.Irreps(str(nchannels) + "x0e")
 
 sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
 num_features = hidden_irreps.count(o3.Irrep(0, 1))
@@ -357,8 +357,8 @@ symm_contract = SymmetricContraction(interaction_irreps, hidden_irreps, correlat
 for param in symm_contract.parameters():
     param.requires_grad = False
 
-X = np.fromfile('symm_contraction_data/X.npy').reshape(21, 128, 16)
-Y = np.fromfile('symm_contraction_data/Y.npy').reshape(21, 3)
+X = np.fromfile('examples/symm_contraction_data/X.npy').reshape(21, 128, 16)
+Y = np.fromfile('examples/symm_contraction_data/Y.npy').reshape(21, 3)
 
 nrepeats = int(math.ceil(float (natoms) / X.shape[0]))
 

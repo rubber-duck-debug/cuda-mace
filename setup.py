@@ -99,6 +99,14 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         ],
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
+    
+    matmul = CUDAExtension(
+        '.cuda.matmul', [
+            'mace_ops/cuda/matmul.cu'
+        ],
+        extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
+
 
     ext_modules.append(tensor_contraction)
     ext_modules.append(invariant_message_passing)
@@ -106,6 +114,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
     ext_modules.append(symmetric_contraction)
     ext_modules.append(linear)
     ext_modules.append(linear_wmma)
+    ext_modules.append(matmul)
 
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")

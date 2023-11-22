@@ -154,19 +154,22 @@ class LinearCUDA(torch.nn.Module):
         self.l_end = torch.tensor(self.l_end).int().cuda()
         self.weights = torch.stack(self.weights).contiguous().float().cuda()
         self.weights_transposed = self.weights.clone().transpose(-1, -2).cuda().contiguous()
-        self.path_weights = torch.tensor(self.path_weights).float().cuda()
+        self.path_weights = torch.tensor(self.path_weights).float()
 
-    def forward(self, x):
-        return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed, self.l_start, self.l_end, self.path_weights)
+    def forward(self, x, use_tensor_cores=False):
+        return torch.ops.matmul.linear(x, self.weights, self.weights_transposed)
+        #return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed, self.l_start, self.l_end, self.path_weights)
+        
+        
 
 
 # INPUTS#
-n_channels = 128
-n_out_channels = 128
+n_channels = 96
+n_out_channels = 96
 
 max_l = 3
 
-nnodes = 1000
+nnodes = 5000
 
 x = torch.randn(nnodes, n_channels*(max_l+1)**2,
                 device='cuda', dtype=torch.float32, requires_grad=True)
@@ -285,24 +288,47 @@ else:
 
 out = out.reshape(outsize)
 
-# print(out[0])
 print(torch.allclose(linear(x), out, atol=1e-5))
+
+out_reshape = []
+ix = 0
+for mul, ir in irreps_in:
+    field = out[:, ix: ix + mul * ir.dim]  # [batch, sample, mul * repr]
+    field = field.reshape(
+        out.shape[0], mul, ir.dim).transpose(-1, -2).contiguous()
+    ix += mul * ir.dim
+    out_reshape.append(field)
+
+out_t = torch.cat(out_reshape, dim=1).contiguous()
+
 
 torch.cuda.synchronize()
 start = time()
 for i in range(1000):
     _ = linear(x)
+    t = _.sum()
+    t.backward()
     torch.cuda.synchronize()
 end = time()
 
-print("fwd e3nn linear:", end - start, get_gflops(4 * nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
-
+print("fwd e3nn linear:", end - start, get_gflops(nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
 
 torch.cuda.synchronize()
 start = time()
 for i in range(1000):
     cuda_lin_out = linear_cuda(grad_check_x_c)
+    t = cuda_lin_out.sum()
+    t.backward()
     torch.cuda.synchronize()
 end = time()
 
-print("fwd CUDA linear:", end - start, get_gflops(4 * nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
+print("fwd CUDA linear:", end - start, get_gflops(nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
+
+
+linear_ref = linear_ref(grad_check_x_c)
+
+print (linear_ref[0])
+print (cuda_lin_out[0])
+
+print (linear_ref[-1])
+print (cuda_lin_out[-1])

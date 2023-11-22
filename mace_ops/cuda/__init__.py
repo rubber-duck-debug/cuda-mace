@@ -17,6 +17,7 @@ torch.ops.load_library(_HERE + '/invariant_message_passing.so')
 torch.ops.load_library(_HERE + '/equivariant_outer_product.so')
 torch.ops.load_library(_HERE + '/linear.so')
 torch.ops.load_library(_HERE + '/linear_wmma.so')
+torch.ops.load_library(_HERE + '/matmul.so')
 
 def _sum_weighted_tensor_product(
     X1,

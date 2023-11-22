@@ -167,8 +167,8 @@ __device__ inline void producer_wmma(
     barrier filled[],
     float *bufferX,
     float *bufferW,
-    float *__restrict__ X,
-    float *__restrict__ W,
+    const float *__restrict__ X,
+    const float *__restrict__ W,
     const int M,
     const int N,
     const int K)
@@ -199,7 +199,7 @@ __device__ inline void producer_wmma(
         // load 8x16 tile from X : [channels, lm]
         for (int i = tidy; i < WMMA_K; i += 4)
         {
-            bufferX[((stage % 2) + i) * M_BATCH + tidx] = X[blockIdx.x * M * N + (stage * WMMA_K + i) * M + tidx];
+            bufferX[((stage % 2) + i) * M_BATCH + tidx] = __ldg(X + blockIdx.x * M * N + (stage * WMMA_K + i) * M + tidx);
         }
 
         // load 8x128 from W
@@ -207,7 +207,7 @@ __device__ inline void producer_wmma(
         {
             for (int j = threadIdx.x; j < N; j += blockDim.x)
             {
-                bufferW[(stage % 2 + i) * N + j] = W[(stage * WMMA_K + i) * N + j];
+                bufferW[(stage % 2 + i) * N + j] = __ldg(W + (stage * WMMA_K + i) * N + j);
             }
         }
 
@@ -233,7 +233,7 @@ __device__ inline void consumer_wmma(
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> ab_frag;
 
     int aRow = 0;
-    int bCol = (blockIdx.y * blockDim.y + (threadIdx.y - N_CONSUMER_Y)) * WMMA_N;
+    int bCol = (blockIdx.y * (blockDim.y - N_CONSUMER_Y) + (threadIdx.y - N_CONSUMER_Y)) * WMMA_N;
 
     for (int stage = 0; stage < K / WMMA_K; stage++)
     {
@@ -241,8 +241,8 @@ __device__ inline void consumer_wmma(
 
         /* consume buffer_(i%2) */
         // buffer_X is stored as [k, M]: [16, 16], buffer_W is stored as [k, N]: [16, 128]
-        wmma::load_matrix_sync(a_frag, buffer_X + (stage % 2 * WMMA_M), WMMA_M);
-        wmma::load_matrix_sync(b_frag, buffer_W + (stage % 2 * N) + bCol, N);
+        wmma::load_matrix_sync(a_frag, buffer_X + ((stage % 2) * WMMA_M), WMMA_M);
+        wmma::load_matrix_sync(b_frag, buffer_W + ((stage % 2) * N) + bCol, N);
         // wmma::load_matrix_sync(b_frag, W + bCol + k * N_TOTAL, N_TOTAL);
 
         for (int l = 0; l < a_frag.num_elements; l++)
@@ -268,13 +268,18 @@ __device__ inline void consumer_wmma(
         barrier::arrival_token token = ready[stage % 2].arrive(); /* buffer_(i%2) is ready to be re-filled */
     }
 
+    __syncthreads();
+
     // now lets fill output
 
     wmma::store_matrix_sync(OUTPUT + blockIdx.x * M * N + bCol + aRow * N, ab_frag, N, wmma::mem_row_major);
 }
 
 // N is the total number of float elements in arrays in and out
-__global__ void producer_consumer_wmma_matmul(float *__restrict__ X, float *__restrict__ W, float *__restrict__ OUT, const int M, const int N, const int K)
+__global__ void producer_consumer_wmma_matmul(
+    const float *__restrict__ X,
+    const float *__restrict__ W,
+    float *__restrict__ OUT, const int M, const int N, const int K)
 {
 
     extern __shared__ char buffer[];
@@ -351,7 +356,7 @@ this matmul is further decomposed into C = dXW + XdW + XW, where d represents a 
 */
 
 template <int nodes_per_block>
-__global__ void matmul_wmma_kernel(float *__restrict__ X, float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
+__global__ void matmul_wmma_kernel(const float *__restrict__ X, const float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const int M_TOTAL, const int N_TOTAL, const int K_TOTAL)
 {
 
     extern __shared__ char buffer[];
