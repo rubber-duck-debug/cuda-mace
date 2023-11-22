@@ -32,6 +32,147 @@ __host__ __device__ int32_t find_integer_divisor(int32_t x, int32_t bdim)
     return (x + bdim - 1) / bdim;
 }
 
+template <typename scalar_t, const int TM, const int TN>
+__global__ __launch_bounds__(128) void forward2_kernel(
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,
+    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> lm_to_L,
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> neighbour_indices,
+    torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
+{
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    // scalar_t *buffer_X = shared_array<scalar_t>(X.size(1), sptr, &space);
+    // scalar_t *buffer_Y = shared_array<scalar_t>(32 * 33, sptr, &space);
+    int32_t *buffer_lm_to_L = shared_array<int32_t>(Y.size(1), sptr, &space);
+
+    float regM[TM] = {0.0};
+    float regN[TN] = {0.0};
+    float regWeights[TM * TN] = {0.0};
+    float result[TM * TN] = {0.0};
+
+    const uint threadCol = threadIdx.x % 32;
+    const uint threadRow = threadIdx.x / 32;
+
+    const uint edge_start = neighbour_indices[blockIdx.x];
+    const uint node_index = receiver_list[edge_start];
+    const uint edge_end = (blockIdx.x == neighbour_indices.size(0) - 1) ? X.size(0) : neighbour_indices[blockIdx.x + 1];
+    const uint nedges = edge_end - edge_start;
+
+    __syncthreads();
+
+    // check if this node has neighbours
+    if (nedges == 0)
+    {
+        return;
+    }
+
+    if (threadRow == 0)
+    {
+        for (uint i = threadCol; i < Y.size(1); i += 32)
+        {
+            buffer_lm_to_L[i] = lm_to_L[i];
+        }
+    }
+
+    for (uint n = 0; n < TN; n++)
+    {
+        regN[n] = X[edge_start][n * 32 + threadCol];
+    }
+
+    __syncthreads();
+
+    for (uint edge = edge_start; edge < edge_end; edge++)
+    {
+        // compute outer product segment
+
+        // load first into registers
+        for (uint m = 0; m < TM; m++)
+        {
+            regM[m] = Y[edge][m * TM + threadRow];
+
+            int32_t lm_index = buffer_lm_to_L[m * TM + threadRow];
+            for (uint n = 0; n < TN; n++)
+            {
+                regWeights[m * TM + n] = radial[edge][lm_index][n * 32 + threadCol];
+            }
+        }
+
+        // perform outer product in registers
+        for (uint m = 0; m < TM; m++)
+        {
+            for (uint n = 0; n < TN; n++)
+            {
+                result[m * TM + n] += regWeights[m * TM + n] * regM[m] * regN[n];
+            }
+        }
+    }
+
+    for (int m = 0; m < TM; m++)
+    {
+        for (int n = 0; n < TN; n++)
+        {
+            output[node_index][m * TM + threadRow][n * 32 + threadCol] = result[m * TM + n];
+        }
+    }
+}
+
+torch::Tensor forward_gpu2(
+    torch::Tensor X,
+    torch::Tensor Y,
+    torch::Tensor radial,
+    torch::Tensor lm_to_L,
+    torch::Tensor receiver_list,
+    torch::Tensor neighbour_indices,
+    int64_t natoms,
+    int64_t nthreadx,
+    int64_t nthready,
+    int64_t nthreadz)
+{
+
+    const int nspherical_harm = Y.size(1);
+    const int nfeatures = X.size(1);
+
+    torch::Tensor output = torch::empty({natoms, nspherical_harm, nfeatures},
+                                        torch::TensorOptions()
+                                            .dtype(X.dtype())
+                                            .device(X.device()));
+
+    dim3 gridDim(natoms);
+
+    dim3 blockDim(128, 1, 1);
+
+    AT_DISPATCH_FLOATING_TYPES(
+        X.type(), "forward_gpu2", ([&]
+                                   {
+
+        size_t shared_size = 0;
+        void* sptr = nullptr;
+
+        //shared_array<scalar_t>(nfeatures, sptr, &shared_size);
+        //shared_array<scalar_t>(32 * 33, sptr, &shared_size);
+        shared_array<int32_t>(nspherical_harm, sptr, &shared_size);
+
+        forward2_kernel<scalar_t,4,3><<<gridDim, blockDim, shared_size>>>(
+            X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+            Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+            radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+            lm_to_L.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            neighbour_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>()); }));
+
+    cudaDeviceSynchronize();
+
+    return output;
+}
+
 template <typename scalar_t>
 __global__ void forward_kernel(
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,
@@ -349,7 +490,6 @@ __global__ void backward_dY_kernel(
                 {
                     atomicAdd(&buffer_grad_Y[lm * blockDim.y + threadIdx.y], tmp);
                 }
-
             }
 
             // TODO this will cause issues - better to balot sync
@@ -652,5 +792,6 @@ TORCH_LIBRARY(invariant_tp, m)
     m.def("forward", &invariant_message_passing_tensor_product);
     m.def("calculate_neighbours", &calculate_neighbours_gpu);
     m.def("forward_test", &forward_gpu);
+    m.def("forward_test2", &forward_gpu2);
     m.def("backward_test", &backward_gpu);
 }
