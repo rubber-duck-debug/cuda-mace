@@ -24,8 +24,8 @@ def get_gflops(time_in_ms, features, max_l, nodes, edges):
 
 def benchmark(dtype, device):
 
-    nedges = 30000
-    nnodes = 1000
+    nedges = 30000 * 5
+    nnodes = 1000 * 5
     nfeatures = 96
     L_MAX = 3
     nl = (L_MAX +1) ** 2

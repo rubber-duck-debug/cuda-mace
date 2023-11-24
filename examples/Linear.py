@@ -4,13 +4,10 @@ from typing import List
 from math import prod
 import torch
 from e3nn import o3
-from mace_ops import cuda
+from mace_ops.ops.linear import Linear
 
 torch.backends.cuda.matmul.allow_tf32 = False
 
-def get_gflops(m, n, k, time_in_ms):
-    nops = 2 * m*n*k
-    return 1.0e-9 * nops / (time_in_ms / 1000.0)
 
 class shape_irreps(torch.nn.Module):
     # code the reverse of reshape_irreps
@@ -103,65 +100,10 @@ class LinearRef(torch.nn.Module):
 
             start_l_idx, end_l_idx, weights, path_weight = instruction
 
-            # print(start_l_idx, end_l_idx, weights.shape, path_weight)
-
             output[:, start_l_idx:end_l_idx, :] = path_weight * \
                 torch.matmul(x[:, start_l_idx:end_l_idx, :], weights)
 
         return output
-
-
-class LinearCUDA(torch.nn.Module):
-
-    def __init__(self, irreps_in, irreps_out, e3nn_instructions, e3nn_weights):
-
-        super().__init__()
-
-        self.irreps_in = irreps_in
-        self.irreps_out = irreps_out
-
-        self.e3nn_instructions = e3nn_instructions
-        self.e3nn_weights = e3nn_weights
-
-        self.out_lmax = int(irreps_out.lmax)
-        self.out_dim = int(irreps_out.dim / (self.out_lmax + 1) ** 2)
-
-        self.l_start = []
-        self.l_end = []
-        self.path_weights = []
-        self.weights = []
-
-        flat_weight_index = 0
-
-        for ins in e3nn_instructions:
-            path_nweight = prod(ins.path_shape)
-            mul_ir_out = irreps_out[ins.i_out]
-            # extract the weights for the current path
-            w = e3nn_weights.narrow(-1, flat_weight_index, path_nweight)
-            w = w.reshape(ins.path_shape)
-            # 0 | 1 2 3 | 4 5 6
-            start = ins.i_in ** 2
-            end = start + (2 * ins.i_in + 1)
-
-            self.l_start.append(start)
-            self.l_end.append(end)
-            self.path_weights.append(ins.path_weight)
-            self.weights.append(w)
-
-            flat_weight_index += path_nweight
-
-        self.l_start = torch.tensor(self.l_start).int().cuda()
-        self.l_end = torch.tensor(self.l_end).int().cuda()
-        self.weights = torch.stack(self.weights).contiguous().float().cuda()
-        self.weights_transposed = self.weights.clone().transpose(-1, -2).cuda().contiguous()
-        self.path_weights = torch.tensor(self.path_weights).float()
-
-    def forward(self, x, use_tensor_cores=False):
-        return torch.ops.matmul.linear(x, self.weights, self.weights_transposed)
-        #return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed, self.l_start, self.l_end, self.path_weights)
-        
-        
-
 
 # INPUTS#
 n_channels = 96
@@ -182,10 +124,9 @@ irreps_in = o3.Irreps(
 irreps_out = o3.Irreps(
     f"{n_out_channels}x0e + {n_out_channels}x1o + {n_out_channels}x2e + {n_out_channels}x3o")
 
-print(irreps_out.lmax, irreps_out.dim)
-
-print("IRREPS IN, IRREPS_OUT")
+print("IRREPS_IN, IRREPS_OUT")
 print(irreps_in, irreps_out)
+
 linear = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out).to('cuda')
 ### UTILS###
 
@@ -205,12 +146,9 @@ x_r = torch.cat(x_reshape, dim=1).contiguous()
 
 grad_check_x_c = x_r.clone().detach().cuda().contiguous().requires_grad_(True)
 
-
 linear_ref = LinearRef(irreps_in, irreps_out, instructions, ws)
-linear_cuda = LinearCUDA(irreps_in, irreps_out, instructions, ws)
+linear_cuda = Linear(irreps_in, irreps_out, instructions, ws)
 
-# print("LIN REF")
-# print(linear_ref(x_r))
 
 flat_weight_index = 0
 for ins in instructions:
@@ -311,7 +249,9 @@ for i in range(1000):
     torch.cuda.synchronize()
 end = time()
 
-print("fwd e3nn linear:", end - start, get_gflops(nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
+print (x.grad, x.grad.shape)
+
+print("fwd e3nn linear:", end - start)
 
 torch.cuda.synchronize()
 start = time()
@@ -319,16 +259,27 @@ for i in range(1000):
     cuda_lin_out = linear_cuda(grad_check_x_c)
     t = cuda_lin_out.sum()
     t.backward()
-    torch.cuda.synchronize()
+    # torch.cuda.synchronize() -> not needed because of cudaStreamDestroy
 end = time()
 
-print("fwd CUDA linear:", end - start, get_gflops(nnodes * n_channels, (max_l+1)**2, n_out_channels, end-start))
+print (grad_check_x_c.grad, grad_check_x_c.shape)
+
+print("fwd CUDA linear:", end - start)
 
 
 linear_ref = linear_ref(grad_check_x_c)
 
-print (linear_ref[0])
-print (cuda_lin_out[0])
-
 print (linear_ref[-1])
 print (cuda_lin_out[-1])
+
+#print (linear_ref[-1])
+#print (cuda_lin_out[-1])
+
+#assert torch.allclose(linear_ref, cuda_lin_out, )
+
+idx = torch.where(linear_ref - cuda_lin_out > 1e-4)
+
+print (idx)
+
+print (linear_ref[idx])
+print (cuda_lin_out[idx])

@@ -122,7 +122,7 @@ else:
 
 setup(
     name='mace ops',
-    packages=['mace_ops.cuda'],
+    packages=['mace_ops.cuda', 'mace_ops.ops'],
     version=__version__,
     author=__author__,
     author_email=__email__,

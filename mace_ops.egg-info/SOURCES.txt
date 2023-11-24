@@ -15,4 +15,5 @@ mace_ops/cuda/linear_wmma.cu
 mace_ops/cuda/matmul.cu
 mace_ops/cuda/symmetric_contraction_kernels.cu
 mace_ops/cuda/tensor_product_kernels.cu
+mace_ops/ops/linear.py
 tests/test_cg.py
