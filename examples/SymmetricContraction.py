@@ -30,8 +30,8 @@ atom_types = Y.argmax(dim=-1).int()
 
 coupling_irreps = o3.Irreps([irrep.ir for irrep in interaction_irreps])
 
+#we include all contractions in the weights dictionary. The CUDA code will internally format these into the sparsity storage.
 all_weights = {}
-
 for i in range(len(symm_contract.contractions)):
     all_weights[str(i)] = {}
     all_weights[str(i)][3] =  symm_contract.contractions[i].weights_max.detach().clone().type(dtype)

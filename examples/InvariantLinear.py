@@ -86,11 +86,9 @@ class LinearRef(torch.nn.Module):
             end = start + (2 * ins.i_in + 1)
 
             self.instructions.append((start, end, w, ins.path_weight))
-            # print(ins, w.reshape(ins.path_shape).shape,    start, end, x_r[:, start:end, :].shape)
 
             flat_weight_index += path_nweight
 
-        # print (self.instructions)
     def forward(self, x):
 
         output = torch.zeros(x.shape[0], (self.out_lmax + 1) ** 2, self.out_dim,
@@ -108,9 +106,7 @@ class LinearRef(torch.nn.Module):
 # INPUTS#
 n_channels = 96
 n_out_channels = 96
-
 max_l = 3
-
 nnodes = 5000
 
 x = torch.randn(nnodes, n_channels*(max_l+1)**2,
@@ -133,6 +129,7 @@ linear = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out).to('cuda')
 instructions = linear.instructions
 ws = linear.weight
 
+#need to reshape x so it has the right shape for the CUDA code
 x_reshape = []
 ix = 0
 for mul, ir in irreps_in:
@@ -141,7 +138,6 @@ for mul, ir in irreps_in:
         x.shape[0], mul, ir.dim).transpose(-1, -2).contiguous()
     ix += mul * ir.dim
     x_reshape.append(field)
-
 x_r = torch.cat(x_reshape, dim=1).contiguous()
 
 grad_check_x_c = x_r.clone().detach().cuda().contiguous().requires_grad_(True)
