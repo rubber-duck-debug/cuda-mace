@@ -253,6 +253,7 @@ print (x.grad, x.grad.shape)
 
 print("fwd e3nn linear:", end - start)
 
+torch.cuda.cudart().cudaProfilerStart()
 torch.cuda.synchronize()
 start = time()
 for i in range(1000):
@@ -261,6 +262,8 @@ for i in range(1000):
     t.backward()
     # torch.cuda.synchronize() -> not needed because of cudaStreamDestroy
 end = time()
+
+torch.cuda.cudart().cudaProfilerStop()
 
 print (grad_check_x_c.grad, grad_check_x_c.shape)
 

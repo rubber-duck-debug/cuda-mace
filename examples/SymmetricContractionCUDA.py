@@ -335,7 +335,7 @@ class CUDAContraction(torch.nn.Module):
 nchannels = 96
 max_ell = 3
 correlation = 3
-natoms = 5000
+natoms = 1000
 dtype = torch.float32
 torch.set_default_dtype(dtype)
 
@@ -417,6 +417,7 @@ atom_types = torch.argmax(Y_torch, dim=-1).int()
 
 torch.cuda.synchronize()
 
+torch.cuda.cudart().cudaProfilerStart()
 start = time()
 for i in range (ntrials):
     out_cuda = cuda_contraction.forward(X_torch_copy, atom_types)
@@ -426,6 +427,7 @@ for i in range (ntrials):
 torch.cuda.synchronize()
 end = time()
 print (end - start)
+torch.cuda.cudart().cudaProfilerStop()
 
 print (out_cuda[0], out_cuda.shape)
 print (output[0], output.shape)

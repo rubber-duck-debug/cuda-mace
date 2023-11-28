@@ -1,31 +1,29 @@
 import torch
+import math
 from time import time
 from mace_ops import cuda
 from mace_ops.cuda.instruction import Instruction, _normalize_instruction_path_weights
 from mace_ops.cuda.irreps import Irreps
 
 
-def reference(X, Y,  radial, lm_to_L, receiver_list, nnodes ):
+def reference(X, Y,  radial, receiver_list, nnodes ):
 
     output = torch.zeros(nnodes, Y.shape[1], X.shape[1], device=X.device, dtype=X.dtype)
 
     for i in range (Y.shape[1]):
         
-        out = X * Y[:, i][:, None] * radial[:, lm_to_L[i], :]
+        
+        out = X * Y[:, i][:, None] * radial[:, int(math.sqrt(i)), :]
         
         output[:, i, :].index_add_(0,receiver_list, out )
 
     return output
 
-def get_gflops(time_in_ms, features, max_l, nodes, edges):
-    nops = edges * 3 * features * (max_l+1)**2 
-    return 1.0e-9 * nops / (time_in_ms / 1000.0)
-
 
 def benchmark(dtype, device):
 
     nedges = 30000 * 5
-    nnodes = 1000 * 5
+    nnodes = 1000   * 5
     nfeatures = 96
     L_MAX = 3
     nl = (L_MAX +1) ** 2
@@ -44,96 +42,68 @@ def benchmark(dtype, device):
     radial = torch.randn((nedges, L_MAX+1, nfeatures), dtype=dtype,
                    device=device, requires_grad=True) 
 
-    lm_to_L = torch.tensor([0, 1,1,1,2,2,2,2,2,3,3,3,3,3,3,3]).int().cuda()
-
     indices = torch.sort(torch.randint(nnodes, (nedges,), device=device))[0]
-
     indices_cuda = indices.cuda().int()
-    
-    X = X_nodes[indices].clone().detach().cuda().float().requires_grad_(True)
-    
-    X_ref = X.clone().detach().requires_grad_(True)
+
+    X_nodes_ref = X_nodes.clone().detach().requires_grad_(True)
+    X_ref =  X_nodes_ref[indices]
     Y_ref = Y.clone().detach().requires_grad_(True)
     radial_ref = radial.clone().detach().requires_grad_(True)
 
     torch.matmul(torch.rand(1024, 1024, device='cuda'),torch.rand(1024, 1024, device='cuda'))
     torch.cuda.synchronize()
     
-    start = time()
     for i in range (1):
-        out  = reference(X_ref, Y_ref, radial_ref, lm_to_L, indices_cuda, nnodes)
+        out_ref  = reference(X_ref, Y_ref, radial_ref, indices_cuda, nnodes)
 
-        t = out.sum()
+        t = out_ref.sum()
 
         t.backward()
     torch.cuda.synchronize()
 
-    end = time()
-    
-    print (end - start)
-
-    print ("-- reference grad--")
-    #print (out[0])
-    print ("x_grad:", X_ref.grad)
-    print ("radial_grad:", radial_ref.grad)
-    print ("Y_grad:", Y_ref.grad)
-
     neighbour_cuda = torch.ops.invariant_tp.calculate_neighbours(indices_cuda, nnodes, 64)
     
-
-    Y_T = Y.clone().detach().transpose(-1, -2).contiguous().requires_grad_(True)
-
-    start = time()
-    for i in range (1000):
-        out =  torch.ops.invariant_tp.forward_test(
-            X,
-            Y_T,
-            radial,
-            lm_to_L,
-            indices_cuda, 
-            neighbour_cuda,
-            nnodes,
-            32,
-            4,
-            1)
-        
-    end = time()
+    torch.cuda.synchronize()
     
-    print (end - start)
-
-    print (out[0])
+    torch.cuda.cudart().cudaProfilerStart()
     
-    print (Y.shape)
-    print (X.shape)
-    
-    start = time()
-    for i in range (1000):
-        out =  torch.ops.invariant_tp.forward_test2(
-            X,
+    fwd_time = 0
+    sum_time = 0
+    bwd_time = 0
+    nrepeats = 1
+    for i in range (nrepeats):
+        start = time()
+        out =  torch.ops.invariant_tp.forward(
+            X_nodes,
             Y,
             radial,
-            lm_to_L,
             indices_cuda, 
-            neighbour_cuda,
-            nnodes,
-            32,
-            4,
-            1)
+            neighbour_cuda)
+        torch.cuda.synchronize()
+        fwd_time += time() - start
         
-        #test = out.sum()
 
-        #test.backward()
+        start = time()
+        osum = out.sum()
+        torch.cuda.synchronize()
+        sum_time += time() - start
         
-    print (out.shape)
-
+        start = time()
+        osum.backward()
+        torch.cuda.synchronize()
+        bwd_time += time() - start
         
-    end = time()
-    print (end - start, get_gflops(end - start, nfeatures, L_MAX, nnodes, nedges))
-    
-    
-    
-    print (out[0])
+    torch.cuda.cudart().cudaProfilerStop()
 
+    idx = torch.where(X_nodes.grad - X_nodes_ref.grad > 1e-5)
+    
+    print (X_nodes.grad[idx])
+    print (X_nodes_ref.grad[idx])
+    
+    assert torch.allclose(out, out_ref, atol=1e-5), "output assert failed"
+    assert torch.allclose(radial_ref.grad, radial.grad, atol=1e-5), "radial grad assert failed"
+    assert torch.allclose(Y_ref.grad, Y.grad, atol=1e-5), "Y grad assert failed"
+    assert torch.allclose(X_nodes.grad, X_nodes_ref.grad, atol=1e-4), "X grad assert failed"
 
     
     
