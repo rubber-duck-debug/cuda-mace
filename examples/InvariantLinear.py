@@ -147,6 +147,8 @@ x_r = torch.cat(x_reshape, dim=1).contiguous()
 grad_check_x_c = x_r.clone().detach().cuda().contiguous().requires_grad_(True)
 
 linear_ref = LinearRef(irreps_in, irreps_out, instructions, ws)
+
+##CUDA LINEAR##
 linear_cuda = Linear(irreps_in, irreps_out, instructions, ws)
 
 
@@ -161,20 +163,10 @@ for ins in instructions:
     start = ins.i_in ** 2
     end = start + (2 * ins.i_in + 1)
 
-    #print(ins, w.reshape(ins.path_shape).shape,start, end, x_r[:, start:end, :].shape)
-
     out = ins.path_weight * torch.matmul(x_r[:, start:end, :], w)
 
-    #print(out.shape)
-
-    #print(out[0])
     flat_weight_index += path_nweight
 
-
-### LINEAR###
-# Prepare variables
-
-#print("ws.shape: ", ws.shape)
 shared_weights = linear.shared_weights
 
 irreps_in = linear.irreps_in

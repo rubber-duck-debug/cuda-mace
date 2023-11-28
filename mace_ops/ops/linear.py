@@ -1,10 +1,16 @@
 from math import prod
 import torch
 from mace_ops import cuda
+from e3nn import o3
+from typing import List
 
 class Linear(torch.nn.Module):
 
-    def __init__(self, irreps_in, irreps_out, e3nn_instructions, e3nn_weights):
+    def __init__(self, 
+                 irreps_in: o3.Irreps, 
+                 irreps_out: o3.Irreps,
+                 e3nn_instructions : List,
+                 e3nn_weights: torch.Tensor):
 
         super().__init__()
 
@@ -47,5 +53,5 @@ class Linear(torch.nn.Module):
         self.weights_transposed = self.weights.clone().transpose(-1, -2).cuda().contiguous()
         self.path_weights = torch.tensor(self.path_weights).float()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed)

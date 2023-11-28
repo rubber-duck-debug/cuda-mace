@@ -386,7 +386,7 @@ for i in range(len(symm_contract.contractions)):
     all_weights[str(i)][1] =  symm_contract.contractions[i].weights[1].detach().clone().type(dtype)
 
 
-cuda_contraction = CUDAContraction_(coupling_irreps, hidden_irreps, all_weights,nthreadX = 32, nthreadY = 8, nthreadZ = 1, dtype=dtype)
+cuda_contraction = CUDAContraction_(coupling_irreps, hidden_irreps, all_weights, nthreadX = 32, nthreadY = 8, nthreadZ = 1, dtype=dtype)
 
 torch.matmul(torch.randn(1024, 1024, device='cuda'),torch.randn(1024, 1024, device='cuda'))
 
