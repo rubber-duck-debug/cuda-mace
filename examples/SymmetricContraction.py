@@ -19,6 +19,7 @@ sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
 num_features = hidden_irreps.count(o3.Irrep(0, 1))
 interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
 
+#need to pull the weights from the existing MACE SymmetricContraction module.
 symm_contract = SymmetricContraction(interaction_irreps, hidden_irreps, correlation, num_elements=3).to("cuda")
 
 for param in symm_contract.parameters():
