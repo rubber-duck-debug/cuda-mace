@@ -68,7 +68,6 @@ def benchmark(dtype, device):
     L_MAX = 3
     nl = (L_MAX +1) ** 2
 
-
     print(f"--DTYPE: {dtype}")
     print(f"Benchmarking dtype {dtype} and device {device}")
     print(f"nodes: {nnodes} and edges: {nedges}")
@@ -84,11 +83,7 @@ def benchmark(dtype, device):
 
     receiver_list = torch.sort(torch.randint(nnodes, (nedges,), device=device, dtype=torch.int))[0]
 
-    node_feats_ref = node_feats.clone().detach().requires_grad_(True)
-    node_feats_ref_sampled =  node_feats_ref[receiver_list]
-    edge_attrs_ref = edge_attrs.clone().detach().requires_grad_(True)
-    tp_weights_ref = tp_weights.clone().detach().requires_grad_(True)
-
+    #warmup
     torch.matmul(torch.rand(1024, 1024, device='cuda'),torch.rand(1024, 1024, device='cuda'))
     torch.cuda.synchronize()
     
