@@ -32,4 +32,4 @@ class InvariantMessagePassingTP(torch.nn.Module):
             first_occurences: torch.Tensor  #[nnodes] -> monotonically increasing by construction
             ) -> torch.Tensor:
 
-        return torch.ops.invariant_tp.forward(node_feats, edge_attrs, tp_weights, receiver_list, first_occurences)
+        return torch.ops.invariant_tp.forward(node_feats, edge_attrs, tp_weights, receiver_list, first_occurences) # outputs [nnodes, 16, nfeats]
