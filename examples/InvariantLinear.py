@@ -110,6 +110,7 @@ idx = torch.where (linear_ref - cuda_out > 1e-5)
 
 if (len(idx[0]) > 0):
     print ("Possible issues with precision of output...")
+    print (idx)
     print (linear_ref[idx])
     print (cuda_out[idx])
 
@@ -117,6 +118,7 @@ idx = torch.where (x_ref.grad - x.grad > 1e-5)
 
 if (len(idx[0]) > 0):
     print ("Possible issues with precision of grad X...")
+    print (idx)
     print (x.grad[idx])
     print (x.grad[idx])
 
