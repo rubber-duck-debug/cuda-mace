@@ -187,8 +187,6 @@ __global__ void __launch_bounds__(MATMUL_NUM_THREADS) linear_kernel(float *__res
     }
 }
 
-
-
 template <const int L>
 __global__ void linear_wmma_kernel(float *__restrict__ X, float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const uint M, const uint N, const uint K)
 {
@@ -338,7 +336,6 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W)
     shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
     shared_array<float>(M * blockDim.y * WMMA_N, sptr, &shared_size);
 
-
     for (int l = 0; l < 4; l++)
     {
         cudaStreamCreate(&stream[l]);
@@ -346,11 +343,13 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W)
         griddims[l].x = find_integer_divisor(NNODES * (2 * l + 1), 16);
         griddims[l].y = find_integer_divisor(N, blockDim.y * WMMA_N);
     }
-    
+
     linear_wmma_kernel<0><<<griddims[0], blockDim, shared_size, stream[0]>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K);
     linear_wmma_kernel<1><<<griddims[1], blockDim, shared_size, stream[1]>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K);
     linear_wmma_kernel<2><<<griddims[2], blockDim, shared_size, stream[2]>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K);
     linear_wmma_kernel<3><<<griddims[3], blockDim, shared_size, stream[3]>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K);
+
+    cudaDeviceSynchronize();
 
     for (int l = 0; l < 4; l++)
     {
