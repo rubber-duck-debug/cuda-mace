@@ -492,11 +492,6 @@ symmetric_contraction_L0_forwards_kernel(
 			uw1 = buffer_W1[0 * blockDim.x + threadIdx.x];
 		}
 
-		/*if (buffer_u1_num_nonzero[i] > 0)
-		{
-			uw1 = buffer_W1[buffer_u1_indices[i] * blockDim.x + threadIdx.x];
-		}*/
-
 		scalar_t output_2 = 0.0;
 		scalar_t deriv1_tmp = 0.0;
 

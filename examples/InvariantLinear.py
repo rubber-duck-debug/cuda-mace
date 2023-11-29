@@ -8,6 +8,43 @@ from mace_ops.ops.linear import Linear
 
 torch.backends.cuda.matmul.allow_tf32 = False
 
+class shape_irreps(torch.nn.Module):
+    # code the reverse of reshape_irreps
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = irreps
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        # the reverse of reshape_irreps
+        ix = 0
+        out = []
+        batch, _, _ = tensor.shape
+        for mul, ir in self.irreps:
+            d = ir.dim
+            field = tensor[:, :, ix: ix + d]
+            field = field.reshape(batch, mul * d)
+            ix = ix + d
+            out.append(field)
+        return torch.cat(out, dim=-1)
+
+
+class reshape_irreps(torch.nn.Module):
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = irreps
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        ix = 0
+        out = []
+        batch, _ = tensor.shape
+        for mul, ir in self.irreps:
+            d = ir.dim
+            field = tensor[:, ix: ix + mul * d]  # [batch, sample, mul * repr]
+            ix += mul * d
+            field = field.reshape(batch, mul, d)
+            out.append(field)
+        return torch.cat(out, dim=-1)
+    
 class LinearRef(torch.nn.Module):
 
     def __init__(self, irreps_in, irreps_out, e3nn_instructions, e3nn_weights):
@@ -93,7 +130,7 @@ for i in range(1000):
     cuda_out = linear_cuda(x)
     t = cuda_out.sum()
     t.backward()
-    # torch.cuda.synchronize() -> not needed because of cudaStreamDestroy
+    torch.cuda.synchronize()
 end = time()
 
 torch.cuda.cudart().cudaProfilerStop()
@@ -101,4 +138,15 @@ print("fwd CUDA linear:", end - start)
 
 linear_ref = linear_ref(x_ref)
 
+torch.set_printoptions(precision=5)
+
+idx = torch.where (linear_ref - cuda_out > 1e-5)
+
+if (len(idx[0]) > 0):
+    print ("Possible issues with precision...")
+    print (linear_ref[idx])
+    print (cuda_out[idx])
+
 assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
+
+shape_irreps(irreps_out)(cuda_out)

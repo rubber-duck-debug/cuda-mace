@@ -4,19 +4,14 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <cuda/barrier>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <cuda_fp16.h>
 #include <cuda_pipeline_primitives.h>
-#include <cooperative_groups.h>
-#include <cuda/pipeline>
 
-using namespace cooperative_groups;
 using namespace nvcuda;
 using namespace std;
 using namespace torch::autograd;
-using barrier = cuda::barrier<cuda::thread_scope_block>;
 
 #define WARP_SIZE 32
 
