@@ -8,42 +8,6 @@ from mace_ops.ops.linear import Linear
 
 torch.backends.cuda.matmul.allow_tf32 = False
 
-class shape_irreps(torch.nn.Module):
-    # code the reverse of reshape_irreps
-    def __init__(self, irreps: o3.Irreps) -> None:
-        super().__init__()
-        self.irreps = irreps
-
-    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
-        # the reverse of reshape_irreps
-        ix = 0
-        out = []
-        batch, _, _ = tensor.shape
-        for mul, ir in self.irreps:
-            d = ir.dim
-            field = tensor[:, :, ix: ix + d]
-            field = field.reshape(batch, mul * d)
-            ix = ix + d
-            out.append(field)
-        return torch.cat(out, dim=-1)
-
-
-class reshape_irreps(torch.nn.Module):
-    def __init__(self, irreps: o3.Irreps) -> None:
-        super().__init__()
-        self.irreps = irreps
-
-    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
-        ix = 0
-        out = []
-        batch, _ = tensor.shape
-        for mul, ir in self.irreps:
-            d = ir.dim
-            field = tensor[:, ix: ix + mul * d]  # [batch, sample, mul * repr]
-            ix += mul * d
-            field = field.reshape(batch, mul, d)
-            out.append(field)
-        return torch.cat(out, dim=-1)
     
 class LinearRef(torch.nn.Module):
 
@@ -149,4 +113,3 @@ if (len(idx[0]) > 0):
 
 assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
 
-shape_irreps(irreps_out)(cuda_out)
