@@ -90,7 +90,7 @@ linear_cuda = Linear(irreps_in, irreps_out, instructions, ws)
 torch.cuda.cudart().cudaProfilerStart()
 torch.cuda.synchronize()
 start = time()
-for i in range(1000):
+for i in range(1):
     cuda_out = linear_cuda(x)
     t = cuda_out.sum()
     t.backward()
@@ -101,15 +101,24 @@ torch.cuda.cudart().cudaProfilerStop()
 print("fwd CUDA linear:", end - start)
 
 linear_ref = linear_ref(x_ref)
+linear_ref.sum().backward()
+torch.cuda.synchronize()
 
 torch.set_printoptions(precision=5)
 
 idx = torch.where (linear_ref - cuda_out > 1e-5)
 
 if (len(idx[0]) > 0):
-    print ("Possible issues with precision...")
+    print ("Possible issues with precision of output...")
     print (linear_ref[idx])
     print (cuda_out[idx])
 
-assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
+idx = torch.where (x_ref.grad - x.grad > 1e-5)
 
+if (len(idx[0]) > 0):
+    print ("Possible issues with precision of grad X...")
+    print (x.grad[idx])
+    print (x.grad[idx])
+
+assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
+assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
