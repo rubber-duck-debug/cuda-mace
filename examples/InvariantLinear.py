@@ -94,7 +94,6 @@ for i in range(1):
     cuda_out = linear_cuda(x)
     t = cuda_out.sum()
     t.backward()
-    torch.cuda.synchronize()
 end = time()
 
 torch.cuda.cudart().cudaProfilerStop()
@@ -120,7 +119,7 @@ if (len(idx[0]) > 0):
     print ("Possible issues with precision of grad X...")
     print (idx)
     print (x.grad[idx])
-    print (x.grad[idx])
+    print (x_ref.grad[idx])
 
 assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
 assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
