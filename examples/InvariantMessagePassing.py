@@ -31,7 +31,6 @@ class InvariantMPTP(Function):
         
     @staticmethod
     def backward(ctx, grad_output):
-        
         node_attr, edge_attr, tp_weights, sender_list, receiver_list, first_occurences = ctx.saved_tensors
         
         gradY = torch.zeros_like(edge_attr)
@@ -47,7 +46,7 @@ class InvariantMPTP(Function):
             gin = grad_output[node_index] # 16,128
             
             for edge in range (edge_start, edge_end):
-            
+                
                 x = node_attr[sender_list[edge]]
                 
                 for m in range (16):
@@ -60,12 +59,11 @@ class InvariantMPTP(Function):
                     gradRadial[edge, L, :] += ylm * gin[m] * x
                     gradY[edge, m] += (gin[m] * x * rad).sum()
                     
-                    #gradX[sender_list[edge]] += gin[m] * rad * ylm
                     
         # for all edge indexes in sender_list[sort_sender_idx] need to update grads in [sender_list[sort_sender_idx]]
-        
         sort_sender_idx = torch.argsort(sender_list)
-    
+        first_occurences = torch.ops.invariant_tp.calculate_first_occurences(sender_list[sort_sender_idx], node_attr.shape[0], 64)
+       
         for node in range (node_attr.shape[0]):
             edge_start = first_occurences[node]
             node_index = sender_list[sort_sender_idx[edge_start]]
@@ -73,16 +71,15 @@ class InvariantMPTP(Function):
             gin = grad_output[node_index]
             
             for edge in range (edge_start, edge_end):
-            
+                
                 for m in range (16):
-                    
+        
                     L = int(math.sqrt(m))
-                    
-                    ylm = edge_attr[sort_sender_idx[edge_start]][m] # scalar
-                    rad = tp_weights[sort_sender_idx[edge_start]][L] # 128
+
+                    ylm = edge_attr[sort_sender_idx[edge]][m] # scalar
+                    rad = tp_weights[sort_sender_idx[edge]][L] # 128
                     
                     gradX[node_index] += gin[m] * rad * ylm
-        
         
         return gradX, gradY, gradRadial, None, None, None
         
@@ -101,13 +98,11 @@ def reference(X, Y,  radial, receiver_list, nnodes ):
     return output
 
 def check_output(output_ref, output_cuda, name='output'):
-    idx = torch.where(output_ref - output_cuda !=0)
+    idx = torch.where(torch.abs(output_ref - output_cuda) >0)
     if (len (idx[0]) > 0):
         print (f"possible issue with {name}...")
-        print (idx)
-        print (output_ref[idx])
-        print (output_cuda[idx])
-        print ("max diff:", torch.max(output_ref[idx] - output_cuda[idx]))
+        print (f"ndiffs: {len(idx)}")
+        print ("max diff:", torch.max(torch.abs(output_ref[idx] - output_cuda[idx])), "rel. to largest:", torch.max(torch.abs(output_ref[idx] - output_cuda[idx]))/torch.max(torch.abs(output_ref[idx])))
         
 def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_list, nnodes):
     
@@ -155,11 +150,9 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     torch.cuda.synchronize()
     
     check_output(out_ref, out, "output")
-    check_output(edge_attrs_ref, edge_attrs_cuda, "edge_attr grad")
-    check_output(tp_weights_ref, tp_weights_cuda, "tp_weights grad")
-    check_output(node_feats_ref, node_feats_cuda, "node feats grad")
-    
-    #run the CUDA code
+    check_output(edge_attrs_ref.grad, edge_attrs_cuda.grad, "edge_attr grad")
+    check_output(tp_weights_ref.grad, tp_weights_cuda.grad, "tp_weights grad")
+    check_output(node_feats_ref.grad, node_feats_cuda.grad, "node feats grad")
 
 def benchmark(dtype, device):
 
