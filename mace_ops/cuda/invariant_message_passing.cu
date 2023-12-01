@@ -37,11 +37,12 @@ __host__ __device__ int32_t find_integer_divisor(int32_t x, int32_t bdim)
 
 template <typename scalar_t, const int TM, const int TN>
 __global__ __launch_bounds__(128) void forward_kernel(
-    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,
-    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,
-    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,
-    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,
-    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> neighbour_indices,
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,               // [nedges nchannels]
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,               // [nedges, (L+1)**2]
+    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,          // [nedges, L+1, nchannels]
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> sender_list,      // the list of edges we need to sum in the range specified by first_occurences
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,    // which index we need to sum a particular edge into -> monotonically increasing.
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> first_occurences, // the indexes in reciever_list which deliniate the set of edges per node.
     torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
 {
 
@@ -61,9 +62,9 @@ __global__ __launch_bounds__(128) void forward_kernel(
     const uint threadRow = threadIdx.x / 32;
 
     const uint N = X.size(1);
-    const uint edge_start = neighbour_indices[blockIdx.x];
+    const uint edge_start = first_occurences[blockIdx.x];
+    const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1) ? receiver_list.size(0) : first_occurences[blockIdx.x + 1];
     const uint node_index = receiver_list[edge_start];
-    const uint edge_end = (blockIdx.x == neighbour_indices.size(0) - 1) ? receiver_list.size(0) : neighbour_indices[blockIdx.x + 1];
 
     const uint N_start = blockIdx.y * TN * 32;
 
@@ -75,12 +76,6 @@ __global__ __launch_bounds__(128) void forward_kernel(
         return;
     }
 
-    for (uint n = 0; n < TN; n++)
-    {
-        if (N_start + n * 32 + threadCol < N)
-            regN[n] = X[node_index][N_start + n * 32 + threadCol];
-    }
-
     int niter = find_integer_divisor(edge_end - edge_start, NWARPS_PER_BLOCK);
 
     for (uint ni = 0; ni < niter; ni++)
@@ -89,6 +84,14 @@ __global__ __launch_bounds__(128) void forward_kernel(
 
         if (edge < edge_end)
         {
+            uint sender_id = sender_list[edge];
+
+            for (uint n = 0; n < TN; n++)
+            {
+                if (N_start + n * 32 + threadCol < N)
+                    regN[n] = X[sender_id][N_start + n * 32 + threadCol];
+            }
+
             // load first into registers
             for (uint m = 0; m < 16; m++)
             {
@@ -116,8 +119,6 @@ __global__ __launch_bounds__(128) void forward_kernel(
                     }
                 }
             }
-
-            // write out gradY here
         }
     }
 
@@ -152,8 +153,9 @@ torch::Tensor forward_gpu(
     torch::Tensor X,
     torch::Tensor Y,
     torch::Tensor radial,
+    torch::Tensor sender_list,
     torch::Tensor receiver_list,
-    torch::Tensor neighbour_indices)
+    torch::Tensor first_occurences)
 {
     const uint natoms = X.size(0);
     const uint nedges = Y.size(0);
@@ -185,20 +187,23 @@ torch::Tensor forward_gpu(
             X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
             Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
             radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+            sender_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
             receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-            neighbour_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
             output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>()
             ); }));
 
+    cudaDeviceSynchronize();
+
     return output;
 }
-
 template <typename scalar_t, const int TM, const int TN>
 __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_kernel(
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,       // [nnodes, feat]
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,       // [nedges, m]
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,  // [nedges, LMAX, feat]
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_in, // [nnodes, m, feat]
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> sender_list,
     const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,
     const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> neighbour_indices,
     torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> gradX,
@@ -238,9 +243,6 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_kernel(
 
     for (int n = 0; n < TN; n++)
     {
-        if (N_start + n * 32 + threadCol < X.size(1))
-            regN[n] = X[node_index][N_start + n * 32 + threadCol];
-
         for (int m = 0; m < 4; m++)
         {
             if (N_start + n * 32 + threadCol < X.size(1))
@@ -250,15 +252,22 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_kernel(
 
     __syncthreads();
 
-    int n = find_integer_divisor(edge_end - edge_start, NWARPS_PER_BLOCK);
+    int niter = find_integer_divisor(edge_end - edge_start, NWARPS_PER_BLOCK);
 
-    for (uint ni = 0; ni < n; ni++)
+    for (uint ni = 0; ni < niter; ni++)
     {
-
         uint edge = edge_start + ni * NWARPS_PER_BLOCK + threadRow;
 
         if (edge < edge_end)
         {
+            uint sender_id = sender_list[edge];
+
+            for (int n = 0; n < TN; n++)
+            {
+                if (N_start + n * 32 + threadCol < X.size(1))
+                    regN[n] = X[sender_id][N_start + n * 32 + threadCol];
+            }
+
             for (int L = 0; L < 4; L++)
             {
                 uint mstart = L * L;
@@ -312,7 +321,8 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_kernel(
 
         if (edge < edge_end)
         {
-            // write gradY
+            // uint sender_id = sender_list[edge];
+            //  write gradY
             if (threadCol < 16)
             {
                 gradY[edge][threadCol] = buffer_dY[threadRow * 16 + threadCol];
@@ -338,18 +348,23 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_kernel(
 
     __syncthreads();
 
-    for (int n = threadRow; n < TN; n += NWARPS_PER_BLOCK)
+    if (threadRow == 0)
     {
-        if (N_start + n * 32 + threadCol < X.size(1))
+        for (int n = 0; n < TN; n++)
         {
-            scalar_t tmp = 0.0;
-
-            for (int i = 0; i < NWARPS_PER_BLOCK; i++)
+            if (N_start + n * 32 + threadCol < X.size(1))
             {
-                tmp += buffer_reduce[i * X.size(1) + N_start + n * 32 + threadCol];
-            }
+                scalar_t tmp = 0.0;
 
-            gradX[node_index][N_start + n * 32 + threadCol] = tmp;
+                for (int i = 0; i < NWARPS_PER_BLOCK; i++)
+                {
+                    tmp += buffer_reduce[i * X.size(1) + N_start + n * 32 + threadCol];
+                }
+
+                __syncwarp();
+
+                gradX[node_index][N_start + n * 32 + threadCol] = tmp;
+            }
         }
     }
 }
@@ -358,8 +373,9 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                                         torch::Tensor Y,
                                         torch::Tensor radial,
                                         torch::Tensor grad_in,
+                                        torch::Tensor sender_list,
                                         torch::Tensor receiver_list,
-                                        torch::Tensor neighbour_indices)
+                                        torch::Tensor first_occurences)
 {
     uint natoms = X.size(0);
     uint nedges = Y.size(0);
@@ -387,8 +403,7 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "backward_gpu", ([&]
                                    {
-        if (radial.requires_grad())
-        {
+
 
             dim3 blockDim(NWARPS_PER_BLOCK * 32, 1, 1);
             dim3 gridDim(natoms, 1);
@@ -406,8 +421,9 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                 grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                sender_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                neighbour_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
@@ -417,8 +433,9 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                 grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                sender_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                neighbour_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
@@ -428,8 +445,9 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                 grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                sender_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                neighbour_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
@@ -439,13 +457,15 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                 grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                sender_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                neighbour_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                 gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-            }
-        } }));
+            } }));
+
+    cudaDeviceSynchronize();
 
     return {gradX, gradY, gradRadial};
 }
@@ -460,8 +480,8 @@ This is required by the CUDA code so we can send all calculations per-node to a 
 the function loads NEIGHBOUR_NEDGES_PER_BLOCK + 1 elements into shared memory, and then loops through the buffer twice. Once for even boundaries, once for odd boundaries.
 */
 
-__global__ void calculate_neighbours_kernel(const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> sender_list,
-                                            torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> edge_indices)
+__global__ void calculate_first_occurences_kernel(const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,
+                                                  torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> first_occurences)
 {
     extern __shared__ char buffer[];
     size_t offset = 0;
@@ -469,7 +489,7 @@ __global__ void calculate_neighbours_kernel(const torch::PackedTensorAccessor64<
 
     int32_t block_start = blockIdx.x * NEIGHBOUR_NEDGES_PER_BLOCK;
 
-    int32_t nedges = sender_list.size(0);
+    int32_t nedges = receiver_list.size(0);
 
     // load all elements of senderlist needed by block into shared memory
     for (int32_t i = threadIdx.x; i < NEIGHBOUR_NEDGES_PER_BLOCK + 1; i += blockDim.x)
@@ -478,7 +498,7 @@ __global__ void calculate_neighbours_kernel(const torch::PackedTensorAccessor64<
 
         if (idx < nedges)
         {
-            smem[i] = sender_list[idx];
+            smem[i] = receiver_list[idx];
         }
     }
 
@@ -496,7 +516,7 @@ __global__ void calculate_neighbours_kernel(const torch::PackedTensorAccessor64<
 
             if (loc1 != loc2)
             {
-                edge_indices[loc2] = idx + 1;
+                first_occurences[loc2] = idx + 1;
             }
         }
     }
@@ -513,7 +533,7 @@ __global__ void calculate_neighbours_kernel(const torch::PackedTensorAccessor64<
 
             if (loc1 != loc2)
             {
-                edge_indices[loc2] = idx + 1;
+                first_occurences[loc2] = idx + 1;
             }
         }
     }
@@ -521,18 +541,18 @@ __global__ void calculate_neighbours_kernel(const torch::PackedTensorAccessor64<
     // deal with 0th element specifically, so we dont need to use torch::zeros
     if (blockIdx.x == 0 && threadIdx.x == 0)
     {
-        edge_indices[0] = 0;
+        first_occurences[0] = 0;
     }
 }
 
-torch::Tensor calculate_neighbours_gpu(torch::Tensor sender_list, int64_t natoms, int64_t nthreadx)
+torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx)
 {
-    torch::Tensor output_indices = torch::empty(natoms,
-                                                torch::TensorOptions()
-                                                    .dtype(sender_list.dtype())
-                                                    .device(sender_list.device()));
+    torch::Tensor first_occurences = torch::empty(natoms,
+                                                  torch::TensorOptions()
+                                                      .dtype(receiver_list.dtype())
+                                                      .device(receiver_list.device()));
 
-    int32_t nbx = find_integer_divisor(sender_list.size(0), NEIGHBOUR_NEDGES_PER_BLOCK);
+    int32_t nbx = find_integer_divisor(receiver_list.size(0), NEIGHBOUR_NEDGES_PER_BLOCK);
 
     dim3 block_dim(nbx);
 
@@ -542,14 +562,13 @@ torch::Tensor calculate_neighbours_gpu(torch::Tensor sender_list, int64_t natoms
 
     total_buff_size += (NEIGHBOUR_NEDGES_PER_BLOCK + 1) * sizeof(int32_t);
 
-    calculate_neighbours_kernel<<<block_dim, grid_dim, total_buff_size>>>(
-
-        sender_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-        output_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
+    calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
+        receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+        first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
 
     cudaDeviceSynchronize();
 
-    return output_indices;
+    return first_occurences;
 }
 
 class InvariantMessagePassingTPAutograd : public Function<InvariantMessagePassingTPAutograd>
@@ -560,15 +579,16 @@ public:
         torch::Tensor X,
         torch::Tensor Y,
         torch::Tensor radial,
+        torch::Tensor sender_list,
         torch::Tensor receiver_list,
-        torch::Tensor neighbours)
+        torch::Tensor first_occurences)
     {
         if (X.requires_grad() || Y.requires_grad() || radial.requires_grad())
         {
-            ctx->save_for_backward({X, Y, radial, receiver_list, neighbours});
+            ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, first_occurences});
         }
 
-        return forward_gpu(X, Y, radial, receiver_list, neighbours);
+        return forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences);
     }
 
     static variable_list backward(AutogradContext *ctx, variable_list grad_outputs)
@@ -578,10 +598,11 @@ public:
         auto X = saved_variables[0];
         auto Y = saved_variables[1];
         auto radial = saved_variables[2];
-        auto receiver_list = saved_variables[3];
-        auto neighbours = saved_variables[4];
+        auto sender_list = saved_variables[3];
+        auto receiver_list = saved_variables[4];
+        auto first_occurences = saved_variables[5];
 
-        auto result = backward_gpu(X, Y, radial, grad_outputs[0], receiver_list, neighbours);
+        auto result = backward_gpu(X, Y, radial, grad_outputs[0], sender_list, receiver_list, first_occurences);
 
         torch::Tensor undef;
 
@@ -594,15 +615,16 @@ torch::Tensor invariant_message_passing_tensor_product(
     torch::Tensor Y,
     torch::Tensor radial,
     torch::Tensor sender_list,
-    torch::Tensor neighbours)
+    torch::Tensor receiver_list,
+    torch::Tensor first_occurences)
 {
-    return InvariantMessagePassingTPAutograd::apply(X, Y, radial, sender_list, neighbours);
+    return InvariantMessagePassingTPAutograd::apply(X, Y, radial, sender_list, receiver_list, first_occurences);
 }
 
 TORCH_LIBRARY(invariant_tp, m)
 {
     m.def("forward", &invariant_message_passing_tensor_product);
-    m.def("calculate_neighbours", &calculate_neighbours_gpu);
+    m.def("calculate_first_occurences", &calculate_first_occurences_gpu);
     m.def("forward_test", &forward_gpu);
     m.def("backward_test", &backward_gpu);
 }

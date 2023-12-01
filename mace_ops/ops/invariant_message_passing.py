@@ -21,15 +21,16 @@ class InvariantMessagePassingTP(torch.nn.Module):
             
             supports nodes without neighbours.
             '''
-            return torch.ops.invariant_tp.calculate_neighbours(reciever_list, nnodes, 64)
+            return torch.ops.invariant_tp.calculate_first_occurences(reciever_list, nnodes, 64)
         
     def forward(
             self, 
             node_feats: torch.Tensor, # [nnodes, nfeats]
             edge_attrs: torch.Tensor, # [nedges, 16]
             tp_weights: torch.Tensor, # [nedges, 4, nfeats]
+            sender_list: torch.Tensor, # [nedges] -> 
             receiver_list: torch.Tensor, #[nedges] -> must be monotonically increasing
             first_occurences: torch.Tensor  #[nnodes] -> monotonically increasing by construction
             ) -> torch.Tensor:
 
-        return torch.ops.invariant_tp.forward(node_feats, edge_attrs, tp_weights, receiver_list, first_occurences) # outputs [nnodes, 16, nfeats]
+        return torch.ops.invariant_tp.forward(node_feats, edge_attrs, tp_weights, sender_list, receiver_list, first_occurences) # outputs [nnodes, 16, nfeats]

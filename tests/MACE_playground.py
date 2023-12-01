@@ -3,13 +3,31 @@ import torch
 import torch.nn.functional
 from e3nn import o3
 from matplotlib import pyplot as plt
-
+from typing import Tuple
 from mace import data, modules, tools
 from mace.tools import torch_geometric
 
 z_table = tools.AtomicNumberTable([1, 8])
 atomic_energies = np.array([-1.0, -3.0], dtype=float)
-cutoff = 3
+cutoff = 4
+
+def get_edge_vectors_and_lengths(
+    positions: torch.Tensor,  # [n_nodes, 3]
+    edge_index: torch.Tensor,  # [2, n_edges]
+    shifts: torch.Tensor,  # [n_edges, 3]
+    normalize: bool = False,
+    eps: float = 1e-9,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    sender = edge_index[0]
+    receiver = edge_index[1]
+    vectors = positions[receiver] - positions[sender] + shifts  # [n_edges, 3]
+    lengths = torch.linalg.norm(vectors, dim=-1, keepdim=True)  # [n_edges, 1]
+    if normalize:
+        vectors_normed = vectors / (lengths + eps)
+        return vectors_normed, lengths
+
+    return vectors, lengths
+
 
 model_config = dict(
         num_elements=2,  # number of chemical elements
@@ -82,7 +100,7 @@ print("shape:", edge_attrs.shape)
 print("number of edges:", edge_attrs.shape[0])
 print("number of features: (2l + 1)^2=", edge_attrs.shape[1])
 
-vectors, lengths = modules.utils.get_edge_vectors_and_lengths(
+vectors, lengths = get_edge_vectors_and_lengths(
             positions=batch["positions"],
             edge_index=batch["edge_index"],
             shifts=batch["shifts"],
@@ -123,9 +141,22 @@ node_feats = model.interactions[0].linear_up(node_feats)
 print ("node_feats after linear:", node_feats.shape)
 
 tp_weights = model.interactions[0].conv_tp_weights(edge_feats)
-print(tp_weights.shape)
+print("tp weights:", tp_weights.shape)
 
 sender, receiver = batch["edge_index"] # use the graph to get the sender and receiver indices
+
+print ("sender", sender)
+print ("receiver", receiver)
+
+#batch.edge_index contains which atoms are connected within the cutoff. It is the adjacency matrix in sparse format.
+
+#sender = edge_index[0]
+#receiver = edge_index[1]
+#vectors = positions[receiver] - positions[sender] + shifts 
+    
+#tensor([[0, 0, 1, 1, 2, 2], -> sender
+#        [1, 2, 0, 2, 0, 1]]) -. receiver
+
 mji = model.interactions[0].conv_tp(
             node_feats[sender], edge_attrs, tp_weights
         )
