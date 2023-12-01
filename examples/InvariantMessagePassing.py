@@ -278,7 +278,7 @@ def benchmark(dtype, device):
     tp_weights = tp_weights[receiver_list] - (tp_weights[sender_list] + 0.5) #mimic pair list
 
     tp = InvariantMessagePassingTP()
-    first_occurences = tp.calculate_first_occurences(receiver_list, nnodes, torch.Tensor().int())
+    
     
 
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
@@ -288,6 +288,7 @@ def benchmark(dtype, device):
     torch.cuda.synchronize()
     torch.cuda.cudart().cudaProfilerStart()
     for i in range (1000):
+        first_occurences = tp.calculate_first_occurences(receiver_list, nnodes, torch.Tensor().int())
         cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list, first_occurences)
         os = cuda_out.sum() * 2.0
         os.backward()
