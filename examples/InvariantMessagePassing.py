@@ -129,6 +129,13 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     edge_attrs_ref = edge_attrs.clone().detach().requires_grad_(True)
     tp_weights_ref = tp_weights.clone().detach().requires_grad_(True)
     
+    node_feats_e3nn = node_feats.clone().detach().requires_grad_(True)
+    node_feats_e3nn_sampled =  node_feats_e3nn[sender_list.int()]
+    edge_attrs_e3nn = edge_attrs.clone().detach().requires_grad_(True)
+    
+    tp_weights_e3nn = tp_weights.clone().detach().requires_grad_(True)
+    tp_weights_rshaped_e3nn = tp_weights_e3nn.view(edge_attrs_cuda.shape[0], 4 * node_feats.shape[-1])
+    
     #run the reference
     torch.cuda.synchronize()
     out_ref  = reference(node_feats_ref_sampled, edge_attrs_ref, tp_weights_ref, receiver_list, nnodes)
@@ -149,10 +156,48 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     osum.backward()
     torch.cuda.synchronize()
     
+    
+    print ("Checking Python output vs ref backwards.")
     check_output(out_ref, out, "output")
     check_output(edge_attrs_ref.grad, edge_attrs_cuda.grad, "edge_attr grad")
     check_output(tp_weights_ref.grad, tp_weights_cuda.grad, "tp_weights grad")
     check_output(node_feats_ref.grad, node_feats_cuda.grad, "node feats grad")
+    
+    from e3nn import o3
+    from mace.modules.irreps_tools import tp_out_irreps_with_instructions
+
+    node_feats_irreps = o3.Irreps("96x0e")
+    edge_attrs_irreps = o3.Irreps("1x0e+1x1o+1x2e+1x3o")
+    target_irreps =o3.Irreps("96x0e+96x1o+96x2e+96x3o")
+    
+    irreps_mid, instructions = tp_out_irreps_with_instructions(
+                node_feats_irreps, edge_attrs_irreps, target_irreps
+            )
+
+    conv_tp = o3.TensorProduct(
+                node_feats_irreps,
+                edge_attrs_irreps,
+                irreps_mid,
+                instructions=instructions,
+                shared_weights=False,
+                internal_weights=False,
+            )
+
+    mji = conv_tp(node_feats_e3nn_sampled, edge_attrs_e3nn, tp_weights_rshaped_e3nn)
+    
+    from mace.tools.scatter import scatter_sum
+    
+    message = scatter_sum(src=mji, index=receiver_list.long(), dim=0, dim_size=node_feats.shape[0])
+    
+    osum = message.sum() * 2.0
+    osum.backward()
+    
+    torch.cuda.synchronize()
+    
+    print ("Checking Python output vs e3nn backwards.")
+    check_output(edge_attrs_ref.grad, edge_attrs_e3nn.grad, "E3NN edge_attr grad")
+    check_output(tp_weights_ref.grad, tp_weights_e3nn.grad, "E3NN tp_weights grad")
+    check_output(node_feats_ref.grad, node_feats_e3nn.grad, "E3NN node feats grad")
 
 def benchmark(dtype, device):
 
@@ -175,6 +220,8 @@ def benchmark(dtype, device):
     tp_weights = torch.randn((nnodes, L_MAX+1, nfeatures), dtype=dtype,
                    device=device, requires_grad=True) 
     
+    
+    
     receiver_list  = torch.sort(torch.randint(nnodes, (nedges,), device=device, dtype=torch.int32))[0]
     
     r=torch.randperm(receiver_list.shape[0])
@@ -183,6 +230,8 @@ def benchmark(dtype, device):
     edge_attrs = edge_attrs[receiver_list] - (edge_attrs[sender_list] + 0.5) #mimic pair list
     tp_weights = tp_weights[receiver_list] - (tp_weights[sender_list] + 0.5) #mimic pair list
 
+    
+    
     #warmup
     torch.matmul(torch.rand(1024, 1024, device='cuda'),torch.rand(1024, 1024, device='cuda'))
     torch.cuda.synchronize()
@@ -190,32 +239,7 @@ def benchmark(dtype, device):
    
     check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_list, nnodes)
     
-    # tp = InvariantMessagePassingTP()
     
-    # first_occurences = tp.calculate_first_occurences(receiver_list, nnodes)
-    
-    # torch.cuda.synchronize()
-    
-    # torch.cuda.cudart().cudaProfilerStart()
-    
-    # #do some runs so we can gather timings via `nsys nvprof`
-    # nrepeats = 1000
-    # for i in range (nrepeats):
-    #     out = tp.forward(
-    #         node_feats,
-    #         edge_attrs,
-    #         tp_weights,
-    #         sender_list,
-    #         receiver_list, 
-    #         first_occurences)
-    #     torch.cuda.synchronize()
-        
-    #     osum = out.sum()
-    #     osum.backward()
-    #     torch.cuda.synchronize()
-        
-    # torch.cuda.cudart().cudaProfilerStop()
-
     
 if __name__ == "__main__":
     benchmark(torch.float32, "cuda")

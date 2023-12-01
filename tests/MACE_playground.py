@@ -157,9 +157,14 @@ print ("receiver", receiver)
 #tensor([[0, 0, 1, 1, 2, 2], -> sender
 #        [1, 2, 0, 2, 0, 1]]) -. receiver
 
+
 mji = model.interactions[0].conv_tp(
             node_feats[sender], edge_attrs, tp_weights
         )
+
+print (model.interactions[0].node_feats_irreps)
+print (model.interactions[0].edge_attrs_irreps)
+print (model.interactions[0].target_irreps)
 print("The first dimension is the number of edges, highlighted by the ij in the variable name", mji.shape)
 print(f"The second dimension is num_channels * num_paths dimensional, in this case: {mji.shape[-1]} = 32 * {mji.shape[-1] // 32}", )
 
