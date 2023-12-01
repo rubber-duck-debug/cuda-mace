@@ -10,7 +10,8 @@ class InvariantMessagePassingTP(torch.nn.Module):
     def calculate_first_occurences(
             self, 
             reciever_list: torch.Tensor,
-            nnodes: int
+            nnodes: int,
+            sorted_idx : torch.Tensor = torch.Tensor()
             ) -> torch.Tensor:
         
             '''
@@ -21,7 +22,7 @@ class InvariantMessagePassingTP(torch.nn.Module):
             
             supports nodes without neighbours.
             '''
-            return torch.ops.invariant_tp.calculate_first_occurences(reciever_list, nnodes, 64)
+            return torch.ops.invariant_tp.calculate_first_occurences(reciever_list, nnodes, 64, sorted_idx)
         
     def forward(
             self, 
