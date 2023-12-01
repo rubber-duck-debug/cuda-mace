@@ -279,8 +279,6 @@ def benchmark(dtype, device):
 
     tp = InvariantMessagePassingTP()
     
-    
-
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
     edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
     tp_weights_cuda = tp_weights.clone().detach().requires_grad_(True)
@@ -295,8 +293,6 @@ def benchmark(dtype, device):
         
     torch.cuda.synchronize()
     torch.cuda.cudart().cudaProfilerStop()
-    
-    
     
 if __name__ == "__main__":
     accuracy(torch.float32, "cuda")
