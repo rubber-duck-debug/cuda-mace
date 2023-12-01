@@ -113,7 +113,6 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     
     print (sender_list[sort_sender_idx], receiver_list[sort_sender_idx])
     
-    
     tp = InvariantMessagePassingTP()
     first_occurences = tp.calculate_first_occurences(receiver_list, nnodes, torch.Tensor().int())
     
