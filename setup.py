@@ -65,9 +65,9 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
 
-    equivariant_outer_product = CUDAExtension(
-        '.cuda.equivariant_outer_product', [
-            'mace_ops/cuda/equivariant_outer_product.cu'
+    equivariant_message_passing = CUDAExtension(
+        '.cuda.equivariant_message_passing', [
+            'mace_ops/cuda/equivariant_message_passing.cu'
         ],
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
@@ -110,7 +110,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
 
     #ext_modules.append(tensor_contraction)
     ext_modules.append(invariant_message_passing)
-    #ext_modules.append(equivariant_outer_product)
+    ext_modules.append(equivariant_message_passing)
     ext_modules.append(symmetric_contraction)
     #ext_modules.append(linear)
     ext_modules.append(linear_wmma)

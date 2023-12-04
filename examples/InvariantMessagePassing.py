@@ -2,8 +2,6 @@ import torch
 import math
 from time import time
 from mace_ops import cuda
-from mace_ops.cuda.instruction import Instruction, _normalize_instruction_path_weights
-from mace_ops.cuda.irreps import Irreps
 from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
 from torch.autograd import Function
 

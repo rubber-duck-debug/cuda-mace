@@ -338,164 +338,159 @@ if __name__ == "__main__":
 
     nedges = 30000
     nnodes = 1000
-    nfeatures = 64
+    nfeatures = 1
 
-    irreps1, irreps2, target_irreps = (
-        o3.Irreps(f"0e + 1o + 2e + 3o"),
-        o3.Irreps("0e + 1o + 2e + 3o"),
-        o3.Irreps(f"0e + 1o + 2e + 3o"),
-    )
 
     print("nnodes: ", nnodes)
     print("nfeatures: ", nfeatures)
-    print("irreps1: ", irreps1, irreps1.dim)
-    print("irreps2: ", irreps2, irreps2.dim)
-    print("target_irreps: ", target_irreps, target_irreps.dim)
-    print("dtype: ", dtype)
 
-    indices = torch.sort(torch.randint(nnodes, (nedges,), device='cuda'))[0]
-
-    indices_cuda = indices.cuda().int()
-
-    neighbour_cuda = torch.ops.mace_ops_equivariant_tp.calculate_neighbours(
-        indices_cuda, nnodes, 64)
-
-    X = torch.randn(nedges, (irreps1.lmax + 1) ** 2, nfeatures,
-                    requires_grad=True, device='cuda', dtype=dtype)
-    Y = torch.randn(nedges, (irreps2.lmax + 1) ** 2, requires_grad=True,
-                    device='cuda', dtype=dtype)
-
-    tp_cuda = TensorProduct(
-        irreps1, irreps2, target_irreps, device="cuda", dtype=dtype)
-
-    # out_ref = tp_cuda.forward(X, Y.unsqueeze(-1))
-
-    # output = torch.zeros(
-    #    nnodes, out_ref.shape[1], out_ref.shape[2], device="cuda", dtype=dtype)
-
-    # output.index_add_(0, indices_cuda, out_ref)
 
     node_feats_irreps, edge_attrs_irreps, target_irreps = (
-        #o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
-        #o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e"),
-        o3.Irreps(f"{nfeatures}x0e + {nfeatures}x1o"),
+        o3.Irreps(f"1x0e + 1x1o + 1x2e + 1x3o"),
         o3.Irreps("1x0e + 1x1o + 1x2e + 1x3o"),
         o3.Irreps(
-            f"{nfeatures}x0e + {nfeatures}x1o + {nfeatures}x2e + {nfeatures}x3o"),
+            f"1x0e + 1x1o + 1x2e + 1x3o"),
     )
 
-    irreps_mid, instructions = tp_out_irreps_with_instructions(
+    instructions = []
+    irreps_out = []
+    
+    for i, (mul, ir_in) in enumerate(node_feats_irreps):
+        for j, (_, ir_edge) in enumerate(edge_attrs_irreps):
+            for ir_out in ir_in * ir_edge:  # | l1 - l2 | <= l <= l1 + l2
+                if ir_out in target_irreps:
+                #if ir_out in target_irreps and ir_in.l + ir_edge.l <= 3:
+
+                    l1 = ir_in.l
+                    l2 = ir_edge.l
+                    l3 = ir_out.l
+
+                    instructions.append(
+                        Instruction(
+                            i_in1=i,
+                            i_in2=j,
+                            i_out=len(instructions),
+                            connection_mode="uvu",
+                            has_weight=False,
+                            path_weight=1.0,
+                            weight_std=None,
+                            first_input_multiplicity=mul,
+                            second_input_multiplicity=1,
+                            output_multiplicity=mul,
+                        )
+                    )
+                    irreps_out.append((mul, ir_out))
+
+    irreps_out = Irreps(irreps_out)
+
+
+    instructions = _normalize_instruction_path_weights(
+        instructions,
         node_feats_irreps,
         edge_attrs_irreps,
-        target_irreps,
-    )
+        irreps_out,
+        [1.0 for _ in node_feats_irreps],
+        [1.0 for _ in edge_attrs_irreps],
+        [1.0 for _ in irreps_out],
+        irrep_normalization="component",
+        path_normalization_exponent=1.0,  # path
+        gradient_normalization_exponent=1.0,  # path
+    )   
+    nops = 0
+    mu1_list = []
+    mu2_list = []
+    mu3_list = []
+    cg_sparse_list = []
+    for i, ins in enumerate(instructions):
 
-    tp_torch = o3.TensorProduct(node_feats_irreps, edge_attrs_irreps, irreps_mid,
-                                instructions, shared_weights=False, internal_weights=False,).to("cuda")
+        l1 = node_feats_irreps[ins.i_in1].ir.l
+        l2 = edge_attrs_irreps[ins.i_in2].ir.l
+        l3 = irreps_out[ins.i_out].ir.l
 
-    mu1 = tp_cuda.mu1[tp_cuda.mu_3_sort]
-    mu2 = tp_cuda.mu2[tp_cuda.mu_3_sort]
-    mu3 = tp_cuda.mu3[tp_cuda.mu_3_sort]
+        offset1 = node_feats_irreps[: ins.i_in1].dim
+        offset2 = edge_attrs_irreps[: ins.i_in2].dim
+        offset3 = irreps_out[: ins.i_out].dim
 
-    cg_coeffs = tp_cuda.cg_coeffs[tp_cuda.mu_3_sort]
+        cg = o3.wigner_3j(l1, l2, l3).to('cuda').type(dtype)
 
-    weight_indices = tp_cuda.weight_index_list[tp_cuda.mu_3_sort]
+        # normalisation and weighting:
+        cg = cg * ins.path_weight
 
-    print("weight_indices:", weight_indices)
+        mu1, mu2, mu3 = cg.nonzero(as_tuple=True)
 
-    last_val = 0
-    last_idx = 0
+        cg_sparse = cg[(mu1, mu2, mu3)]
 
-    indices_start = torch.tensor([0, 22, 44, 65]).int().cuda()
-    nwork = torch.tensor([22, 22, 21, 21]).int().cuda()
+        mu1 = mu1 + offset1
+        mu2 = mu2 + offset2
+        mu3 = mu3 + (l3 **2)
 
-    nelements = []
-    for i in range(len(mu3)):
-        if (mu3[i] != last_val):
-            nelements.append(i - last_idx)
-            last_idx = i
-            last_val = mu3[i]
-
-    nelements.append(len(mu3)-last_idx)
-
-    print(nelements, np.sum(nelements))
-
-    nthready = 4
-
-    partitions = find_partitions(nelements, nthready)
-
-    print("partitions", partitions)
-
-    indices = []
-    nwork = []
-    idx_start = 0
-    for i, partition in enumerate(partitions):
-
-        indices.append(idx_start)
-
-        print(idx_start, mu3[idx_start-1].item(),
-              mu3[idx_start].item(), mu3[idx_start+1].item())
-
-        sum_partition = np.sum(partition)
-
-        nwork.append(sum_partition)
-        idx_start += np.sum(partition)
-
-    indices_start = torch.tensor(indices).int().cuda()
-    nwork = torch.tensor(nwork).int().cuda()
-
-    print (len(mu1))
-
-    print (mu1)
-    print (mu2)
-    print (mu3)
+        
+        mu1_list.append(mu1)
+        mu2_list.append(mu2)
+        mu3_list.append(mu3)
+        cg_sparse_list.append(cg_sparse)
+        
+        print(ins.i_out, cg.shape, cg_sparse.shape, l1*2 + 1, l2*2 + 1, l3 * 2 + 1)
+        
+        nops += cg_sparse.shape[0]
+        
+    print (nops)
     
-    start = time()
-    for i in range(1000):
-        out = torch.ops.mace_ops_equivariant_tp.equivariant_outer_product_forward(
-            X,
-            Y,
-            indices_cuda,
-            neighbour_cuda,
-            mu1,
-            mu2,
-            mu3,
-            cg_coeffs,
-            indices_start,
-            nwork,
-            tp_cuda.nmax3,
-            nnodes,
-            tp_cuda.ordering,
-            32, nthready, 1)
-    #torch.cuda.synchronize()
-    end = time()
-    print("unweighted CUDA TP %.3f ms" % (end - start))
+    mu1  = torch.cat(mu1_list).type(torch.int32)
+    mu2 =  torch.cat(mu2_list).type(torch.int32)
+    mu3 =  torch.cat(mu3_list).type(torch.int32)
+    mus = torch.zeros_like(mu1, dtype=torch.int32)
+    
+    for i in range (mu1.shape[0]):
+        compressed_output = ((mu1[i] << 8 | mu2[i]) << 16) | mu3[i] << 8
+        mus[i] = compressed_output
+        
+        m3 = (compressed_output>> 8) & 0xFF;
+        m2 = (compressed_output >> 16) & 0xFF;
+        m1 = (compressed_output >> 24) & 0xFF;
+        
+        print (mu1[i].item(), mu2[i].item(), mu3[i].item(), m1.item(), m2.item(), m3.item())
+        
+    cg_sparse_list = torch.cat(cg_sparse_list).cuda().float()
+    
+    nedges = 30000 
+    nnodes = 5000 
+    nfeatures = 16
+    L_MAX = 3
+    nl = (L_MAX +1) ** 2
+    device = "cuda"
 
+    node_feats = torch.randn((nnodes, nl, nfeatures), dtype=dtype,
+                   device=device, requires_grad=True)
+    
+    edge_attrs = torch.randn((nnodes, nl), dtype=dtype,
+                   device=device, requires_grad=True)
+    
+    receiver_list  = torch.sort(torch.randint(nnodes, (nedges,), device=device, dtype=torch.int32))[0]
+    
+    r=torch.randperm(receiver_list.shape[0])
+    sender_list = receiver_list[r] #mimic sender_list by permutation
+    
+    edge_attrs = edge_attrs[receiver_list] - (edge_attrs[sender_list] + 0.5) #mimic pair list
+    node_feats = node_feats[receiver_list] - (node_feats[sender_list] + 0.5) #mimic pair list
+    
+    
 
-    Y = torch.rand(X.shape[0], X.shape[1], X.shape[2], device='cuda', dtype=torch.float32)
-
-    print (X.shape)
-    print (Y.shape)
-
-    start = time()
-    for i in range(1000):
-                out = torch.ops.mace_ops_equivariant_tp.test_equivariant_outer_product_forward(
-            X,
-            Y,
-            indices_cuda,
-            neighbour_cuda,
-            mu1,
-            mu2,
-            mu3,
-            cg_coeffs,
-            indices_start,
-            nwork,
-            tp_cuda.nmax3,
-            nnodes,
-            tp_cuda.ordering,
-            32, nthready, 1)
-                
+    
+    #torch.ops.equivariant_tp.copyToConstantMemory(mus.cpu().int(), cg_sparse_list.cpu().float(), False)
+    
     torch.cuda.synchronize()
-    end = time()
-    print("unweighted CUDA TP %.3f ms" % (end - start))
+    torch.cuda.cudart().cudaProfilerStart()
+    for i in range (1000):
+        first_occurences = torch.ops.invariant_tp.calculate_first_occurences(receiver_list, nnodes, 64, torch.Tensor().int())
+        out = torch.ops.equivariant_tp.forward(node_feats, edge_attrs, mus, cg_sparse_list, sender_list, receiver_list, first_occurences,nnodes, 3,3,3)
+        
+    torch.cuda.synchronize()
+    torch.cuda.cudart().cudaProfilerStop()
+    
+    print (out)
+    
+    
 
+
+    

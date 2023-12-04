@@ -5,7 +5,7 @@ mace_ops.egg-info/SOURCES.txt
 mace_ops.egg-info/dependency_links.txt
 mace_ops.egg-info/top_level.txt
 mace_ops/cuda/__init__.py
-mace_ops/cuda/equivariant_outer_product.cu
+mace_ops/cuda/equivariant_message_passing.cu
 mace_ops/cuda/generators.py
 mace_ops/cuda/instruction.py
 mace_ops/cuda/invariant_message_passing.cu
