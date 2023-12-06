@@ -200,15 +200,17 @@ __global__ void linear_wmma_kernel(const float *__restrict__ X, const float *__r
     float *Xs = shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &space);
     float *buffer_out = shared_array<float>(M * blockDim.y * WMMA_N, sptr, &space);
 
-    for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < K_BATCH * (K_BATCH + 1); tid += blockDim.x * blockDim.y)
-    {
-        Xs[tid] = 0.0;
-    }
+    /*
+        for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < K_BATCH * (K_BATCH + 1); tid += blockDim.x * blockDim.y)
+        {
+            Xs[tid] = 0.0;
+        }
 
-    for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < M * blockDim.y * WMMA_N; tid += blockDim.x * blockDim.y)
-    {
-        buffer_out[tid] = 0.0;
-    }
+        for (int tid = threadIdx.y * blockDim.x + threadIdx.x; tid < M * blockDim.y * WMMA_N; tid += blockDim.x * blockDim.y)
+        {
+            buffer_out[tid] = 0.0;
+        }
+    */
 
     // X += node * M * K; // move pointer to start of X
 
@@ -233,8 +235,6 @@ __global__ void linear_wmma_kernel(const float *__restrict__ X, const float *__r
     wmma::fill_fragment(ab_frag, 0.0f);
 
     // const uint aRow = 0;
-
-    __syncthreads();
 
     const uint bCol = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
 
@@ -345,16 +345,29 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W)
     shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
     shared_array<float>(M * blockDim.y * WMMA_N, sptr, &shared_size);
 
+    vector<cudaStream_t> streams;
+
     for (int l = 0; l < 4; l++)
     {
         dim3 griddim;
         griddim.x = find_integer_divisor(NNODES * (2 * l + 1), 16);
         griddim.y = find_integer_divisor(N, blockDim.y * WMMA_N);
 
-        linear_wmma_kernel<<<griddim, blockDim, shared_size>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K, l);
+        cudaStream_t stream;
+
+        cudaStreamCreate(&stream);
+
+        linear_wmma_kernel<<<griddim, blockDim, shared_size, stream>>>(X.data_ptr<float>(), W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K, l);
+
+        streams.push_back(stream);
     }
 
     cudaDeviceSynchronize();
+
+    for (int l = 0; l < streams.size(); l++)
+    {
+        cudaStreamDestroy(streams[l]);
+    }
 
     return output;
 }
