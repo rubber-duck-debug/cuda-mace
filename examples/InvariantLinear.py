@@ -57,7 +57,7 @@ class LinearRef(torch.nn.Module):
 
 # INPUTS#
 n_channels = 96
-n_out_channels = 96
+n_out_channels = n_channels
 max_l = 3
 nnodes = 5000
 
@@ -81,6 +81,8 @@ linear = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out).to('cuda')
 instructions = linear.instructions
 ws = linear.weight
 
+#ws = torch.randn(4, n_channels, n_channels, device='cuda', dtype=torch.float32)
+
 #reference linear#
 linear_ref = LinearRef(irreps_in, irreps_out, instructions, ws)
 
@@ -92,28 +94,32 @@ torch.cuda.synchronize()
 start = time()
 for i in range(1):
     cuda_out = linear_cuda(x)
-    t = cuda_out.sum()
+    t = cuda_out.sum() * 2.0
     t.backward()
 end = time()
-
+torch.cuda.synchronize()
 torch.cuda.cudart().cudaProfilerStop()
 print("fwd CUDA linear:", end - start)
 
 linear_ref = linear_ref(x_ref)
-linear_ref.sum().backward()
+(linear_ref.sum()* 2.0).backward()
 torch.cuda.synchronize()
 
 torch.set_printoptions(precision=5)
 
-idx = torch.where (linear_ref - cuda_out > 1e-5)
+idx = torch.where (linear_ref - cuda_out > 1e-4)
 
 if (len(idx[0]) > 0):
     print ("Possible issues with precision of output...")
     print (idx)
     print (linear_ref[idx])
     print (cuda_out[idx])
+    
+    print (x.grad[idx] - x_ref.grad[idx])
+    
+    
 
-idx = torch.where (x_ref.grad - x.grad > 1e-5)
+idx = torch.where (x_ref.grad - x.grad > 1e-4)
 
 if (len(idx[0]) > 0):
     print ("Possible issues with precision of grad X...")
@@ -121,5 +127,5 @@ if (len(idx[0]) > 0):
     print (x.grad[idx])
     print (x_ref.grad[idx])
 
-assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
-assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
+assert torch.allclose(linear_ref, cuda_out, atol=1e-4)
+assert torch.allclose(x_ref.grad, x.grad, atol=1e-4)

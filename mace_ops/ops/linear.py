@@ -43,14 +43,14 @@ class Linear(torch.nn.Module):
             self.l_start.append(start)
             self.l_end.append(end)
             self.path_weights.append(ins.path_weight)
-            self.weights.append(w)
+            self.weights.append(w.clone().detach())
 
             flat_weight_index += path_nweight
 
         self.l_start = torch.tensor(self.l_start).int().cuda()
         self.l_end = torch.tensor(self.l_end).int().cuda()
-        self.weights = torch.stack(self.weights).contiguous().float().cuda()
-        self.weights_transposed = self.weights.clone().transpose(-1, -2).cuda().contiguous()
+        self.weights = torch.stack(self.weights).contiguous().cuda().float()
+        self.weights_transposed = self.weights.clone().detach().transpose(-1, -2).contiguous().cuda()
         self.path_weights = torch.tensor(self.path_weights).float()
 
     def forward(self, x: torch.Tensor):

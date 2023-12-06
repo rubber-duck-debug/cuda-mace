@@ -119,7 +119,7 @@ torch::Tensor forward_gpu(
 }
 
 template <typename scalar_t>
-__global__ void backward_kernel(
+__global__ void linear_backward_kernel(
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> X,
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> weights,
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_in,
@@ -159,7 +159,7 @@ __global__ void backward_kernel(
     }
 }
 
-torch::Tensor backward_gpu(
+torch::Tensor linear_backward_gpu(
     torch::Tensor X,
     torch::Tensor weights,
     torch::Tensor grad_in,
@@ -181,24 +181,60 @@ torch::Tensor backward_gpu(
     dim3 grid_dim(nthreadx, nthready, 1);
 
     AT_DISPATCH_FLOATING_TYPES(
-        X.type(), "backward_gpu", ([&]
-                                   {
+        X.type(), "linear_backward_gpu", ([&]
+                                          {
                                        size_t space = 0;
                                        void *sptr = nullptr;
 
                                        shared_array<scalar_t>(X.size(1) * grid_dim.x, sptr, &space);
 
-                                       /*backward_kernel<scalar_t><<<block_dim, grid_dim, space>>>(
+                                       linear_backward_kernel<scalar_t><<<block_dim, grid_dim, space>>>(
                                            X.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                                            weights.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                                            grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                                            weight_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                                            output_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                           gradX.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());  */
+                                           gradX.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>()); }));
 
-                                       backward_kernel<scalar_t><<<block_dim, grid_dim, space>>>(
+    cudaDeviceSynchronize();
+
+    return gradX;
+}
+
+torch::Tensor elemental_linear_backward_gpu(
+    torch::Tensor X,
+    torch::Tensor atom_types,
+    torch::Tensor weights,
+    torch::Tensor grad_in,
+    torch::Tensor weight_indices,
+    torch::Tensor output_indices,
+    int64_t nthreadx,
+    int64_t nthready,
+    int64_t nthreadz)
+{
+
+    torch::Tensor gradX = torch::empty_like(X, torch::TensorOptions()
+                                                   .dtype(X.dtype())
+                                                   .device(X.device()));
+
+    int32_t nby = find_integer_divisor(X.size(2), nthreadx);
+
+    dim3 block_dim(X.size(0), nby);
+
+    dim3 grid_dim(nthreadx, nthready, 1);
+
+    AT_DISPATCH_FLOATING_TYPES(
+        X.type(), "elemental_linear_backward_gpu", ([&]
+                                                    {
+                                       size_t space = 0;
+                                       void *sptr = nullptr;
+
+                                       shared_array<scalar_t>(X.size(1) * grid_dim.x, sptr, &space);
+
+                                       elemental_linear_backward_kernel<scalar_t><<<block_dim, grid_dim, space>>>(
                                            X.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                           weights.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                                           atom_types.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                                           weights.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                                            grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                                            weight_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                                            output_indices.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
@@ -233,7 +269,7 @@ public:
             ctx->saved_data["nthreadz"] = nthreadz;
         }
 
-        torch::Tensor result = forward_gpu(X, weights, weight_indices, output_indices, noutputs, nthreadx, nthready, nthreadz);
+        torch::Tensor result = linear_forward_gpu(X, weights, weight_indices, output_indices, noutputs, nthreadx, nthready, nthreadz);
 
         return result;
     }
@@ -251,7 +287,59 @@ public:
         int64_t nthready = ctx->saved_data["nthready"].toInt();
         int64_t nthreadz = ctx->saved_data["nthreadz"].toInt();
 
-        torch::Tensor result = backward_gpu(X, weights, grad_outputs[0], weight_indices, output_indices, nthreadx, nthready, nthreadz);
+        torch::Tensor result = linear_backward_gpu(X, weights, grad_outputs[0], weight_indices, output_indices, nthreadx, nthready, nthreadz);
+
+        torch::Tensor undef;
+
+        return {result, undef, undef, undef, undef, undef, undef, undef};
+    }
+};
+
+class ElementalLinearAutograd : public Function<ElementalLinearAutograd>
+{
+public:
+    static torch::Tensor forward(
+        AutogradContext *ctx,
+        torch::Tensor X,
+        torch::Tensor atom_types,
+        torch::Tensor weights,
+        torch::Tensor weight_indices,
+        torch::Tensor output_indices,
+        int64_t noutputs,
+        int64_t nthreadx,
+        int64_t nthready,
+        int64_t nthreadz)
+    {
+
+        if (X.requires_grad())
+        {
+            ctx->save_for_backward({X, atom_types, weights, weight_indices, output_indices});
+
+            ctx->saved_data["nthreadx"] = nthreadx;
+            ctx->saved_data["nthready"] = nthready;
+            ctx->saved_data["nthreadz"] = nthreadz;
+        }
+
+        torch::Tensor result = elemental_linear_forward_gpu(X, weights, weight_indices, output_indices, noutputs, nthreadx, nthready, nthreadz);
+
+        return result;
+    }
+
+    static variable_list backward(AutogradContext *ctx, variable_list grad_outputs)
+    {
+        auto saved_variables = ctx->get_saved_variables();
+
+        auto X = saved_variables[0];
+        auto atom_types = saved_variables[1];
+        auto weights = saved_variables[2];
+        auto weight_indices = saved_variables[3];
+        auto output_indices = saved_variables[4];
+
+        int64_t nthreadx = ctx->saved_data["nthreadx"].toInt();
+        int64_t nthready = ctx->saved_data["nthready"].toInt();
+        int64_t nthreadz = ctx->saved_data["nthreadz"].toInt();
+
+        torch::Tensor result = elemental_linear_backward_gpu(X, atom_types, weights, grad_outputs[0], weight_indices, output_indices, nthreadx, nthready, nthreadz);
 
         torch::Tensor undef;
 
@@ -272,8 +360,21 @@ torch::Tensor linear(
     return LinearAutograd::apply(X, weights, weight_indices, output_indices, noutputs, nthreadx, nthready, nthreadz);
 }
 
+torch::Tensor elemental_linear(
+    torch::Tensor X,
+    torch::Tensor atom_types,
+    torch::Tensor weights,
+    torch::Tensor weight_indices,
+    torch::Tensor output_indices,
+    int64_t noutputs,
+    int64_t nthreadx,
+    int64_t nthready,
+    int64_t nthreadz)
+{
+    return ElementalLinearAutograd::apply(X, atom_types, weights, weight_indices, output_indices, noutputs, nthreadx, nthready, nthreadz);
+}
 TORCH_LIBRARY(linear, m)
 {
-    m.def("forward", &linear);
-    m.def("forward_only", &forward_gpu);
+    m.def("linear", &linear);
+    m.def("elemental_linear", &elemental_linear);
 }
