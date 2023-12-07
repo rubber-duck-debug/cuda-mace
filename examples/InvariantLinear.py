@@ -55,9 +55,54 @@ class LinearRef(torch.nn.Module):
 
         return output
 
+class reshape_irreps(torch.nn.Module):
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = o3.Irreps(irreps)
+        self.dims = []
+        self.muls = []
+        for mul, ir in self.irreps:
+            d = ir.dim
+            self.dims.append(d)
+            self.muls.append(mul)
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        ix = 0
+        out = []
+        batch, _ = tensor.shape
+        for mul, d in zip(self.muls, self.dims):
+            field = tensor[:, ix : ix + mul * d]  # [batch, sample, mul * repr]
+            ix += mul * d
+            field = field.reshape(batch, mul, d)
+            out.append(field)
+        return torch.cat(out, dim=-1)
+
+class unreshape_irreps(torch.nn.Module):
+    # This is the inverse of reshape_irreps
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = o3.Irreps(irreps)
+        self.dims = []
+        self.muls = []
+        for mul, ir in self.irreps:
+            d = ir.dim
+            self.dims.append(d)
+            self.muls.append(mul)
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        ix = 0
+        out = []
+        batch, _, _ = tensor.shape
+        for mul, d in zip(self.muls, self.dims):
+            field = tensor[:, :, ix : ix + d]
+            ix += d
+            field = field.reshape(batch, -1)
+            print("field shape", field.shape)
+            out.append(field)
+        return torch.cat(out, dim=-1)
+
 # INPUTS#
 n_channels = 96
-n_out_channels = n_channels
+n_out_channels = 96
 max_l = 3
 nnodes = 5000
 
@@ -74,14 +119,18 @@ irreps_in = o3.Irreps(
 irreps_out = o3.Irreps(
     f"{n_out_channels}x0e + {n_out_channels}x1o + {n_out_channels}x2e + {n_out_channels}x3o")
 
-
+unrespahe_ = unreshape_irreps(irreps_in)
+reshape_ = reshape_irreps(irreps_out)
 #need o3 linear to pull weights asnd instructions
 linear = o3.Linear(irreps_in=irreps_in, irreps_out=irreps_out).to('cuda')
+print(linear)
+print("irreps_in", irreps_in)
+print("x shape", x.shape)
+linear_e3nn_out = reshape_(linear(unrespahe_(x.permute(0,2,1))))
+print("linear_e3nn out", linear_e3nn_out.shape)
 
 instructions = linear.instructions
 ws = linear.weight
-
-#ws = torch.randn(4, n_channels, n_channels, device='cuda', dtype=torch.float32)
 
 #reference linear#
 linear_ref = LinearRef(irreps_in, irreps_out, instructions, ws)
@@ -94,32 +143,30 @@ torch.cuda.synchronize()
 start = time()
 for i in range(1):
     cuda_out = linear_cuda(x)
-    t = cuda_out.sum() * 2.0
+    t = cuda_out.sum() 
     t.backward()
 end = time()
-torch.cuda.synchronize()
+
 torch.cuda.cudart().cudaProfilerStop()
 print("fwd CUDA linear:", end - start)
 
 linear_ref = linear_ref(x_ref)
-(linear_ref.sum()* 2.0).backward()
+linear_ref.sum().backward()
 torch.cuda.synchronize()
 
 torch.set_printoptions(precision=5)
 
-idx = torch.where (linear_ref - cuda_out > 1e-4)
-
+error_e3nn_ref = (linear_e3nn_out.permute(0,2,1) - linear_ref).abs().mean()
+print("error e3nn ref", error_e3nn_ref)
+idx = torch.where (linear_ref - cuda_out > 1e-5)
+print("error e3nn cuda", (linear_e3nn_out.permute(0,2,1) - cuda_out).abs().mean())
 if (len(idx[0]) > 0):
     print ("Possible issues with precision of output...")
     print (idx)
     print (linear_ref[idx])
     print (cuda_out[idx])
-    
-    print (x.grad[idx] - x_ref.grad[idx])
-    
-    
 
-idx = torch.where (x_ref.grad - x.grad > 1e-4)
+idx = torch.where (x_ref.grad - x.grad > 1e-5)
 
 if (len(idx[0]) > 0):
     print ("Possible issues with precision of grad X...")
@@ -127,5 +174,5 @@ if (len(idx[0]) > 0):
     print (x.grad[idx])
     print (x_ref.grad[idx])
 
-assert torch.allclose(linear_ref, cuda_out, atol=1e-4)
-assert torch.allclose(x_ref.grad, x.grad, atol=1e-4)
+assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
+assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
