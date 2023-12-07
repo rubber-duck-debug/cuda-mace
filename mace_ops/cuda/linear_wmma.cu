@@ -377,8 +377,9 @@ __global__ void elemental_linear_wmma_kernel(
     const float *__restrict__ X,
     const float *__restrict__ W,
     const int64_t *__restrict__ node_idx,
-    const int64_t element_id,
     const int64_t nselected,
+    const int64_t element_id,
+    const int64_t nelements,
     float *__restrict__ OUT,
     const int NNODES,
     const uint M,
@@ -397,7 +398,8 @@ __global__ void elemental_linear_wmma_kernel(
     float *Xs = shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &space);
     float *buffer_out = shared_array<float>(M * blockDim.y * WMMA_N, sptr, &space);
 
-    const float path_weight = 1.0f / sqrt((float)K);
+    // sqrt((2L+1))/sqrt(n_channels * n_elements)
+    const float path_weight = sqrt((float)(2 * L + 1)) / sqrt((float)K * (float)nelements);
 
     const uint lstart = L * L;
     const uint nl = 2 * L + 1;
@@ -553,8 +555,9 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Ten
                     X.data_ptr<float>(),
                     W.data_ptr<float>(),
                     node_idx.data_ptr<int64_t>(),
-                    element_id,
                     nselected,
+                    element_id,
+                    elemental_embedding.size(-1),
                     output.data_ptr<float>(),
                     NNODES, M, N, K, l);
 
