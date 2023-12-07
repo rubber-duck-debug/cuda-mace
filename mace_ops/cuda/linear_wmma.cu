@@ -12,6 +12,7 @@
 using namespace nvcuda;
 using namespace std;
 using namespace torch::autograd;
+using namespace torch::indexing;
 
 #define WARP_SIZE 32
 
@@ -372,7 +373,18 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W)
     return output;
 }
 
-__global__ void elemental_linear_wmma_kernel(float *__restrict__ X, int64_t *__restrict__ atom_indices, const int64_t nelements, float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const uint M, const uint N, const uint K, const int L)
+__global__ void elemental_linear_wmma_kernel(
+    const float *__restrict__ X,
+    const float *__restrict__ W,
+    const int64_t *__restrict__ node_idx,
+    const int64_t element_id,
+    const int64_t nselected,
+    float *__restrict__ OUT,
+    const int NNODES,
+    const uint M,
+    const uint N,
+    const uint K,
+    const uint L)
 {
 
     const uint cCol = blockIdx.y;
@@ -385,21 +397,17 @@ __global__ void elemental_linear_wmma_kernel(float *__restrict__ X, int64_t *__r
     float *Xs = shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &space);
     float *buffer_out = shared_array<float>(M * blockDim.y * WMMA_N, sptr, &space);
 
-    // X += node * M * K; // move pointer to start of X
-
-    // OUT += node * M * N + cCol * BN; // move pointer to start of OUT
-
     const float path_weight = 1.0f / sqrt((float)K);
 
     const uint lstart = L * L;
     const uint nl = 2 * L + 1;
 
-    W += L * nelements * K * N; // move W to the correct weights sub-matrix
+    W += element_id * 4 * K * N + L * K * N; // move W to the correct weights sub-matrix
 
     const uint threadCol = threadIdx.x; // [0-32]
     const uint threadRow = threadIdx.y; //  128 / 32 = [0-4]
     const uint rowStrideB = blockDim.y;
-
+    const uint nmiter = find_integer_divisor(M, rowStrideB);
     // wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> a_frag, delta_a_frag;
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::col_major> a_frag, delta_a_frag;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major> b_frag, delta_b_frag;
@@ -408,29 +416,42 @@ __global__ void elemental_linear_wmma_kernel(float *__restrict__ X, int64_t *__r
     wmma::fill_fragment(ab_frag, 0.0f);
 
     // const uint aRow = 0;
+
     const uint bCol = (blockIdx.y * blockDim.y + threadIdx.y) * WMMA_N;
 
     for (uint bkIdx = 0; bkIdx < K; bkIdx += WMMA_K) // 0, 16, 32
     {
+        __syncthreads();
+
         if (bkIdx % 32 == 0)
         {
-            for (int m = 0; m < find_integer_divisor(M, rowStrideB); m++)
+            for (int m = 0; m < nmiter; m++)
             {
                 // ((m * rowStrideB + threadRow)/nl) * 16 -> start index for each node
                 // ((m * rowStrideB + threadRow) % nl -> index into the current L channel
-
                 if (m * rowStrideB + threadRow < 16)
                 {
-                    uint gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
-                    uint lidx = lstart + (gid / nl) * 16 + gid % nl;
 
-                    if (lidx / 16 > NNODES) // bounds checking
+                    // 6 * 5 / 16 = 2
+                    // 32 / 5 = 6, however 6 nodes, so out-by-one...
+
+                    // griddim.x = find_integer_divisor(nselected * (2 * l + 1), 16);
+
+                    int gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
+
+                    // int lidx = lstart + (gid / nl) * 16 + gid % nl;
+
+                    if (gid / nl < nselected)
                     {
-                        Xs[threadCol * 33 + m * rowStrideB + threadRow] = 0.0f;
-                    }
-                    else
-                    {
-                        Xs[threadCol * 33 + m * rowStrideB + threadRow] = X[lidx * K + bkIdx + threadCol];
+                        int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
+                        if (lidx < NNODES * 16) // bounds checking
+                        {
+                            Xs[threadCol * 33 + m * rowStrideB + threadRow] = X[lidx * K + bkIdx + threadCol];
+                        }
+                        else
+                        {
+                            Xs[threadCol * 33 + m * rowStrideB + threadRow] = 0.0f;
+                        }
                     }
                 }
             }
@@ -441,7 +462,7 @@ __global__ void elemental_linear_wmma_kernel(float *__restrict__ X, int64_t *__r
         if (bCol < N)
         {
             wmma::load_matrix_sync(a_frag, Xs + (bkIdx % 32) * 33, 33);
-            wmma::load_matrix_sync(b_frag, W + bCol, N); // W has shape [nelements, nchannels, nchannels]
+            wmma::load_matrix_sync(b_frag, W + bCol, N);
 
             for (int l = 0; l < a_frag.num_elements; l++)
             {
@@ -475,31 +496,33 @@ __global__ void elemental_linear_wmma_kernel(float *__restrict__ X, int64_t *__r
 
     for (uint n_block = 0; n_block < min(N - cCol * (blockDim.y * WMMA_N), blockDim.y * WMMA_N) / blockDim.x; n_block++)
     {
-        for (int m = 0; m < find_integer_divisor(M, rowStrideB); m++)
+        for (int m = 0; m < nmiter; m++)
         {
             // ((m * rowStrideB + threadRow)/nl) * 16 -> start index for each node for lm channel
             // ((m * rowStrideB + threadRow) % nl -> index into the current lm index
             if (m * rowStrideB + threadRow < 16)
             {
-                uint gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
+                int gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
+                if (gid / nl < nselected)
+                {
+                    // int lidx = lstart + (gid / nl) * 16 + gid % nl;
+                    int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
 
-                uint lidx = lstart + (gid / nl) * 16 + gid % nl;
-
-                if (lidx / 16 < NNODES && cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol < N)
-                    OUT[lidx * N + cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol] = path_weight * buffer_out[(m * rowStrideB + threadRow) * (blockDim.y * WMMA_N) + n_block * 32 + threadCol];
+                    if (lidx < NNODES * 16 && cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol < N)
+                        OUT[lidx * N + cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol] = path_weight * buffer_out[(m * rowStrideB + threadRow) * (blockDim.y * WMMA_N) + n_block * 32 + threadCol];
+                }
             }
         }
     }
 }
 
-torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Tensor one_hot_embedding, torch::Tensor element_types)
+torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Tensor elemental_embedding)
 {
 
     const int NNODES = X.size(0);
     const int M = X.size(1);
     const int N = W.size(2);
     const int K = W.size(1);
-    const int nelements = element_types.size(0);
 
     torch::Tensor output = torch::empty({NNODES, M, N},
                                         torch::TensorOptions()
@@ -511,46 +534,54 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Ten
     blockDim.y = min(8, find_integer_divisor(N, WMMA_N));
     blockDim.x = 32;
 
-    std::vector<cudaStream_t> streams;
-
     size_t shared_size = 0;
     void *sptr = nullptr;
 
     shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
     shared_array<float>(M * blockDim.y * WMMA_N, sptr, &shared_size);
 
-    torch::Tensor nonzero_indices = torch::nonzero(one_hot_embedding);
+    vector<cudaStream_t> streams;
 
-    for (int element_id = 0; element_id < nelements; element_id++)
+    for (int element_id = 0; element_id < elemental_embedding.size(1); element_id++)
     {
-        torch::Tensor element_type = element_types[element_id];
+        torch::Tensor elemental_embedding_ = elemental_embedding.index({Ellipsis, element_id});
+        torch::Tensor node_idx = torch::where(elemental_embedding_ == 1)[0];
 
-        auto res = torch::where(one_hot_embedding == element_type);
+        int64_t nselected = node_idx.size(0);
 
-        torch::Tensor atom_idx = res[0];
+        // cout << node_idx << endl;
 
-        for (int l = 0; l < 4; l++)
+        if (nselected > 0)
         {
-            cudaStream_t stream;
+            for (int l = 0; l < 4; l++)
+            {
+                dim3 griddim;
+                griddim.x = find_integer_divisor(nselected * (2 * l + 1), 16);
+                griddim.y = find_integer_divisor(N, blockDim.y * WMMA_N);
 
-            cudaStreamCreate(&stream);
+                cudaStream_t stream;
 
-            dim3 griddim;
+                cudaStreamCreate(&stream);
 
-            griddim.x = find_integer_divisor(atom_idx.size(0) * (2 * l + 1), 16);
-            griddim.y = find_integer_divisor(N, blockDim.y * WMMA_N);
+                elemental_linear_wmma_kernel<<<griddim, blockDim, shared_size, stream>>>(
+                    X.data_ptr<float>(),
+                    W.data_ptr<float>(),
+                    node_idx.data_ptr<int64_t>(),
+                    element_id,
+                    nselected,
+                    output.data_ptr<float>(),
+                    NNODES, M, N, K, l);
 
-            elemental_linear_wmma_kernel<<<griddim, blockDim, shared_size, stream>>>(X.data_ptr<float>(), atom_idx.data_ptr<int64_t>(), nelements, W.data_ptr<float>(), output.data_ptr<float>(), NNODES, M, N, K, l);
-
-            streams.push_back(stream);
+                streams.push_back(stream);
+            }
         }
+    }
 
-        cudaDeviceSynchronize();
+    cudaDeviceSynchronize();
 
-        for (int l = 0; l < streams.size(); l++)
-        {
-            cudaStreamDestroy(streams[l]);
-        }
+    for (int l = 0; l < streams.size(); l++)
+    {
+        cudaStreamDestroy(streams[l]);
     }
 
     return output;
@@ -603,16 +634,15 @@ public:
         torch::Tensor X,
         torch::Tensor W,
         torch::Tensor W_transposed,
-        torch::Tensor one_hot_embedding,
-        torch::Tensor element_types)
+        torch::Tensor one_hot_embedding)
     {
 
         if (X.requires_grad())
         {
-            ctx->save_for_backward({one_hot_embedding, element_types, W_transposed});
+            ctx->save_for_backward({one_hot_embedding, W_transposed});
         }
 
-        torch::Tensor result = elemental_linear_wmma(X, W, one_hot_embedding, element_types);
+        torch::Tensor result = elemental_linear_wmma(X, W, one_hot_embedding);
 
         return result;
     }
@@ -622,19 +652,18 @@ public:
         auto saved_variables = ctx->get_saved_variables();
 
         auto one_hot_embedding = saved_variables[0];
-        auto element_types = saved_variables[1];
-        auto W_T = saved_variables[2];
+        auto W_T = saved_variables[1];
 
         if (!grad_outputs[0].is_contiguous())
         {
             grad_outputs[0] = grad_outputs[0].contiguous();
         }
 
-        torch::Tensor dX = elemental_linear_wmma(grad_outputs[0], W_T, one_hot_embedding, element_types);
+        torch::Tensor dX = elemental_linear_wmma(grad_outputs[0], W_T, one_hot_embedding);
 
         torch::Tensor undef;
 
-        return {dX, undef, undef, undef, undef};
+        return {dX, undef, undef, undef};
     }
 };
 
@@ -650,13 +679,13 @@ torch::Tensor elemental_linear(
     torch::Tensor X,
     torch::Tensor W,
     torch::Tensor W_T,
-    torch::Tensor one_hot_embedding,
-    torch::Tensor element_types)
+    torch::Tensor one_hot_embedding)
 {
-    return ElementalLinearAutograd::apply(X, W, W_T, one_hot_embedding, element_types);
+    return ElementalLinearAutograd::apply(X, W, W_T, one_hot_embedding);
 }
 
 TORCH_LIBRARY(linear_wmma, m)
 {
     m.def("linear", &linear);
+    m.def("elemental_linear", &elemental_linear);
 }

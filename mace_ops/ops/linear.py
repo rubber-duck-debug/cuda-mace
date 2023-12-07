@@ -55,3 +55,19 @@ class Linear(torch.nn.Module):
 
     def forward(self, x: torch.Tensor):
         return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed)
+    
+
+class ElementalLinear(Linear):
+
+    def __init__(self, 
+                 irreps_in: o3.Irreps, 
+                 irreps_out: o3.Irreps,
+                 e3nn_instructions : List,
+                 e3nn_weights: torch.Tensor):
+        super().__init__(irreps_in, irreps_out, e3nn_instructions, e3nn_weights)
+        
+    def forward(self, x: torch.Tensor, elemental_embedding: torch.Tensor):
+        return torch.ops.linear_wmma.linear(x, self.weights, self.weights_transposed, elemental_embedding)
+    
+        
+        
