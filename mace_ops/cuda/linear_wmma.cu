@@ -427,31 +427,20 @@ __global__ void elemental_linear_wmma_kernel(
         {
             for (int m = 0; m < nmiter; m++)
             {
+                int gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
+
                 // ((m * rowStrideB + threadRow)/nl) * 16 -> start index for each node
                 // ((m * rowStrideB + threadRow) % nl -> index into the current L channel
-                if (m * rowStrideB + threadRow < 16)
+                if (m * rowStrideB + threadRow < 16 && gid / nl < nselected)
                 {
-
-                    // 6 * 5 / 16 = 2
-                    // 32 / 5 = 6, however 6 nodes, so out-by-one...
-
-                    // griddim.x = find_integer_divisor(nselected * (2 * l + 1), 16);
-
-                    int gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
-
-                    // int lidx = lstart + (gid / nl) * 16 + gid % nl;
-
-                    if (gid / nl < nselected)
+                    int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
+                    if (lidx < NNODES * 16) // bounds checking
                     {
-                        int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
-                        if (lidx < NNODES * 16) // bounds checking
-                        {
-                            Xs[threadCol * 33 + m * rowStrideB + threadRow] = X[lidx * K + bkIdx + threadCol];
-                        }
-                        else
-                        {
-                            Xs[threadCol * 33 + m * rowStrideB + threadRow] = 0.0f;
-                        }
+                        Xs[threadCol * 33 + m * rowStrideB + threadRow] = X[lidx * K + bkIdx + threadCol];
+                    }
+                    else
+                    {
+                        Xs[threadCol * 33 + m * rowStrideB + threadRow] = 0.0f;
                     }
                 }
             }
@@ -498,19 +487,18 @@ __global__ void elemental_linear_wmma_kernel(
     {
         for (int m = 0; m < nmiter; m++)
         {
+
+            int gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
             // ((m * rowStrideB + threadRow)/nl) * 16 -> start index for each node for lm channel
             // ((m * rowStrideB + threadRow) % nl -> index into the current lm index
-            if (m * rowStrideB + threadRow < 16)
+            if (m * rowStrideB + threadRow < 16 && gid / nl < nselected)
             {
-                int gid = blockIdx.x * 16 + m * rowStrideB + threadRow;
-                if (gid / nl < nselected)
-                {
-                    // int lidx = lstart + (gid / nl) * 16 + gid % nl;
-                    int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
 
-                    if (lidx < NNODES * 16 && cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol < N)
-                        OUT[lidx * N + cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol] = path_weight * buffer_out[(m * rowStrideB + threadRow) * (blockDim.y * WMMA_N) + n_block * 32 + threadCol];
-                }
+                // int lidx = lstart + (gid / nl) * 16 + gid % nl;
+                int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
+
+                if (lidx < NNODES * 16 && cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol < N)
+                    OUT[lidx * N + cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol] = path_weight * buffer_out[(m * rowStrideB + threadRow) * (blockDim.y * WMMA_N) + n_block * 32 + threadCol];
             }
         }
     }
