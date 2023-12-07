@@ -701,12 +701,22 @@ torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_
 
     total_buff_size += (NEIGHBOUR_NEDGES_PER_BLOCK + 1) * sizeof(int32_t);
 
-    calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
-        receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-        sort_indices.data_ptr<int32_t>(),
-        sort_indices.defined() && sort_indices.numel() != 0,
-        first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
-
+    if (sort_indices.defined() && sort_indices.numel() != 0)
+    {
+        calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
+            receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            sort_indices.data_ptr<int32_t>(),
+            true,
+            first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
+    }
+    else
+    {
+        calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
+            receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            nullptr,
+            false,
+            first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
+    }
     cudaDeviceSynchronize();
 
     return first_occurences;
@@ -721,21 +731,20 @@ public:
         torch::Tensor Y,
         torch::Tensor radial,
         torch::Tensor sender_list,
-        torch::Tensor receiver_list,
-        torch::Tensor first_occurences)
+        torch::Tensor receiver_list)
     {
 
-        torch::Tensor sorted_sender_idx = torch::argsort(sender_list).to(torch::kInt);
-        // torch::Tensor sorted_sender = sender_list.index({sorted_sender_idx});
-        //  TODO can move the .index directly into here to avoid calling it from torch
-        torch::Tensor bwd_first_occurences = calculate_first_occurences_gpu(sender_list, X.size(0), 64, sorted_sender_idx);
+        torch::Tensor fwd_first_occurences = calculate_first_occurences_gpu(receiver_list, X.size(0), 64, torch::Tensor());
 
         if (X.requires_grad() || Y.requires_grad() || radial.requires_grad())
         {
-            ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, sorted_sender_idx, first_occurences, bwd_first_occurences});
+            torch::Tensor sorted_sender_idx = torch::argsort(sender_list).to(torch::kInt);
+            torch::Tensor bwd_first_occurences = calculate_first_occurences_gpu(sender_list, X.size(0), 64, sorted_sender_idx);
+
+            ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, sorted_sender_idx, fwd_first_occurences, bwd_first_occurences});
         }
 
-        return forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences);
+        return forward_gpu(X, Y, radial, sender_list, receiver_list, fwd_first_occurences);
     }
 
     static variable_list backward(AutogradContext *ctx, variable_list grad_outputs)
@@ -764,10 +773,9 @@ torch::Tensor invariant_message_passing_tensor_product(
     torch::Tensor Y,
     torch::Tensor radial,
     torch::Tensor sender_list,
-    torch::Tensor receiver_list,
-    torch::Tensor first_occurences)
+    torch::Tensor receiver_list)
 {
-    return InvariantMessagePassingTPAutograd::apply(X, Y, radial, sender_list, receiver_list, first_occurences);
+    return InvariantMessagePassingTPAutograd::apply(X, Y, radial, sender_list, receiver_list);
 }
 
 TORCH_LIBRARY(invariant_tp, m)

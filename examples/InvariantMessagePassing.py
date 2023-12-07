@@ -9,7 +9,7 @@ class InvariantMPTP(Function):
 
     # Note that forward, setup_context, and backward are @staticmethods
     @staticmethod
-    def forward(node_attr, edge_attr, tp_weights, sender_list, receiver_list, first_occurences):
+    def forward(node_attr, edge_attr, tp_weights, sender_list, receiver_list):
         output = torch.zeros(node_attr.size(0), edge_attr.shape[1], node_attr.shape[1], device=node_attr.device, dtype=node_attr.dtype)
 
         node_attr_sender = node_attr[sender_list]
@@ -24,8 +24,11 @@ class InvariantMPTP(Function):
     
     @staticmethod
     def setup_context(ctx, inputs, output):
-        node_attr, edge_attr, tp_weights, sender_list, receiver_list, first_occurences = inputs
-        ctx.save_for_backward(node_attr, edge_attr, tp_weights, sender_list, receiver_list, first_occurences)
+        node_attr, edge_attr, tp_weights, sender_list, receiver_list = inputs
+        
+        first_occurences_fwd = torch.ops.invariant_tp.calculate_first_occurences(receiver_list, node_attr.shape[0], 64, torch.Tensor())
+        
+        ctx.save_for_backward(node_attr, edge_attr, tp_weights, sender_list, receiver_list, first_occurences_fwd)
         
     @staticmethod
     def backward(ctx, grad_output):
@@ -112,10 +115,7 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     print (sender_list[sort_sender_idx], receiver_list[sort_sender_idx])
     
     tp = InvariantMessagePassingTP()
-    first_occurences = tp.calculate_first_occurences(receiver_list, nnodes, torch.Tensor().int())
-    
-    print (first_occurences)
-    print (first_occurences.dtype ,first_occurences.shape)
+
     
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
     edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
@@ -150,8 +150,7 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
         edge_attrs_python,
         tp_weights_python,
         sender_list,
-        receiver_list, 
-        first_occurences)
+        receiver_list)
     torch.cuda.synchronize()
     osum = out.sum() * 2.0
     osum.backward()
@@ -201,9 +200,7 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     check_output(node_feats_ref.grad, node_feats_e3nn.grad, "E3NN node feats grad")
     
     tp = InvariantMessagePassingTP()
-    first_occurences = tp.calculate_first_occurences(receiver_list, nnodes, torch.Tensor().int())
-    
-    cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list, first_occurences)
+    cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list)
     torch.cuda.synchronize()
     (cuda_out.sum() * 2.0).backward()
     torch.cuda.synchronize()
@@ -283,8 +280,7 @@ def benchmark(dtype, device):
     torch.cuda.synchronize()
     torch.cuda.cudart().cudaProfilerStart()
     for i in range (1000):
-        first_occurences = tp.calculate_first_occurences(receiver_list, nnodes, torch.Tensor().int())
-        cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list, first_occurences)
+        cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list)
         os = cuda_out.sum() * 2.0
         os.backward()
         

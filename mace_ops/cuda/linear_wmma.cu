@@ -537,8 +537,6 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Ten
 
         int64_t nselected = node_idx.size(0);
 
-        // cout << node_idx << endl;
-
         if (nselected > 0)
         {
             for (int l = 0; l < 4; l++)
