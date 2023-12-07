@@ -56,6 +56,7 @@ from math import sqrt
 nnodes = 1000
 max_l = 3
 n_channels = 96
+nelements = 10
 # get name of the class model.interactions[0]  
 node_feats_irreps = o3.Irreps("96x0e + 96x1o + 96x2e + 96x3o")
 node_attrs_irreps = o3.Irreps("10x0e")
@@ -66,14 +67,14 @@ skip_tp = o3.FullyConnectedTensorProduct(
 linear = o3.Linear(node_feats_irreps, node_feats_irreps).to("cuda")
 x = torch.randn(nnodes, (max_l+1)**2, n_channels,
                 device='cuda', dtype=torch.float32, requires_grad=True)
-one_hot_embedding = torch.randn(nnodes, 10, device='cuda', dtype=torch.float)
+one_hot_embedding = torch.randn(nnodes, nelements, device='cuda', dtype=torch.float)
 one_hot_embedding[:] = 0.0
 one_hot_embedding[0:10, 0] = 1
 one_hot_embedding[10:90,1] = 1
 one_hot_embedding[90:,2] = 1
 ws = skip_tp.weight.data.reshape([4,96,10,96]).permute(2,0,1,3)
 ws = ws.flatten(1) / sqrt(10)
-linear_element_ref = LinearElementRef(node_feats_irreps, node_feats_irreps, linear.instructions, ws, 10).to("cuda")
+linear_element_ref = LinearElementRef(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements).to("cuda")
 out_ref = linear_element_ref(x, one_hot_embedding)
 
 
@@ -82,9 +83,7 @@ for i, ins in enumerate(linear_element_ref.instructions):
     start_l_idx, end_l_idx, w, path_weight = ins
     weights[:, i, ... ] = w
 
-
 elemental_out = torch.ops.linear_wmma.elemental_linear(x, weights, weights.clone().detach().transpose(-1, -2).cuda().contiguous(), one_hot_embedding.int())
 
-print (out_ref[88])
-print (elemental_out[88])
+assert torch.allclose(out_ref, elemental_out, atol=1e-5)
     
