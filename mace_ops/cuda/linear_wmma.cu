@@ -399,7 +399,8 @@ __global__ void elemental_linear_wmma_kernel(
     float *buffer_out = shared_array<float>(M * blockDim.y * WMMA_N, sptr, &space);
 
     // sqrt((2L+1))/sqrt(n_channels * n_elements)
-    const float path_weight = sqrt((float)(2 * L + 1)) / sqrt((float)K * (float)nelements);
+    // const float path_weight = sqrt((float)(2 * L + 1)) / sqrt((float)K * (float)nelements);
+    const float path_weight = 1.0f / sqrt((float)K);
 
     const uint lstart = L * L;
     const uint nl = 2 * L + 1;
@@ -436,9 +437,11 @@ __global__ void elemental_linear_wmma_kernel(
                 if (m * rowStrideB + threadRow < 16 && gid / nl < nselected)
                 {
                     int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
+                    // int lidx = lstart + gid / nl * 16 + gid % nl;
                     if (lidx < NNODES * 16) // bounds checking
                     {
                         Xs[threadCol * 33 + m * rowStrideB + threadRow] = X[lidx * K + bkIdx + threadCol];
+                        // Xs[threadCol * 33 + m * rowStrideB + threadRow] = X[lidx * K + bkIdx + threadCol];
                     }
                     else
                     {
@@ -496,11 +499,14 @@ __global__ void elemental_linear_wmma_kernel(
             if (m * rowStrideB + threadRow < 16 && gid / nl < nselected)
             {
 
-                // int lidx = lstart + (gid / nl) * 16 + gid % nl;
+                /// int lidx = lstart + (gid / nl) * 16 + gid % nl;
                 int lidx = lstart + node_idx[(gid / nl)] * 16 + gid % nl;
 
                 if (lidx < NNODES * 16 && cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol < N)
+                {
                     OUT[lidx * N + cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol] = path_weight * buffer_out[(m * rowStrideB + threadRow) * (blockDim.y * WMMA_N) + n_block * 32 + threadCol];
+                    // OUT[lidx * N + cCol * (blockDim.y * WMMA_N) + n_block * 32 + threadCol] = path_weight * buffer_out[(m * rowStrideB + threadRow) * (blockDim.y * WMMA_N) + n_block * 32 + threadCol];
+                }
             }
         }
     }
@@ -511,8 +517,8 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Ten
 
     const int NNODES = X.size(0);
     const int M = X.size(1);
-    const int N = W.size(2);
-    const int K = W.size(1);
+    const int N = W.size(-1);
+    const int K = W.size(2);
 
     torch::Tensor output = torch::empty({NNODES, M, N},
                                         torch::TensorOptions()
@@ -541,6 +547,7 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Ten
 
         if (nselected > 0)
         {
+
             for (int l = 0; l < 4; l++)
             {
                 dim3 griddim;
