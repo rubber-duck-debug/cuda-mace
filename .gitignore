@@ -5,3 +5,4 @@ tests/linear_scaling.png
 tests/multi_gpu_strong_scaling.png
 tests/plt_scaling.py
 tests/*
+*.pyc
