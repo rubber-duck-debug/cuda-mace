@@ -59,3 +59,6 @@ torch.cuda.synchronize()
 end = time()
 print (end - start)
 torch.cuda.cudart().cudaProfilerStop()
+
+model = torch.compile(cuda_contraction)
+print (model)

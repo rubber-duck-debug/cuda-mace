@@ -174,5 +174,8 @@ if (len(idx[0]) > 0):
     print (x.grad[idx])
     print (x_ref.grad[idx])
 
+model = torch.compile(linear_cuda)
+print (model)
+
 assert torch.allclose(linear_ref, cuda_out, atol=1e-5)
 assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
