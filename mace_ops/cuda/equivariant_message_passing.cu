@@ -225,7 +225,7 @@ torch::Tensor forward_gpu(
     TORCH_CHECK(nspherical_harm == 16, "number of edge spherical harmonics must be 16");
     TORCH_CHECK(nfeatures <= 64, "feature dimension cannot be greater than 128");
 
-    torch::Tensor output = torch::empty({nnodes, (l3 + 1) * (l3 + 1), nfeatures},
+    torch::Tensor output = torch::zeros({nnodes, (l3 + 1) * (l3 + 1), nfeatures},
                                         torch::TensorOptions()
                                             .dtype(X.dtype())
                                             .device(X.device()));
@@ -354,7 +354,7 @@ __global__ void calculate_first_occurences_kernel(const torch::PackedTensorAcces
 
 torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx, torch::Tensor sort_indices)
 {
-    torch::Tensor first_occurences = torch::empty(natoms,
+    torch::Tensor first_occurences = torch::zeros(natoms,
                                                   torch::TensorOptions()
                                                       .dtype(receiver_list.dtype())
                                                       .device(receiver_list.device()));

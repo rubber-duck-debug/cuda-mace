@@ -386,7 +386,7 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W)
     const int N = W.size(2);
     const int K = W.size(1);
 
-    torch::Tensor output = torch::empty({NNODES, M, N},
+    torch::Tensor output = torch::zeros({NNODES, M, N},
                                         torch::TensorOptions()
                                             .dtype(X.dtype())
                                             .device(X.device()));
@@ -576,7 +576,7 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Ten
     const int N = W.size(-1);
     const int K = W.size(2);
 
-    torch::Tensor output = torch::empty({NNODES, M, N},
+    torch::Tensor output = torch::zeros({NNODES, M, N},
                                         torch::TensorOptions()
                                             .dtype(X.dtype())
                                             .device(X.device()));

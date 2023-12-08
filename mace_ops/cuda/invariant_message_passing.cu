@@ -166,7 +166,7 @@ torch::Tensor forward_gpu(
     TORCH_CHECK(nspherical_harm == 16, "number of edge spherical harmonics must be 16");
     TORCH_CHECK(nfeatures <= 128, "feature dimension cannot be greater than 128");
 
-    torch::Tensor output = torch::empty({natoms, nspherical_harm, nfeatures},
+    torch::Tensor output = torch::zeros({natoms, nspherical_harm, nfeatures},
                                         torch::TensorOptions()
                                             .dtype(X.dtype())
                                             .device(X.device()));
@@ -474,17 +474,17 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
     TORCH_CHECK(Y.requires_grad(), "Y must require grad for invariant message passing backwards_kernel to be called.");
     TORCH_CHECK(radial.requires_grad(), "radial must require grad for invariant message passing backwards_kernel to be called.");
 
-    torch::Tensor gradRadial = torch::empty_like(radial,
+    torch::Tensor gradRadial = torch::zeros_like(radial,
                                                  torch::TensorOptions()
                                                      .dtype(radial.dtype())
                                                      .device(radial.device()));
 
-    torch::Tensor gradX = torch::empty_like(X,
+    torch::Tensor gradX = torch::zeros_like(X,
                                             torch::TensorOptions()
                                                 .dtype(X.dtype())
                                                 .device(X.device()));
 
-    torch::Tensor gradY = torch::empty_like(Y,
+    torch::Tensor gradY = torch::zeros_like(Y,
                                             torch::TensorOptions()
                                                 .dtype(Y.dtype())
                                                 .device(Y.device()));
@@ -686,7 +686,7 @@ __global__ void calculate_first_occurences_kernel(const torch::PackedTensorAcces
 
 torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx)
 {
-    torch::Tensor first_occurences = torch::empty(natoms,
+    torch::Tensor first_occurences = torch::zeros(natoms,
                                                   torch::TensorOptions()
                                                       .dtype(receiver_list.dtype())
                                                       .device(receiver_list.device()));
@@ -714,7 +714,7 @@ torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_
 
 torch::Tensor calculate_first_occurences_gpu_with_sort(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx, torch::Tensor sort_indices)
 {
-    torch::Tensor first_occurences = torch::empty(natoms,
+    torch::Tensor first_occurences = torch::zeros(natoms,
                                                   torch::TensorOptions()
                                                       .dtype(receiver_list.dtype())
                                                       .device(receiver_list.device()));

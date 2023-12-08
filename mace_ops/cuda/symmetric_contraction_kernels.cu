@@ -300,7 +300,7 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_new_gpu(
 	const int64_t nthreadZ = 1)
 {
 
-	torch::Tensor output = torch::empty({X.size(0), 1, X.size(2)},
+	torch::Tensor output = torch::zeros({X.size(0), 1, X.size(2)},
 										torch::TensorOptions()
 											.dtype(X.dtype())
 											.device(X.device()));
@@ -308,14 +308,14 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_new_gpu(
 
 	if (X.requires_grad())
 	{
-		grad = torch::empty({X.size(0), 1, X.size(1), X.size(2)},
+		grad = torch::zeros({X.size(0), 1, X.size(1), X.size(2)},
 							torch::TensorOptions()
 								.dtype(X.dtype())
 								.device(X.device()));
 	}
 	else
 	{
-		grad = torch::empty({1, 1, 1, 1},
+		grad = torch::zeros({1, 1, 1, 1},
 							torch::TensorOptions()
 								.dtype(X.dtype())
 								.device(X.device()));
@@ -597,7 +597,7 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_gpu(
 	const int64_t nthreadZ = 1)
 {
 
-	torch::Tensor output = torch::empty({X.size(0), 1, X.size(2)},
+	torch::Tensor output = torch::zeros({X.size(0), 1, X.size(2)},
 										torch::TensorOptions()
 											.dtype(X.dtype())
 											.device(X.device()));
@@ -605,14 +605,14 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_gpu(
 
 	if (X.requires_grad())
 	{
-		grad = torch::empty({X.size(0), 1, X.size(1), X.size(2)},
+		grad = torch::zeros({X.size(0), 1, X.size(1), X.size(2)},
 							torch::TensorOptions()
 								.dtype(X.dtype())
 								.device(X.device()));
 	}
 	else
 	{
-		grad = torch::empty({1, 1, 1, 1},
+		grad = torch::zeros({1, 1, 1, 1},
 							torch::TensorOptions()
 								.dtype(X.dtype())
 								.device(X.device()));
@@ -1060,7 +1060,7 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
 	auto find_num_blocks = [](int x, int bdim)
 	{ return (x + bdim - 1) / bdim; };
 
-	torch::Tensor output = torch::empty({natoms, nlout, nchannels},
+	torch::Tensor output = torch::zeros({natoms, nlout, nchannels},
 										torch::TensorOptions()
 											.dtype(X.dtype())
 											.device(X.device()));
@@ -1069,14 +1069,14 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
 
 	if (X.requires_grad())
 	{
-		grad = torch::empty({natoms, nlout, nl, nchannels},
+		grad = torch::zeros({natoms, nlout, nl, nchannels},
 							torch::TensorOptions()
 								.dtype(X.dtype())
 								.device(X.device()));
 	}
 	else
 	{
-		grad = torch::empty({1, 1, 1, 1},
+		grad = torch::zeros({1, 1, 1, 1},
 							torch::TensorOptions()
 								.dtype(X.dtype())
 								.device(X.device()));
@@ -1270,7 +1270,7 @@ torch::Tensor symm_contraction_backward(
 	const int nl = gradX.size(2);
 	const int nchannels = gradX.size(3);
 
-	torch::Tensor output = torch::empty({natoms, nl, nchannels},
+	torch::Tensor output = torch::zeros({natoms, nl, nchannels},
 										torch::TensorOptions()
 											.dtype(gradX.dtype())
 											.device(gradX.device()));
