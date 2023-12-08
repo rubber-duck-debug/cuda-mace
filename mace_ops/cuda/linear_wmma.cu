@@ -188,6 +188,33 @@ __global__ void __launch_bounds__(MATMUL_NUM_THREADS) linear_kernel(float *__res
     }
 }
 
+/*
+__global__ void test(const int *__restrict__ element_embedding, const int nelements, const int nnodes)
+{
+
+    for (int element_id = threadIdx.y; element_id < nelements; element_id += blockDim.y)
+    {
+        for (int offset = 0; offset < nnodes; offset += blockDim.x)
+        {
+            // load embedding into shared memory
+            buffer[threadIdx.y * blockDim.x + threadIdx.x] = element_embedding[(threadIdx.x + offset) * nelements + element_id];
+
+            __syncthreads();
+
+            int node_id = 0;
+
+            // on single thread, loop through shared memory to compute
+            for (int i = 0; i < blockDim.x; i++)
+            {
+                if (buffer[threadIdx.y * blockDim.x + i] == 1)
+                {
+                    buffer_tmp[threadIdx.y * blockDim.x + node_id++] = offset + i;
+                }
+            }
+        }
+    }
+}*/
+
 __global__ void linear_wmma_kernel(const float *__restrict__ X, const float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const uint M, const uint N, const uint K, const uint L)
 {
 

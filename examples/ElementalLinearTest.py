@@ -2,6 +2,54 @@ from math import prod
 import torch
 from e3nn import o3
 from mace_ops import cuda 
+
+class LinearElementCUDA(torch.nn.Module):
+
+    def __init__(self, irreps_in, irreps_out, e3nn_instructions, e3nn_weights, num_elements):
+
+        super().__init__()
+        self.num_elements = num_elements
+        self.irreps_in = irreps_in
+        self.irreps_out = irreps_out
+
+        self.e3nn_instructions = e3nn_instructions
+        self.e3nn_weights = e3nn_weights
+
+        self.out_lmax = int(irreps_out.lmax)
+        self.out_dim = int(irreps_out.dim / (self.out_lmax + 1) ** 2)
+
+        self.instructions = []
+
+        flat_weight_index = 0
+        
+        for ins in e3nn_instructions:
+            path_nweight = prod(ins.path_shape)
+            mul_ir_out = irreps_out[ins.i_out]
+            # extract the weights for the current path
+            w = e3nn_weights.narrow(-1, flat_weight_index, path_nweight)
+            w = w.reshape([-1] + list(ins.path_shape))
+            # 0 | 1 2 3 | 4 5 6
+            start = ins.i_in ** 2
+            end = start + (2 * ins.i_in + 1)
+
+            #print (ins, w.shape)
+            self.instructions.append((start, end, w, ins.path_weight))
+
+            flat_weight_index += path_nweight
+        
+        self.weights = torch.zeros(self.num_elements, 4, w.shape[-2], w.shape[-1], dtype=torch.float32, device='cuda')
+        
+        for i, ins in enumerate(self.instructions):
+            start_l_idx, end_l_idx, w, path_weight = ins
+            self.weights[:, i, ... ] = w
+            
+        self.weights_transposed = self.weights.clone().detach().transpose(-1, -2).contiguous().cuda()
+            
+    def forward(self, x, y):
+        # x : [batch,  num_l, num_channels]
+        # y : [batch, num_elements]
+        return torch.ops.linear_wmma.elemental_linear(x, self.weights, self.weights_transposed, y)
+    
 class LinearElementRef(torch.nn.Module):
 
     def __init__(self, irreps_in, irreps_out, e3nn_instructions, e3nn_weights, num_elements):
@@ -75,15 +123,10 @@ one_hot_embedding[90:,2] = 1
 ws = skip_tp.weight.data.reshape([4,96,10,96]).permute(2,0,1,3)
 ws = ws.flatten(1) / sqrt(10)
 linear_element_ref = LinearElementRef(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements).to("cuda")
+linear_element_cuda = LinearElementCUDA(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements)
+
 out_ref = linear_element_ref(x, one_hot_embedding)
+out_cuda = linear_element_cuda(x, one_hot_embedding)
 
-
-weights = torch.zeros(10, 4, n_channels, n_channels, device='cuda', dtype=torch.float32)
-for i, ins in enumerate(linear_element_ref.instructions):
-    start_l_idx, end_l_idx, w, path_weight = ins
-    weights[:, i, ... ] = w
-
-elemental_out = torch.ops.linear_wmma.elemental_linear(x, weights, weights.clone().detach().transpose(-1, -2).cuda().contiguous(), one_hot_embedding.int())
-
-assert torch.allclose(out_ref, elemental_out, atol=1e-5)
+assert torch.allclose(out_ref, out_cuda, atol=1e-5)
     
