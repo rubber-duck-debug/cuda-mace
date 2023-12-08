@@ -205,7 +205,6 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     torch.cuda.synchronize()
     
     tp = torch.compile(tp)
-    
     print (tp)
     
     print ("Checking ref output vs CUDA backwards.")
