@@ -79,11 +79,15 @@ ws = ws.flatten(1) / sqrt(10)
 linear_element_ref = LinearElementRef(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements).to("cuda")
 linear_element_cuda = ElementalLinear(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements)
 
-out_ref = linear_element_ref(x, one_hot_embedding)
+x_ref = x.clone().detach().requires_grad_(True)
+
+out_ref = linear_element_ref(x_ref, one_hot_embedding)
 out_cuda = linear_element_cuda(x, one_hot_embedding)
 
-model = torch.compile(linear_element_cuda)
-print (model)
+out_ref.sum().backward()
+out_cuda.sum().backward()
+
 
 assert torch.allclose(out_ref, out_cuda, atol=1e-5)
+assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
     

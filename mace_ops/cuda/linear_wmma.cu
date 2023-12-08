@@ -188,7 +188,7 @@ __global__ void __launch_bounds__(MATMUL_NUM_THREADS) linear_kernel(float *__res
     }
 }
 
-__global__ void test(const int *__restrict__ element_embedding, const int nelements, const int nnodes)
+__global__ void test(const int *__restrict__ element_embedding, const int nelements, const int nnodes, int *__restrict__ output, int *__restrict__ output_n_elements)
 {
 
     extern __shared__ char buffer[];
@@ -201,6 +201,8 @@ __global__ void test(const int *__restrict__ element_embedding, const int neleme
 
     for (int element_id = threadIdx.y; element_id < nelements; element_id += blockDim.y)
     {
+        int global_element_id = 0;
+
         for (int offset = 0; offset < nnodes; offset += blockDim.x)
         {
             // load embedding into shared memory
@@ -226,7 +228,19 @@ __global__ void test(const int *__restrict__ element_embedding, const int neleme
             }
 
             __syncwarp();
+
+            // writeout to global memory
+            if (threadIdx.x < node_id + 1)
+            {
+                output[element_id * nnodes + global_element_id + threadIdx.x] = buffer_indices[threadIdx.y * blockDim.x + threadIdx.x];
+            }
+
+            global_element_id += node_id;
         }
+
+        // nelements = global_element_id +1
+
+        output_n_elements[element_id] = global_element_id + 1;
     }
 }
 
