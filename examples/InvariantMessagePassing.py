@@ -26,7 +26,7 @@ class InvariantMPTP(Function):
     def setup_context(ctx, inputs, output):
         node_attr, edge_attr, tp_weights, sender_list, receiver_list = inputs
         
-        first_occurences_fwd = torch.ops.invariant_tp.calculate_first_occurences(receiver_list, node_attr.shape[0], 64, torch.Tensor())
+        first_occurences_fwd = torch.ops.invariant_tp.calculate_first_occurences(receiver_list, node_attr.shape[0], 64)
         
         ctx.save_for_backward(node_attr, edge_attr, tp_weights, sender_list, receiver_list, first_occurences_fwd)
         
@@ -63,7 +63,7 @@ class InvariantMPTP(Function):
                     
         # for all edge indexes in sender_list[sort_sender_idx] need to update grads in [sender_list[sort_sender_idx]]
         sort_sender_idx = torch.argsort(sender_list).int()
-        first_occurences = torch.ops.invariant_tp.calculate_first_occurences(sender_list, node_attr.shape[0], 64, sort_sender_idx)
+        first_occurences = torch.ops.invariant_tp.calculate_first_occurences_with_sort(sender_list, node_attr.shape[0], 64, sort_sender_idx)
        
         for node in range (node_attr.shape[0]):
             edge_start = first_occurences[node]
@@ -113,9 +113,6 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     sort_sender_idx = torch.argsort(sender_list)
     
     print (sender_list[sort_sender_idx], receiver_list[sort_sender_idx])
-    
-    tp = InvariantMessagePassingTP()
-
     
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
     edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
@@ -200,10 +197,16 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     check_output(node_feats_ref.grad, node_feats_e3nn.grad, "E3NN node feats grad")
     
     tp = InvariantMessagePassingTP()
+    
+
     cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list)
     torch.cuda.synchronize()
     (cuda_out.sum() * 2.0).backward()
     torch.cuda.synchronize()
+    
+    tp = torch.compile(tp)
+    
+    print (tp)
     
     print ("Checking ref output vs CUDA backwards.")
     check_output(edge_attrs_ref.grad, edge_attrs_cuda.grad, "CUDA edge_attr grad")

@@ -82,5 +82,10 @@ linear_element_cuda = ElementalLinear(node_feats_irreps, node_feats_irreps, line
 out_ref = linear_element_ref(x, one_hot_embedding)
 out_cuda = linear_element_cuda(x, one_hot_embedding)
 
+
+model = torch.compile(linear_element_cuda)
+
+print (model)
+
 assert torch.allclose(out_ref, out_cuda, atol=1e-5)
     

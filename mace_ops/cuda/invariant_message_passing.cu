@@ -684,7 +684,35 @@ __global__ void calculate_first_occurences_kernel(const torch::PackedTensorAcces
     }
 }
 
-torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx, torch::Tensor sort_indices)
+torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx)
+{
+    torch::Tensor first_occurences = torch::empty(natoms,
+                                                  torch::TensorOptions()
+                                                      .dtype(receiver_list.dtype())
+                                                      .device(receiver_list.device()));
+
+    int32_t nbx = find_integer_divisor(receiver_list.size(0), NEIGHBOUR_NEDGES_PER_BLOCK);
+
+    dim3 block_dim(nbx);
+
+    dim3 grid_dim(nthreadx, 1, 1);
+
+    size_t total_buff_size = 0;
+
+    total_buff_size += (NEIGHBOUR_NEDGES_PER_BLOCK + 1) * sizeof(int32_t);
+
+    calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
+        receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+        nullptr,
+        false,
+        first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
+
+    cudaDeviceSynchronize();
+
+    return first_occurences;
+}
+
+torch::Tensor calculate_first_occurences_gpu_with_sort(torch::Tensor receiver_list, int64_t natoms, int64_t nthreadx, torch::Tensor sort_indices)
 {
     torch::Tensor first_occurences = torch::empty(natoms,
                                                   torch::TensorOptions()
@@ -709,14 +737,7 @@ torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list, int64_
             true,
             first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
     }
-    else
-    {
-        calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
-            receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-            nullptr,
-            false,
-            first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>());
-    }
+
     cudaDeviceSynchronize();
 
     return first_occurences;
@@ -734,12 +755,12 @@ public:
         torch::Tensor receiver_list)
     {
 
-        torch::Tensor fwd_first_occurences = calculate_first_occurences_gpu(receiver_list, X.size(0), 64, torch::Tensor());
+        torch::Tensor fwd_first_occurences = calculate_first_occurences_gpu(receiver_list, X.size(0), 64);
 
         if (X.requires_grad() || Y.requires_grad() || radial.requires_grad())
         {
             torch::Tensor sorted_sender_idx = torch::argsort(sender_list).to(torch::kInt);
-            torch::Tensor bwd_first_occurences = calculate_first_occurences_gpu(sender_list, X.size(0), 64, sorted_sender_idx);
+            torch::Tensor bwd_first_occurences = calculate_first_occurences_gpu_with_sort(sender_list, X.size(0), 64, sorted_sender_idx);
 
             ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, sorted_sender_idx, fwd_first_occurences, bwd_first_occurences});
         }
@@ -782,6 +803,7 @@ TORCH_LIBRARY(invariant_tp, m)
 {
     m.def("forward", &invariant_message_passing_tensor_product);
     m.def("calculate_first_occurences", &calculate_first_occurences_gpu);
+    m.def("calculate_first_occurences_with_sort", &calculate_first_occurences_gpu_with_sort);
     m.def("forward_test", &forward_gpu);
     m.def("backward_test", &backward_gpu);
 }

@@ -188,32 +188,47 @@ __global__ void __launch_bounds__(MATMUL_NUM_THREADS) linear_kernel(float *__res
     }
 }
 
-/*
 __global__ void test(const int *__restrict__ element_embedding, const int nelements, const int nnodes)
 {
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    int32_t *buffer_embedding = shared_array<int32_t>(blockDim.y * blockDim.x, sptr, &space);
+    int32_t *buffer_indices = shared_array<int32_t>(blockDim.y * blockDim.x, sptr, &space);
 
     for (int element_id = threadIdx.y; element_id < nelements; element_id += blockDim.y)
     {
         for (int offset = 0; offset < nnodes; offset += blockDim.x)
         {
             // load embedding into shared memory
-            buffer[threadIdx.y * blockDim.x + threadIdx.x] = element_embedding[(threadIdx.x + offset) * nelements + element_id];
+            if (offset + threadIdx.x < nnodes)
+                buffer_embedding[threadIdx.y * blockDim.x + threadIdx.x] = element_embedding[(threadIdx.x + offset) * nelements + element_id];
 
-            __syncthreads();
+            __syncwarp();
 
             int node_id = 0;
 
             // on single thread, loop through shared memory to compute
-            for (int i = 0; i < blockDim.x; i++)
+
+            if (threadIdx.x == 0)
             {
-                if (buffer[threadIdx.y * blockDim.x + i] == 1)
+                for (int i = 0; i < min(blockDim.x, nnodes - offset); i++)
                 {
-                    buffer_tmp[threadIdx.y * blockDim.x + node_id++] = offset + i;
+                    if (buffer_embedding[threadIdx.y * blockDim.x + i] == 1)
+                    {
+                        buffer_indices[threadIdx.y * blockDim.x + node_id] = offset + i;
+                        node_id++;
+                    }
                 }
             }
+
+            __syncwarp();
         }
     }
-}*/
+}
 
 __global__ void linear_wmma_kernel(const float *__restrict__ X, const float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const uint M, const uint N, const uint K, const uint L)
 {
