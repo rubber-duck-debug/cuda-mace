@@ -79,15 +79,62 @@ ws = ws.flatten(1) / sqrt(10)
 linear_element_ref = LinearElementRef(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements).to("cuda")
 linear_element_cuda = ElementalLinear(node_feats_irreps, node_feats_irreps, linear.instructions, ws, nelements)
 
-x_ref = x.clone().detach().requires_grad_(True)
-
-out_ref = linear_element_ref(x_ref, one_hot_embedding)
+out_ref = linear_element_ref(x, one_hot_embedding)
 out_cuda = linear_element_cuda(x, one_hot_embedding)
 
-out_ref.sum().backward()
-out_cuda.sum().backward()
+class unreshape_irreps(torch.nn.Module):
+    # This is the inverse of reshape_irreps
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = o3.Irreps(irreps)
+        self.dims = []
+        self.muls = []
+        for mul, ir in self.irreps:
+            d = ir.dim
+            self.dims.append(d)
+            self.muls.append(mul)
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        ix = 0
+        out = []
+        batch, _, _ = tensor.shape
+        for mul, d in zip(self.muls, self.dims):
+            field = tensor[:, :, ix : ix + d]
+            ix += d
+            field = field.reshape(batch, -1)
+            out.append(field)
+        return torch.cat(out, dim=-1)
 
+class reshape_irreps(torch.nn.Module):
+    def __init__(self, irreps: o3.Irreps) -> None:
+        super().__init__()
+        self.irreps = o3.Irreps(irreps)
+        self.dims = []
+        self.muls = []
+        for mul, ir in self.irreps:
+            d = ir.dim
+            self.dims.append(d)
+            self.muls.append(mul)
 
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        ix = 0
+        out = []
+        batch, _ = tensor.shape
+        for mul, d in zip(self.muls, self.dims):
+            field = tensor[:, ix : ix + mul * d]  # [batch, sample, mul * repr]
+            ix += mul * d
+            field = field.reshape(batch, mul, d)
+            out.append(field)
+        return torch.cat(out, dim=-1)
+
+unreshape_ = unreshape_irreps(node_feats_irreps)
+reshape_ = reshape_irreps(node_feats_irreps)
+x_e3nn = x.clone().detach().requires_grad_(True)
+out_e3nn = skip_tp(unreshape_(x_e3nn.permute(0,2,1)), one_hot_embedding)
+assert torch.allclose(reshape_(out_e3nn).permute(0,2,1), out_cuda, atol=1e-5)
 assert torch.allclose(out_ref, out_cuda, atol=1e-5)
-assert torch.allclose(x_ref.grad, x.grad, atol=1e-5)
     
+# Check gradients
+(2.0 * out_cuda.sum()).backward()
+(2.0 * out_e3nn.sum()).backward()
+print("error", (x.grad - x_e3nn.grad).abs().mean())
+assert torch.allclose(x.grad, x_e3nn.grad, atol=1e-5)
