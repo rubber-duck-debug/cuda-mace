@@ -112,7 +112,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
     ext_modules.append(symmetric_contraction)
     #ext_modules.append(linear)
     ext_modules.append(linear_wmma)
-    ext_modules.append(embedding_tools)
+    #ext_modules.append(embedding_tools)
 
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")
