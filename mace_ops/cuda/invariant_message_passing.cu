@@ -142,7 +142,6 @@ __global__ __launch_bounds__(128) void forward_kernel(
     {
         for (int n = 0; n < TN; n++)
         {
-
             if (N_start + n * 32 + threadCol < N)
                 output[node_index][m][N_start + n * 32 + threadCol] = buffer_out[m * 128 + n * 32 + threadCol];
         }
