@@ -267,18 +267,18 @@ torch::Tensor forward_gpu(
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "forward_gpu", ([&]
                                   {
-                                      size_t space = 0;
-                                      void *sptr = nullptr;
+        size_t space = 0;
+        void *sptr = nullptr;
 
-                                      shared_array<scalar_t>(16 * 128, sptr, &space); // 64 * 128 * 8 = 65kb of shared memory...too large...
+        shared_array<scalar_t>(16 * 128, sptr, &space); // 64 * 128 * 8 = 65kb of shared memory...too large...
 
-                                      forward_kernel<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
-                                          X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                          Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                          radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                          receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                          first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                          output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>()); }));
+        forward_kernel<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
+            X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+            Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+            radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+            receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+            output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>()); }));
 
     cudaDeviceSynchronize();
 
