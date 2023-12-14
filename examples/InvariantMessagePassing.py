@@ -4,6 +4,7 @@ from time import time
 from mace_ops import cuda
 from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
 from torch.autograd import Function
+from torch.autograd import gradcheck
 
 class InvariantMPTP(Function):
 
@@ -107,6 +108,7 @@ def check_output(output_ref, output_cuda, name='output'):
         
 def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_list, nnodes):
     
+    nfeatures = node_feats.shape[-1]
     print ("sender list:", sender_list, sender_list.dtype, sender_list.shape)
     print ("receiver list:", receiver_list, receiver_list.dtype ,receiver_list.shape)
     
@@ -123,20 +125,22 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     tp_weights_python = tp_weights.clone().detach().requires_grad_(True)
     
     node_feats_ref = node_feats.clone().detach().requires_grad_(True)
-    node_feats_ref_sampled =  node_feats_ref[sender_list.int()]
     edge_attrs_ref = edge_attrs.clone().detach().requires_grad_(True)
     tp_weights_ref = tp_weights.clone().detach().requires_grad_(True)
     
     node_feats_e3nn = node_feats.clone().detach().requires_grad_(True)
     node_feats_e3nn_sampled =  node_feats_e3nn[sender_list.int()]
     edge_attrs_e3nn = edge_attrs.clone().detach().requires_grad_(True)
-    
     tp_weights_e3nn = tp_weights.clone().detach().requires_grad_(True)
     tp_weights_rshaped_e3nn = tp_weights_e3nn.view(edge_attrs_cuda.shape[0], 4 * node_feats.shape[-1])
     
+    node_feats_gradcheck = node_feats.clone().detach().requires_grad_(True).double()
+    edge_attrs_gradcheck = edge_attrs.clone().detach().requires_grad_(True).double()
+    tp_weights_gradcheck = tp_weights.clone().detach().requires_grad_(True).double()
+    
     #run the reference
     torch.cuda.synchronize()
-    out_ref  = reference(node_feats_ref_sampled, edge_attrs_ref, tp_weights_ref, receiver_list, nnodes)
+    out_ref  = reference(node_feats_ref[sender_list], edge_attrs_ref, tp_weights_ref, receiver_list, nnodes)
     torch.cuda.synchronize()
     t = out_ref.sum() * 2.0
     t.backward()
@@ -163,9 +167,9 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     from e3nn import o3
     from mace.modules.irreps_tools import tp_out_irreps_with_instructions
 
-    node_feats_irreps = o3.Irreps("96x0e")
+    node_feats_irreps = o3.Irreps(f"{nfeatures}x0e")
     edge_attrs_irreps = o3.Irreps("1x0e+1x1o+1x2e+1x3o")
-    target_irreps =o3.Irreps("96x0e+96x1o+96x2e+96x3o")
+    target_irreps =o3.Irreps(f"{96}x0e+{nfeatures}x1o+{nfeatures}x2e+{nfeatures}x3o")
     
     irreps_mid, instructions = tp_out_irreps_with_instructions(
                 node_feats_irreps, edge_attrs_irreps, target_irreps
@@ -198,25 +202,28 @@ def check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_
     
     tp = InvariantMessagePassingTP()
     
+    cuda_out = tp.forward(node_feats_cuda[sender_list], edge_attrs_cuda, tp_weights_cuda, receiver_list, nnodes)
 
-    cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list)
     torch.cuda.synchronize()
-    (cuda_out.sum() * 2.0).backward()
+    osum = cuda_out.sum() * 2.0
+    osum.backward()
     torch.cuda.synchronize()
     
-    tp = torch.compile(tp)
-    print (tp)
-    
+    print ("Checking ref output vs CUDA forwards.")
+    check_output(out_ref, cuda_out, "CUDA forward")
     print ("Checking ref output vs CUDA backwards.")
     check_output(edge_attrs_ref.grad, edge_attrs_cuda.grad, "CUDA edge_attr grad")
     check_output(tp_weights_ref.grad, tp_weights_cuda.grad, "CUDA tp_weights grad")
     check_output(node_feats_ref.grad, node_feats_cuda.grad, "CUDA node feats grad")
 
+    print("Checking CUDA implementation via finite difference.")
+    print(gradcheck(tp.forward, (node_feats_gradcheck[sender_list], edge_attrs_gradcheck, tp_weights_gradcheck, receiver_list, nnodes), eps=1e-2, atol=1e-2))
+
 
 def accuracy(dtype, device):
 
-    nedges = 300
-    nnodes = 10
+    nedges = 150
+    nnodes = 5
     nfeatures = 96
     L_MAX = 3
     nl = (L_MAX +1) ** 2
@@ -244,6 +251,7 @@ def accuracy(dtype, device):
    
     check_correctness(node_feats, edge_attrs, tp_weights, sender_list, receiver_list, nnodes)
     
+ 
 def benchmark(dtype, device):
 
     nedges = 30000 * 5
@@ -272,7 +280,7 @@ def benchmark(dtype, device):
     
     edge_attrs = edge_attrs[receiver_list] - (edge_attrs[sender_list] + 0.5) #mimic pair list
     tp_weights = tp_weights[receiver_list] - (tp_weights[sender_list] + 0.5) #mimic pair list
-
+    
     tp = InvariantMessagePassingTP()
     
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
@@ -280,15 +288,19 @@ def benchmark(dtype, device):
     tp_weights_cuda = tp_weights.clone().detach().requires_grad_(True)
     
     torch.cuda.synchronize()
+    start = time()
     torch.cuda.cudart().cudaProfilerStart()
     for i in range (1000):
-        cuda_out = tp.forward(node_feats_cuda, edge_attrs_cuda, tp_weights_cuda, sender_list, receiver_list)
+        cuda_out = tp.forward(node_feats_cuda[sender_list], edge_attrs_cuda, tp_weights_cuda, receiver_list, nnodes)
         os = cuda_out.sum() * 2.0
         os.backward()
         
     torch.cuda.synchronize()
+    end = time()
+    print (end - start)
     torch.cuda.cudart().cudaProfilerStop()
     
+    
 if __name__ == "__main__":
-    accuracy(torch.float32, "cuda")
-    #benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py
+    #accuracy(torch.float32, "cuda")
+    benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py

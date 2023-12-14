@@ -188,61 +188,68 @@ __global__ void __launch_bounds__(MATMUL_NUM_THREADS) linear_kernel(float *__res
     }
 }
 
-__global__ void test(const int *__restrict__ element_embedding, const int nelements, const int nnodes, int *__restrict__ output, int *__restrict__ output_n_elements)
+__device__ int findLaneID(int warpBallot)
 {
+    // Find the lane ID of the current thread within its warp
+    return __ffs(warpBallot) - 1;
+}
 
-    extern __shared__ char buffer[];
+__global__ void orderedLaneIDListKernel(int *result, int *condition, int size)
+{
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-    void *sptr = buffer;
-    size_t space = 0;
-
-    int32_t *buffer_embedding = shared_array<int32_t>(blockDim.y * blockDim.x, sptr, &space);
-    int32_t *buffer_indices = shared_array<int32_t>(blockDim.y * blockDim.x, sptr, &space);
-
-    for (int element_id = threadIdx.y; element_id < nelements; element_id += blockDim.y)
+    if (tid < size)
     {
-        int global_element_id = 0;
+        int laneId = threadIdx.x % warpSize; // Assuming warpSize is a predefined constant
 
-        for (int offset = 0; offset < nnodes; offset += blockDim.x)
-        {
-            // load embedding into shared memory
-            if (offset + threadIdx.x < nnodes)
-                buffer_embedding[threadIdx.y * blockDim.x + threadIdx.x] = element_embedding[(threadIdx.x + offset) * nelements + element_id];
+        int myCondition = condition[tid];
 
-            __syncwarp();
+        // Use ballot sync to determine which threads in the warp satisfy the condition
+        int warpBallot = __ballot_sync(0xFFFFFFFF, myCondition);
 
-            int node_id = 0;
+        /*
+        tensor([1, 0, 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0, 1, 0, 0], device='cuda:0', dtype=torch.int32)
 
-            // on single thread, loop through shared memory to compute
+        0, 2, 3, 5
+        */
+        // Find the lane ID of the current thread within its warp
+        int nBitsSet = __popc(warpBallot);
+        // Use exclusive scan to determine the position of each thread in the ordered list
+        // int position = __popc(warpBallot & ((1 << laneId) - 1)) + __popc(warpBallot);
+        int position = __popc(warpBallot & ((1 << laneId) - 1)); // position of each thread in warpBallot, ordered from 0
+        printf("threadIdx.x: %d, laneID: %d position: %d, condition: %d %d %d\n", threadIdx.x, laneId, position, myCondition, __popc(warpBallot & ((1 << laneId) - 1)), nBitsSet);
 
-            if (threadIdx.x == 0)
-            {
-                for (int i = 0; i < min(blockDim.x, nnodes - offset); i++)
-                {
-                    if (buffer_embedding[threadIdx.y * blockDim.x + i] == 1)
-                    {
-                        buffer_indices[threadIdx.y * blockDim.x + node_id] = offset + i;
-                        node_id++;
-                    }
-                }
-            }
+        // Update the result array with the ordered list of lane IDs
 
-            __syncwarp();
-
-            // writeout to global memory
-            if (threadIdx.x < node_id + 1)
-            {
-                output[element_id * nnodes + global_element_id + threadIdx.x] = buffer_indices[threadIdx.y * blockDim.x + threadIdx.x];
-            }
-
-            global_element_id += node_id;
-        }
-
-        // nelements = global_element_id +1
-
-        output_n_elements[element_id] = global_element_id + 1;
+        if (myCondition)
+            result[position] = laneId;
     }
 }
+
+torch::Tensor test_gpu(torch::Tensor condition)
+{
+
+    const uint size = condition.size(0);
+    torch::Tensor output = torch::zeros(size,
+                                        torch::TensorOptions()
+                                            .dtype(torch::kInt32)
+                                            .device(torch::kCUDA));
+
+    dim3 blockDim;
+    blockDim.x = 32;
+
+    dim3 griddim(1);
+
+    orderedLaneIDListKernel<<<griddim, blockDim>>>(
+        output.data_ptr<int32_t>(),
+        condition.data_ptr<int32_t>(),
+        size);
+
+    cudaDeviceSynchronize();
+
+    return output;
+}
+
 
 __global__ void linear_wmma_kernel(const float *__restrict__ X, const float *__restrict__ W, float *__restrict__ OUT, const int NNODES, const uint M, const uint N, const uint K, const uint L)
 {
@@ -740,4 +747,5 @@ TORCH_LIBRARY(linear_wmma, m)
 {
     m.def("linear", &linear);
     m.def("elemental_linear", &elemental_linear);
+    m.def("test_gpu", &test_gpu);
 }

@@ -5,6 +5,7 @@ mace_ops.egg-info/SOURCES.txt
 mace_ops.egg-info/dependency_links.txt
 mace_ops.egg-info/top_level.txt
 mace_ops/cuda/__init__.py
+mace_ops/cuda/embedding_tools.cu
 mace_ops/cuda/equivariant_message_passing.cu
 mace_ops/cuda/generators.py
 mace_ops/cuda/instruction.py
@@ -19,3 +20,4 @@ mace_ops/ops/invariant_message_passing.py
 mace_ops/ops/linear.py
 mace_ops/ops/symmetric_contraction.py
 tests/test_cg.py
+tests/test_elemental_embedding.py

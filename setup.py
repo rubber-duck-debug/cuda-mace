@@ -1,5 +1,6 @@
 from distutils.command.install_lib import install_lib as _install_lib
 from setuptools import setup, find_packages
+from torch.utils import cpp_extension
 from torch.utils.cpp_extension import CppExtension, CUDAExtension, BuildExtension
 from torch.utils.cpp_extension import CUDA_HOME
 import os
@@ -58,13 +59,6 @@ class _CommandInstallCythonized(_install_lib):
 
 if torch.cuda.is_available() and CUDA_HOME is not None:
 
-    tensor_contraction = CUDAExtension(
-        '.cuda.tensor_product', [
-            'mace_ops/cuda/tensor_product_kernels.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-
     equivariant_message_passing = CUDAExtension(
         '.cuda.equivariant_message_passing', [
             'mace_ops/cuda/equivariant_message_passing.cu'
@@ -72,6 +66,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
 
+    
     invariant_message_passing = CUDAExtension(
         '.cuda.invariant_message_passing', [
             'mace_ops/cuda/invariant_message_passing.cu'
@@ -86,12 +81,6 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
 
-    linear = CUDAExtension(
-        '.cuda.linear', [
-            'mace_ops/cuda/linear.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
 
     linear_wmma = CUDAExtension(
         '.cuda.linear_wmma', [
@@ -100,9 +89,11 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
     
-    matmul = CUDAExtension(
-        '.cuda.matmul', [
-            'mace_ops/cuda/matmul.cu'
+    
+    print (cpp_extension.include_paths()+ ['/mace_ops/cuda/include'])
+    embedding_tools = CUDAExtension(
+        '.cuda.embedding_tools', [
+            'mace_ops/cuda/embedding_tools.cu',
         ],
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
@@ -114,7 +105,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
     ext_modules.append(symmetric_contraction)
     #ext_modules.append(linear)
     ext_modules.append(linear_wmma)
-    #ext_modules.append(matmul)
+    ext_modules.append(embedding_tools)
 
 else:
     print("ERROR: cuda not available, or CUDA_HOME not set.")
