@@ -720,7 +720,7 @@ public:
 
         int64_t nnodes = ctx->saved_data["nnodes"].toInt();
 
-        auto result = backward_gpu(X, Y, radial, grad_outputs[0].contiguous(), receiver_list, first_occurences, nnodes);
+        auto result = backward_gpu(X, Y, radial, grad_outputs[0], receiver_list, first_occurences, nnodes);
 
         torch::Tensor undef;
 

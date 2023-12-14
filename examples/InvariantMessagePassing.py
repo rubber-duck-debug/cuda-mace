@@ -302,5 +302,5 @@ def benchmark(dtype, device):
     
     
 if __name__ == "__main__":
-    #accuracy(torch.float32, "cuda")
+    accuracy(torch.float32, "cuda")
     benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py
