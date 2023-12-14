@@ -2,7 +2,7 @@ import torch
 import math
 from time import time
 from mace_ops import cuda
-from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
+from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP, InvariantMessagePassingTP_Old
 from torch.autograd import Function
 from torch.autograd import gradcheck
 
@@ -282,6 +282,11 @@ def benchmark(dtype, device):
     tp_weights = tp_weights[receiver_list] - (tp_weights[sender_list] + 0.5) #mimic pair list
     
     tp = InvariantMessagePassingTP()
+    tp_old = InvariantMessagePassingTP_Old()
+    
+    node_feats_cuda_old = node_feats.clone().detach().requires_grad_(True)
+    edge_attrs_cuda_old = edge_attrs.clone().detach().requires_grad_(True)
+    tp_weights_cuda_old = tp_weights.clone().detach().requires_grad_(True)
     
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
     edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
@@ -294,13 +299,24 @@ def benchmark(dtype, device):
         cuda_out = tp.forward(node_feats_cuda[sender_list], edge_attrs_cuda, tp_weights_cuda, receiver_list, nnodes)
         os = cuda_out.sum() * 2.0
         os.backward()
-        
     torch.cuda.synchronize()
     end = time()
     print (end - start)
     torch.cuda.cudart().cudaProfilerStop()
     
+    # torch.cuda.synchronize()
+    # start = time()
+    # torch.cuda.cudart().cudaProfilerStart()
+    # for i in range (1000):
+    #     cuda_out = tp_old.forward(node_feats_cuda_old, edge_attrs_cuda_old, tp_weights_cuda_old, sender_list, receiver_list)
+    #     os = cuda_out.sum() * 2.0
+    #     os.backward()
+    # torch.cuda.synchronize()
+    # end = time()
+    # print (end - start)
+    # torch.cuda.cudart().cudaProfilerStop()
+    
     
 if __name__ == "__main__":
-    accuracy(torch.float32, "cuda")
-    #benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py
+    #accuracy(torch.float32, "cuda")
+    benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py

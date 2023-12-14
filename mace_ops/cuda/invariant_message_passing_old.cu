@@ -288,18 +288,19 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
 
                     for (int n = 0; n < TN; n++)
                     {
-                        scalar_t gradin = buffer_grad_in[m * X.size(1) + n * 32 + threadCol];
-
-                        regGradW[L * TN + n] += sph * regN[n] * gradin;
-
-                        scalar_t tmp = gradin * regW[L * TN + n] * regN[n];
-
-                        for (int offset = 16; offset > 0; offset /= 2)
+                        if (N_start + n * 32 + threadCol < X.size(1))
                         {
-                            tmp += __shfl_down_sync(FULL_MASK, tmp, offset, 32);
-                        }
+                            scalar_t gradin = buffer_grad_in[m * X.size(1) + n * 32 + threadCol];
 
-                        dgradY += tmp;
+                            regGradW[L * TN + n] += sph * regN[n] * gradin;
+
+                            dgradY += gradin * regW[L * TN + n] * regN[n];
+                        }
+                    }
+
+                    for (int offset = 16; offset > 0; offset /= 2)
+                    {
+                        dgradY += __shfl_down_sync(FULL_MASK, dgradY, offset, 32);
                     }
 
                     // threadIdx 0 dgradY contains the derivative of the output wrt. Y
@@ -416,9 +417,12 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_node_kernel(
 
                     for (int n = 0; n < TN; n++)
                     {
-                        scalar_t gradin = buffer_grad_in[m * X.size(1) + n * 32 + threadCol];
+                        if (N_start + n * 32 + threadCol < X.size(1))
+                        {
+                            scalar_t gradin = buffer_grad_in[m * X.size(1) + n * 32 + threadCol];
 
-                        regGradN[n] += sph * gradin * regW[L * TN + n];
+                            regGradN[n] += sph * gradin * regW[L * TN + n];
+                        }
                     }
                 }
             }
@@ -799,7 +803,7 @@ torch::Tensor invariant_message_passing_tensor_product(
     return InvariantMessagePassingTPAutograd::apply(X, Y, radial, sender_list, receiver_list);
 }
 
-TORCH_LIBRARY(invariant_tp, m)
+TORCH_LIBRARY(invariant_tp_old, m)
 {
     m.def("forward", &invariant_message_passing_tensor_product);
     m.def("calculate_first_occurences", &calculate_first_occurences_gpu);

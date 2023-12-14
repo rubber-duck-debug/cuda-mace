@@ -26,17 +26,16 @@ __host__ __device__ T *shared_array(std::size_t n_elements, void *&ptr,
     return reinterpret_cast<T *>(inptr);
 }
 
-#define WARP_SIZE 32
-
 __host__ __device__ int32_t find_integer_divisor(int32_t x, int32_t bdim)
 {
     return (x + bdim - 1) / bdim;
 }
 
+#define WARP_SIZE 32
 #define NWARPS_PER_BLOCK 4
 
 template <typename scalar_t, const int TM, const int TN>
-__global__ __launch_bounds__(128) void forward_kernel(
+__global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel(
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,               // [nedges nchannels]
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,               // [nedges, (L+1)**2]
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,          // [nedges, L+1, nchannels]
@@ -57,15 +56,15 @@ __global__ __launch_bounds__(128) void forward_kernel(
     float regWeights[4 * TN] = {0.0};
     float result[16 * TN] = {0.0};
 
-    const uint threadCol = threadIdx.x % 32;
-    const uint threadRow = threadIdx.x / 32;
+    const uint threadCol = threadIdx.x % WARP_SIZE;
+    const uint threadRow = threadIdx.x / WARP_SIZE;
 
     const uint N = X.size(1);
     const uint edge_start = first_occurences[blockIdx.x];
     const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1) ? receiver_list.size(0) : first_occurences[blockIdx.x + 1];
     const uint node_index = receiver_list[edge_start];
 
-    const uint N_start = blockIdx.y * TN * 32;
+    const uint N_start = blockIdx.y * TN * WARP_SIZE;
 
     for (int tid = threadIdx.x; tid < 16 * 128; tid += blockDim.x)
     {
@@ -90,8 +89,8 @@ __global__ __launch_bounds__(128) void forward_kernel(
         {
             for (uint n = 0; n < TN; n++)
             {
-                if (N_start + n * 32 + threadCol < N)
-                    regN[n] = X[edge][N_start + n * 32 + threadCol];
+                if (N_start + n * WARP_SIZE + threadCol < N)
+                    regN[n] = X[edge][N_start + n * WARP_SIZE + threadCol];
             }
 
             // load first into registers
@@ -100,23 +99,26 @@ __global__ __launch_bounds__(128) void forward_kernel(
                 regM[m] = Y[edge][m];
             }
 
-            for (int L = 0; L < 4; L++)
+            for (uint n = 0; n < TN; n++)
             {
-                for (uint n = 0; n < TN; n++)
+                if (N_start + n * WARP_SIZE + threadCol < N)
                 {
-                    if (N_start + n * 32 + threadCol < N)
-                        regWeights[L * 4 + n] = radial[edge][L][n * 32 + threadCol];
+                    for (int L = 0; L < 4; L++)
+                    {
+                        regWeights[L * 4 + n] = radial[edge][L][n * WARP_SIZE + threadCol];
+                    }
                 }
             }
 
             // perform outer product in registers
-            for (uint m = 0; m < 16; m++)
+            for (uint n = 0; n < TN; n++)
             {
-                int32_t lm_index = sqrt(m);
-                for (uint n = 0; n < TN; n++)
+                if (N_start + n * WARP_SIZE + threadCol < N)
                 {
-                    if (N_start + n * 32 + threadCol < N)
+                    for (uint m = 0; m < 16; m++)
                     {
+                        int32_t lm_index = sqrt(m);
+
                         result[m * 4 + n] += regWeights[lm_index * 4 + n] * regM[m] * regN[n];
                     }
                 }
@@ -126,13 +128,38 @@ __global__ __launch_bounds__(128) void forward_kernel(
 
     __syncthreads();
 
+    for (int n = 0; n < TN; n++)
+    {
+        for (int m = 0; m < 16; m++)
+        {
+            buffer_out[m * 128 + threadRow * WARP_SIZE + threadCol] = result[m * 4 + n];
+        }
+
+        __syncthreads();
+
+        if (N_start + n * WARP_SIZE + threadCol < N)
+        {
+            for (int m = threadRow; m < 16; m += NWARPS_PER_BLOCK)
+            {
+                scalar_t tmp = 0.0;
+
+                for (int j = 0; j < NWARPS_PER_BLOCK; j++)
+                {
+                    tmp += buffer_out[m * 128 + j * WARP_SIZE + threadCol];
+                }
+
+                output[node_index][m][N_start + n * WARP_SIZE + threadCol] = tmp;
+            }
+        }
+    }
+
     // need to sum over partial sums from each subset of edges iterated by each threadRow
-    for (int m = 0; m < 16; m++)
+    /*for (int m = 0; m < 16; m++)
     {
         for (int n = 0; n < TN; n++)
         {
-            // buffer_out[threadRow * 16 * 128 + m * 128 + n * 32 + threadCol] = result[m * 4 + n];
-            atomicAdd(&buffer_out[m * 128 + n * 32 + threadCol], result[m * 4 + n]);
+            // buffer_out[threadRow * 16 * 128 + m * 128 + n * WARP_SIZE + threadCol] = result[m * 4 + n];
+            atomicAdd(&buffer_out[m * 128 + n * WARP_SIZE + threadCol], result[m * 4 + n]);
         }
     }
 
@@ -142,100 +169,10 @@ __global__ __launch_bounds__(128) void forward_kernel(
     {
         for (int n = 0; n < TN; n++)
         {
-            if (N_start + n * 32 + threadCol < N)
-                output[node_index][m][N_start + n * 32 + threadCol] = buffer_out[m * 128 + n * 32 + threadCol];
+            if (N_start + n * WARP_SIZE + threadCol < N)
+                output[node_index][m][N_start + n * WARP_SIZE + threadCol] = buffer_out[m * 128 + n * WARP_SIZE + threadCol];
         }
-    }
-}
-
-template <typename scalar_t, const int TM, const int TN>
-__global__ __launch_bounds__(128) void forward_kernel2(
-    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,               // [nedges nchannels]
-    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,               // [nedges, (L+1)**2]
-    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,          // [nedges, L+1, nchannels]
-    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,    // which index we need to sum a particular edge into -> monotonically increasing.
-    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> first_occurences, // the indexes in reciever_list which deliniate the set of edges per node.
-    torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
-{
-
-    extern __shared__ char buffer[];
-
-    void *sptr = buffer;
-    size_t space = 0;
-
-    float regM[4] = {0.0};
-    float regN[TN] = {0.0};
-    float regWeights[4 * TN] = {0.0};
-    float result[4 * TN] = {0.0};
-
-    const uint threadCol = threadIdx.x % 32;
-    const uint threadRow = threadIdx.x / 32;
-
-    const uint N = X.size(1);
-    const uint edge_start = first_occurences[blockIdx.x];
-    const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1) ? receiver_list.size(0) : first_occurences[blockIdx.x + 1];
-    const uint node_index = receiver_list[edge_start];
-
-    const uint N_start = blockIdx.y * TN * 32;
-
-    __syncthreads();
-
-    // check if this node has neighbours
-    if (edge_end - edge_start == 0)
-    {
-        return;
-    }
-
-    for (uint edge = edge_start; edge < edge_end; edge++)
-    {
-        for (uint n = 0; n < TN; n++)
-        {
-            if (N_start + n * 32 + threadCol < N)
-                regN[n] = X[edge][N_start + n * 32 + threadCol];
-        }
-
-        // load first into registers
-        for (uint m = 0; m < 4; m++)
-        {
-            regM[m] = Y[edge][m * 4 + threadRow];
-        }
-
-        for (int L = 0; L < 4; L++)
-        {
-            for (uint n = 0; n < TN; n++)
-            {
-                if (N_start + n * 32 + threadCol < N)
-                    regWeights[L * 4 + n] = radial[edge][L][n * 32 + threadCol];
-            }
-        }
-
-        // perform outer product in registers
-        for (uint n = 0; n < TN; n++)
-        {
-            if (N_start + n * 32 + threadCol < N)
-            {
-                for (uint m = 0; m < 4; m++)
-                {
-                    int32_t lm_index = sqrt(m * 4 + threadRow);
-
-                    result[m * 4 + n] += regWeights[lm_index * 4 + n] * regM[m] * regN[n];
-                }
-            }
-        }
-    }
-
-    __syncthreads();
-
-    for (uint n = 0; n < TN; n++)
-    {
-        if (N_start + n * 32 + threadCol < N)
-        {
-            for (uint m = 0; m < 4; m++)
-            {
-                output[node_index][m * 4 + threadRow][N_start + n * 32 + threadCol] = result[m * 4 + n];
-            }
-        }
-    }
+    } */
 }
 
 torch::Tensor forward_gpu(
@@ -251,7 +188,7 @@ torch::Tensor forward_gpu(
     const int nspherical_harm = Y.size(1);
     const int nfeatures = X.size(1);
 
-    TORCH_CHECK(nfeatures % 32 == 0, "feature dimension must be a multiple of 32");
+    TORCH_CHECK(nfeatures % WARP_SIZE == 0, "feature dimension must be a multiple of 32");
     TORCH_CHECK(nspherical_harm == 16, "number of edge spherical harmonics must be 16");
     TORCH_CHECK(nfeatures <= 128, "feature dimension cannot be greater than 128");
 
@@ -262,7 +199,7 @@ torch::Tensor forward_gpu(
 
     dim3 gridDim(nnodes, find_integer_divisor(nfeatures, 128));
 
-    dim3 blockDim(128, 1, 1);
+    dim3 blockDim(NWARPS_PER_BLOCK * WARP_SIZE, 1, 1);
 
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "forward_gpu", ([&]
@@ -286,7 +223,7 @@ torch::Tensor forward_gpu(
 }
 
 template <typename scalar_t, const int TM, const int TN>
-__global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
+__global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_kernel(
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X,       // [nedges, feat]
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y,       // [nedges, m]
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,  // [nedges, LMAX, feat]
@@ -307,14 +244,14 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
     scalar_t *buffer_Y = shared_array<scalar_t>(NWARPS_PER_BLOCK * 16, sptr, &space);
     // scalar_t *buffer_dY = shared_array<scalar_t>(NWARPS_PER_BLOCK * 16, sptr, &space);
 
-    const uint threadCol = threadIdx.x % 32;
-    const uint threadRow = threadIdx.x / 32;
+    const uint threadCol = threadIdx.x % WARP_SIZE;
+    const uint threadRow = threadIdx.x / WARP_SIZE;
 
     const uint edge_start = first_occurences[blockIdx.x];
     const uint node_index = receiver_list[edge_start];
     const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1) ? receiver_list.size(0) : first_occurences[blockIdx.x + 1];
 
-    const uint N_start = blockIdx.y * TN * 32;
+    const uint N_start = blockIdx.y * TN * WARP_SIZE;
 
     scalar_t regX[TN] = {0.0};
     scalar_t regW[4 * TN] = {0.0};
@@ -332,8 +269,8 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
     {
         for (int m = 0; m < 4; m++)
         {
-            if (N_start + n * 32 + threadCol < X.size(1))
-                buffer_grad_in[(m * 4 + threadRow) * X.size(1) + n * 32 + threadCol] = grad_in[node_index][m * 4 + threadRow][N_start + n * 32 + threadCol];
+            if (N_start + n * WARP_SIZE + threadCol < X.size(1))
+                buffer_grad_in[(m * 4 + threadRow) * X.size(1) + n * WARP_SIZE + threadCol] = grad_in[node_index][m * 4 + threadRow][N_start + n * WARP_SIZE + threadCol];
         }
     }
 
@@ -349,8 +286,8 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
         {
             for (int n = 0; n < TN; n++)
             {
-                if (N_start + n * 32 + threadCol < X.size(1))
-                    regX[n] = X[edge][N_start + n * 32 + threadCol];
+                if (N_start + n * WARP_SIZE + threadCol < X.size(1))
+                    regX[n] = X[edge][N_start + n * WARP_SIZE + threadCol];
 
                 regGradX[n] = 0.0;
             }
@@ -371,8 +308,8 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
                 {
                     regGradW[L * TN + n] = 0.0;
 
-                    if (N_start + n * 32 + threadCol < X.size(1))
-                        regW[L * TN + n] = radial[edge][L][N_start + n * 32 + threadCol];
+                    if (N_start + n * WARP_SIZE + threadCol < X.size(1))
+                        regW[L * TN + n] = radial[edge][L][N_start + n * WARP_SIZE + threadCol];
                 }
 
                 for (int m = mstart; m < mend; m++)
@@ -383,9 +320,9 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
 
                     for (int n = 0; n < TN; n++)
                     {
-                        if (N_start + n * 32 + threadCol < X.size(1))
+                        if (N_start + n * WARP_SIZE + threadCol < X.size(1))
                         {
-                            scalar_t gradin = buffer_grad_in[m * X.size(1) + n * 32 + threadCol];
+                            scalar_t gradin = buffer_grad_in[m * X.size(1) + n * WARP_SIZE + threadCol];
                             scalar_t w = regW[L * TN + n];
 
                             regGradW[L * TN + n] += sph * regX[n] * gradin;
@@ -398,10 +335,10 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
 
                     for (int offset = 16; offset > 0; offset /= 2)
                     {
-                        dgradY += __shfl_down_sync(FULL_MASK, dgradY, offset, 32);
+                        dgradY += __shfl_down_sync(FULL_MASK, dgradY, offset, WARP_SIZE);
                     }
 
-                    // threadIdx % 32 = 0 dgradY contains the derivative of the output wrt. Y
+                    // threadIdx % WARP_SIZE = 0 dgradY contains the derivative of the output wrt. Y
                     regGradY[m] = dgradY;
                 }
             }
@@ -425,15 +362,15 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
             }
             for (int n = 0; n < TN; n++)
             {
-                if (N_start + n * 32 + threadCol < X.size(1))
+                if (N_start + n * WARP_SIZE + threadCol < X.size(1))
                 {
                     // write grad_radial
                     for (int L = 0; L < 4; L++)
                     {
-                        grad_radial[edge][L][N_start + n * 32 + threadCol] = regGradW[L * TN + n];
+                        grad_radial[edge][L][N_start + n * WARP_SIZE + threadCol] = regGradW[L * TN + n];
                     }
 
-                    gradX[edge][N_start + n * 32 + threadCol] = regGradX[n];
+                    gradX[edge][N_start + n * WARP_SIZE + threadCol] = regGradX[n];
                 }
             }
         }
@@ -473,7 +410,7 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "backward_gpu", ([&]
                                    {
-            dim3 blockDim(NWARPS_PER_BLOCK * 32, 1, 1);
+            dim3 blockDim(NWARPS_PER_BLOCK * WARP_SIZE, 1, 1);
             dim3 gridDim(nnodes, 1);
 
             void *sptr = nullptr;
@@ -508,7 +445,7 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                     gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
             }
-            else if (nfeatures == 32)
+            else if (nfeatures == WARP_SIZE)
             {
                 backward_edge_kernel<scalar_t, 4, 1><<<gridDim, blockDim, space>>>(
                     X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -533,8 +470,7 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                     gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-            }
-        }));
+            } }));
 
     cudaDeviceSynchronize();
 

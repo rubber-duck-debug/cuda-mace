@@ -73,6 +73,13 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         ],
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
+    
+    invariant_message_passing_old = CUDAExtension(
+        '.cuda.invariant_message_passing_old', [
+            'mace_ops/cuda/invariant_message_passing_old.cu'
+        ],
+        extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
 
     symmetric_contraction = CUDAExtension(
         '.cuda.symmetric_contraction', [
@@ -99,7 +106,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
                             'nvcc': nvcc_flags})
 
 
-    #ext_modules.append(tensor_contraction)
+    ext_modules.append(invariant_message_passing_old)
     ext_modules.append(invariant_message_passing)
     ext_modules.append(equivariant_message_passing)
     ext_modules.append(symmetric_contraction)

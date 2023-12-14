@@ -10,6 +10,7 @@ mace_ops/cuda/equivariant_message_passing.cu
 mace_ops/cuda/generators.py
 mace_ops/cuda/instruction.py
 mace_ops/cuda/invariant_message_passing.cu
+mace_ops/cuda/invariant_message_passing_old.cu
 mace_ops/cuda/irreps.py
 mace_ops/cuda/linear.cu
 mace_ops/cuda/linear_wmma.cu
