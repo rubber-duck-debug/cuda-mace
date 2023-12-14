@@ -13,4 +13,4 @@ torch.ops.load_library(_HERE + '/equivariant_message_passing.so')
 
 #torch.ops.load_library(_HERE + '/linear.so')
 torch.ops.load_library(_HERE + '/linear_wmma.so')
-torch.ops.load_library(_HERE + '/embedding_tools.so')
+#torch.ops.load_library(_HERE + '/embedding_tools.so')
