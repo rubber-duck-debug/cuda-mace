@@ -474,69 +474,68 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
     AT_DISPATCH_FLOATING_TYPES(
         X.type(), "backward_gpu", ([&]
                                    {
-                                       dim3 blockDim(NWARPS_PER_BLOCK * 32, 1, 1);
-                                       dim3 gridDim(nnodes, 1);
+            dim3 blockDim(NWARPS_PER_BLOCK * 32, 1, 1);
+            dim3 gridDim(nnodes, 1);
 
-                                       void *sptr = nullptr;
-                                       size_t space = 0;
+            void *sptr = nullptr;
+            size_t space = 0;
 
-                                       shared_array<scalar_t>(16 * X.size(1), sptr, &space);
-                                       shared_array<scalar_t>(NWARPS_PER_BLOCK * 16, sptr, &space);
+            shared_array<scalar_t>(16 * X.size(1), sptr, &space);
+            shared_array<scalar_t>(NWARPS_PER_BLOCK * 16, sptr, &space);
 
-                                       if (nfeatures == 96)
-                                       {
-                                           backward_edge_kernel<scalar_t, 4, 3><<<gridDim, blockDim, space>>>(
-                                               X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-                                       }
-                                       else if (nfeatures == 64)
-                                       {
-                                           backward_edge_kernel<scalar_t, 4, 2><<<gridDim, blockDim, space>>>(
-                                               X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-                                       }
-                                       else if (nfeatures == 32)
-                                       {
-                                           backward_edge_kernel<scalar_t, 4, 1><<<gridDim, blockDim, space>>>(
-                                               X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-                                       }
-                                       else
-                                       {
-                                           backward_edge_kernel<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
-                                               X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
-                                               receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
-                                               gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
-                                               gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-                                       }
-                                       //}
-                                   }));
+            if (nfeatures == 96)
+            {
+                backward_edge_kernel<scalar_t, 4, 3><<<gridDim, blockDim, space>>>(
+                    X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
+            }
+            else if (nfeatures == 64)
+            {
+                backward_edge_kernel<scalar_t, 4, 2><<<gridDim, blockDim, space>>>(
+                    X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
+            }
+            else if (nfeatures == 32)
+            {
+                backward_edge_kernel<scalar_t, 4, 1><<<gridDim, blockDim, space>>>(
+                    X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
+            }
+            else
+            {
+                backward_edge_kernel<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
+                    X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    grad_in.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                    receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
+                    gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                    gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
+            }
+        }));
 
     cudaDeviceSynchronize();
 
