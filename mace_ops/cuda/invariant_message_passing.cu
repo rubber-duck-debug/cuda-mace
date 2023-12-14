@@ -402,7 +402,7 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK * 32) backward_edge_kernel(
                         dgradY += __shfl_down_sync(FULL_MASK, dgradY, offset, 32);
                     }
 
-                    // threadIdx 0 dgradY contains the derivative of the output wrt. Y
+                    // threadIdx % 32 = 0 dgradY contains the derivative of the output wrt. Y
                     regGradY[m] = dgradY;
                 }
             }
