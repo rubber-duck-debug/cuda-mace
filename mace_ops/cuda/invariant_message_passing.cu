@@ -267,11 +267,11 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_ker
 
     for (int n = 0; n < TN; n++)
     {
-        for (int m = 0; m < 4; m++)
-        {
-            if (N_start + n * WARP_SIZE + threadCol < X.size(1))
+        if (N_start + n * WARP_SIZE + threadCol < X.size(1))
+            for (int m = 0; m < 4; m++)
+            {
                 buffer_grad_in[(m * 4 + threadRow) * X.size(1) + n * WARP_SIZE + threadCol] = grad_in[node_index][m * 4 + threadRow][N_start + n * WARP_SIZE + threadCol];
-        }
+            }
     }
 
     __syncthreads();
@@ -299,18 +299,20 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_ker
 
             __syncwarp();
 
-            for (int L = 0; L < 4; L++)
+            for (int n = 0; n < TN; n++)
+            {
+                if (N_start + n * WARP_SIZE + threadCol < X.size(1))
+                    for (int L = 0; L < 4; L++)
+                    {
+                        regGradW[L * TN + n] = 0.0;
+                        regW[L * TN + n] = radial[edge][L][N_start + n * WARP_SIZE + threadCol];
+                    }
+            }
+
+                     for (int L = 0; L < 4; L++)
             {
                 uint mstart = L * L;
                 uint mend = (L + 1) * (L + 1);
-
-                for (int n = 0; n < TN; n++)
-                {
-                    regGradW[L * TN + n] = 0.0;
-
-                    if (N_start + n * WARP_SIZE + threadCol < X.size(1))
-                        regW[L * TN + n] = radial[edge][L][N_start + n * WARP_SIZE + threadCol];
-                }
 
                 for (int m = mstart; m < mend; m++)
                 {
