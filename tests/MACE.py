@@ -1,37 +1,22 @@
-###########################################################################################
-# Implementation of MACE models and other models based E(3)-Equivariant MPNNs
-# Authors: Ilyes Batatia, Gregor Simm
-# This program is distributed under the MIT License (see MIT.md)
-###########################################################################################
-
-from time import time
-
-from typing import Any, Callable, Dict, List, Type, Optional, Union, Tuple
+from typing import Any, Callable, Dict, List, Optional, Type, Union, Tuple
 
 import ase
 import numpy as np
 import torch
-from e3nn import o3, nn
-from e3nn.util.jit import compile_mode
 from mace.tools import torch_geometric
 from mace import data, tools
-from mace.data import AtomicData
+from e3nn import o3, nn
+from mace import modules
+from time import time
+import inspect
+
+from mace.modules.blocks import SphericalHarmonics
+
 from mace.tools.scatter import scatter_sum
 
-from e3nn.util.codegen import CodeGenMixin
-from e3nn.util.jit import compile_mode
-from mace.modules.irreps_tools import (
-    linear_out_irreps,
-    reshape_irreps,
-    tp_out_irreps_with_instructions,
-)
-from mace.tools.cg import U_matrix_real
-
-import opt_einsum_fx
-
 from mace.modules.blocks import (
-    SphericalHarmonics,
     AtomicEnergiesBlock,
+    EquivariantProductBasisBlock,
     InteractionBlock,
     LinearDipoleReadoutBlock,
     LinearNodeEmbeddingBlock,
@@ -49,106 +34,282 @@ from mace.modules.utils import (
     get_symmetric_displacement,
 )
 
-BATCH_EXAMPLE = 10
-ALPHABET = ["w", "x", "v", "n", "z", "r", "t", "y", "u", "o", "p", "s"]
+from mace.modules.irreps_tools import (
+    linear_out_irreps,
+    reshape_irreps,
+    tp_out_irreps_with_instructions,
+)
+
+from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
+from mace_ops.ops.linear import Linear, ElementalLinear
+from mace_ops.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 
-#TODO - NonLinearReadoutBLock, LinearReadoutBlock, EquivariantProductBasisBlock
-#RealAgnosticResidualInteractionBlock
-#RealAgnosticInteractionBlock
+timings = {}
+class_occurence = {}
+run_timeit = False
 
-@compile_mode("script")
-class RealAgnosticInteractionBlock(InteractionBlock):
-    def _setup(self) -> None:
-        # First linear
-        self.linear_up = o3.Linear(
-            self.node_feats_irreps,
-            self.node_feats_irreps,
-            internal_weights=True,
-            shared_weights=True,
+
+def get_name(obj):
+    if hasattr(obj, "__name__"):
+        return obj.__name__
+    elif hasattr(obj, "__class__") and hasattr(obj.__class__, "__name__"):
+        return obj.__class__.__name__
+    else:
+        raise ValueError("Object has no name attribute.")
+
+
+def timeit(fn, *args, **kwargs):
+    global run_timeit
+
+    if not run_timeit:
+        return fn(*args, **kwargs)
+    else:
+        start = time()
+        out = fn(*args, **kwargs)
+        torch.cuda.synchronize()
+        end = time()
+        if hasattr(fn, "__class__"):
+            if not fn.__class__ in class_occurence:
+                timings[fn.__class__.__name__] = {}
+                class_occurence[fn.__class__] = 0
+            else:
+                class_occurence[fn.__class__] += 1
+
+            fn_name = get_name(fn)
+            timings[fn.__class__.__name__][
+                fn_name + str(class_occurence[fn.__class__])
+            ] = (end - start)
+        return out
+
+
+def optimize_cuda_mace(model) -> None:
+    """
+    Optimize the MACE model for CUDA inference.
+    """
+    for param in model.parameters():
+        param.requires_grad = False
+    dtype = get_model_dtype(model)
+    n_layers = int(model.num_interactions)
+    sh_irreps = o3.Irreps.spherical_harmonics(3)
+    spherical_harmonics = SphericalHarmonics(
+        sh_irreps=sh_irreps,
+        normalize=True,
+        normalization="component",
+        backend="opt",
+    )
+    model.spherical_harmonics = spherical_harmonics
+    num_elements = model.node_embedding.linear.irreps_in.num_irreps
+    for i in range(n_layers):
+        model.interactions[i].linear_up = linear_matmul(model.interactions[i].linear_up)
+        model.interactions[i].linear = linear_to_cuda(model.interactions[i].linear)
+        model.interactions[i].tp = InvariantMessagePassingTP()
+        if "Residual" in model.interactions[i].__class__.__name__:
+            bound_method = invariant_residual_interaction_forward.__get__(
+                model.interactions[i], model.interactions[i].__class__
+            )
+            setattr(model.interactions[i], "forward", bound_method)
+        else:
+            model.interactions[i].skip_tp = element_linear_to_cuda(
+                model.interactions[i].skip_tp
+            )
+            bound_method = invariant_interaction_forward.__get__(
+                model.interactions[i], model.interactions[i].__class__
+            )
+            setattr(model.interactions[i], "forward", bound_method)
+
+        symm_contract = model.products[i].symmetric_contractions
+        all_weights = {}
+        for j in range(len(symm_contract.contractions)):
+            all_weights[str(j)] = {}
+            all_weights[str(j)][3] = (
+                symm_contract.contractions[j].weights_max.detach().clone().type(dtype)
+            )
+            all_weights[str(j)][2] = (
+                symm_contract.contractions[j].weights[0].detach().clone().type(dtype)
+            )
+            all_weights[str(j)][1] = (
+                symm_contract.contractions[j].weights[1].detach().clone().type(dtype)
+            )
+        irreps_in = o3.Irreps(model.products[i].symmetric_contractions.irreps_in)
+        coupling_irreps = o3.Irreps([irrep.ir for irrep in irreps_in])
+        irreps_out = o3.Irreps(model.products[i].symmetric_contractions.irreps_out)
+        symmetric_contractions = CUDAContraction(
+            coupling_irreps,
+            irreps_out,
+            all_weights,
+            nthreadX=32,
+            nthreadY=4,
+            nthreadZ=1,
+            dtype=dtype,
+        )
+        model.products[i].symmetric_contractions = SymmetricContractionWrapper(
+            symmetric_contractions
+        )
+        model.products[i].linear = linear_matmul(model.products[i].linear)
+    return model
+
+
+class SymmetricContractionWrapper(torch.nn.Module):
+    def __init__(self, symmetric_contractions):
+        super().__init__()
+        self.symmetric_contractions = symmetric_contractions
+
+    def forward(self, x, y):
+        y = y.argmax(dim=-1).int()
+        out = self.symmetric_contractions(x, y).squeeze()
+        return out
+
+
+def get_model_dtype(model: torch.nn.Module) -> torch.dtype:
+    """Get the dtype of the model"""
+    model_dtype = next(model.parameters()).dtype
+    return model_dtype
+
+
+class linear_matmul(torch.nn.Module):
+    def __init__(self, linear_e3nn):
+        super().__init__()
+        num_channels_in = linear_e3nn.__dict__["irreps_in"].num_irreps
+        num_channels_out = linear_e3nn.__dict__["irreps_out"].num_irreps
+        self.weights = (
+            linear_e3nn.weight.data.reshape(num_channels_in, num_channels_out)
+            / num_channels_in**0.5
         )
 
-        print ("RealAgnosticInteractionBlock: node_feats_irreps = ", self.node_feats_irreps)
-        print ("RealAgnosticInteractionBlock: edge_attrs_irreps = ", self.edge_attrs_irreps)
-
-        # TensorProduct
-        irreps_mid, instructions = tp_out_irreps_with_instructions(
-            self.node_feats_irreps,
-            self.edge_attrs_irreps,
-            self.target_irreps,
-        )
-        
-        print (instructions)
-
-        
-        print ("RealAgnosticInteractionBlock: irreps_mid = ", irreps_mid)
-
-        self.conv_tp = o3.TensorProduct(
-            self.node_feats_irreps,
-            self.edge_attrs_irreps,
-            irreps_mid,
-            instructions=instructions,
-            shared_weights=False,
-            internal_weights=False,
-        )
-
-        # Convolution weights
-        input_dim = self.edge_feats_irreps.num_irreps
-
-        print("RealAgnosticInteractionBlock: input dim = ", input_dim, self.conv_tp.weight_numel)
-        self.conv_tp_weights = nn.FullyConnectedNet(
-            [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
-            torch.nn.functional.silu,
-        )
-
-        # Linear
-        irreps_mid = irreps_mid.simplify()
-        self.irreps_out = self.target_irreps
-        self.linear = o3.Linear(
-            irreps_mid, self.irreps_out, internal_weights=True, shared_weights=True
-        )
-
-        print ("RealAgnosticInteractionBlock: irreps_out =", self.irreps_out)
-
-        # Selector TensorProduct
-        self.skip_tp = o3.FullyConnectedTensorProduct(
-            self.irreps_out, self.node_attrs_irreps, self.irreps_out
-        )
-        self.reshape = reshape_irreps(self.irreps_out)
-
-    def forward(
-        self,
-        node_attrs: torch.Tensor,
-        node_feats: torch.Tensor,
-        edge_attrs: torch.Tensor,
-        edge_feats: torch.Tensor,
-        edge_index: torch.Tensor,
-    ) -> Tuple[torch.Tensor, None]:
-        sender = edge_index[0]
-        receiver = edge_index[1]
-        num_nodes = node_feats.shape[0]
-        node_feats = self.linear_up(node_feats)
-        tp_weights = self.conv_tp_weights(edge_feats)
-
-        print ("RealAgnosticInteractionBlock: TP weights shape =", tp_weights.shape)
-        mji = self.conv_tp(
-            node_feats[sender], edge_attrs, tp_weights
-        )  # [n_edges, irreps]
-
-        #print (mji.shape)
-
-        message = scatter_sum(
-            src=mji, index=receiver, dim=0, dim_size=num_nodes
-        )  # [n_nodes, irreps]
-        message = self.linear(message) / self.avg_num_neighbors
-        message = self.skip_tp(message, node_attrs)
-        return (
-            self.reshape(message),
-            None,
-        )  # [n_nodes, channels, (lmax + 1)**2]
+    def forward(self, x):
+        return torch.matmul(x, self.weights)
 
 
-@compile_mode("script")
+def linear_to_cuda(linear):
+    return Linear(
+        linear.__dict__["irreps_in"],
+        linear.__dict__["irreps_out"],
+        linear.instructions,
+        linear.weight,
+    )
+
+
+def element_linear_to_cuda(skip_tp):
+    print("elementlinear", skip_tp)
+    num_elements = skip_tp.__dict__["irreps_in2"].dim
+    n_channels = skip_tp.__dict__["irreps_in1"][0].dim
+    lmax = skip_tp.__dict__["irreps_in1"].lmax
+    ws = skip_tp.weight.data.reshape(
+        [lmax + 1, n_channels, num_elements, n_channels]
+    ).permute(2, 0, 1, 3)
+    ws = ws.flatten(1) / sqrt(num_elements)
+    linear_instructions = o3.Linear(
+        skip_tp.__dict__["irreps_in1"], skip_tp.__dict__["irreps_out"]
+    )
+    return ElementalLinear(
+        skip_tp.__dict__["irreps_in1"],
+        skip_tp.__dict__["irreps_out"],
+        linear_instructions.instructions,
+        ws,
+        num_elements,
+    )
+
+
+def invariant_residual_interaction_forward(
+    self,
+    node_attrs: torch.Tensor,
+    node_feats: torch.Tensor,
+    edge_attrs: torch.Tensor,
+    edge_feats: torch.Tensor,
+    edge_index: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    global run_timeit
+    sender = edge_index[0]
+    receiver = edge_index[1]
+    num_nodes = torch.tensor(node_feats.shape[0])
+    if run_timeit:
+        print (node_feats.shape, node_attrs.shape)
+    start = time()
+    sc = self.skip_tp(node_feats, node_attrs)
+    torch.cuda.synchronize()
+    end = time()
+    if run_timeit:
+        print("skip_tp", (end - start) * 1000, "ms")
+    
+    start = time()
+    node_feats = self.linear_up(node_feats)
+    torch.cuda.synchronize()
+    end = time()
+    if run_timeit:
+        print("linear_up", (end - start) * 1000, "ms")
+    
+    print (edge_feats.shape)
+    start = time()
+    tp_weights = self.conv_tp_weights(edge_feats)
+    torch.cuda.synchronize()
+    end = time()
+
+    if run_timeit:
+        print("conv_tp_weights", (end - start) * 1000, "ms")
+
+    #tp_weights = torch.randn(tp_weights.shape[0], 4, 96, device='cuda', dtype=torch.float32, requires_grad=True)
+    #torch.cuda.synchronize()
+    nf  = node_feats[sender]
+    torch.cuda.synchronize()
+    
+    start = time()
+    message = self.tp.forward(
+        nf,
+        edge_attrs,
+        #tp_weights,
+        tp_weights.view(tp_weights.shape[0], -1, node_feats.shape[-1]),
+        receiver.int(),
+        num_nodes,
+    )
+    torch.cuda.synchronize()
+    end = time()
+
+    if run_timeit:
+        print("tp: ", (end - start) * 1000, "ms")
+
+    start = time()
+    message = self.linear(message) / self.avg_num_neighbors
+    torch.cuda.synchronize()
+    end = time()
+
+    if run_timeit:
+        print("message", (end - start) * 1000, "ms")
+    return (
+        message.contiguous(),
+        sc,
+    )  # [n_nodes, channels, (lmax + 1)**2]
+
+
+def invariant_interaction_forward(
+    self,
+    node_attrs: torch.Tensor,
+    node_feats: torch.Tensor,
+    edge_attrs: torch.Tensor,
+    edge_feats: torch.Tensor,
+    edge_index: torch.Tensor,
+) -> Tuple[torch.Tensor, None]:
+    sender = edge_index[0]
+    receiver = edge_index[1]
+    num_nodes = torch.tensor(node_feats.shape[0])
+    node_feats = self.linear_up(node_feats)
+    tp_weights = self.conv_tp_weights(edge_feats)
+    message = self.tp.forward(
+        node_feats[sender],
+        edge_attrs,
+        tp_weights.view(tp_weights.shape[0], -1, node_feats.shape[-1]),
+        receiver.int(),
+        num_nodes,
+    )
+
+    message = self.linear(message) / self.avg_num_neighbors
+    message = self.skip_tp(message, node_attrs)
+    return (
+        message,
+        None,
+    )  # [n_nodes, channels, (lmax + 1)**2]
+
+
 class RealAgnosticResidualInteractionBlock(InteractionBlock):
     def _setup(self) -> None:
         # First linear
@@ -158,17 +319,12 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             internal_weights=True,
             shared_weights=True,
         )
-
-        print ("RealAgnosticResidualInteractionBlock: node_feats_irreps = ", self.node_feats_irreps)
         # TensorProduct
         irreps_mid, instructions = tp_out_irreps_with_instructions(
             self.node_feats_irreps,
             self.edge_attrs_irreps,
             self.target_irreps,
         )
-        print ("RealAgnosticResidualInteractionBlock: edge_attrs_irreps = ", self.edge_attrs_irreps)
-        print ("RealAgnosticResidualInteractionBlock: target_irreps = ", self.target_irreps)
-
         self.conv_tp = o3.TensorProduct(
             self.node_feats_irreps,
             self.edge_attrs_irreps,
@@ -178,37 +334,26 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             internal_weights=False,
         )
 
-        print (instructions)
-
-
-        print ("RealAgnosticResidualInteractionBlock: irreps_mid = ", irreps_mid)
-
         # Convolution weights
         input_dim = self.edge_feats_irreps.num_irreps
         self.conv_tp_weights = nn.FullyConnectedNet(
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
             torch.nn.functional.silu,
         )
+        
+        print ([input_dim] + self.radial_MLP + [self.conv_tp.weight_numel])
 
         # Linear
         irreps_mid = irreps_mid.simplify()
-
-        print ("RealAgnosticResidualInteractionBlock: irreps_mid simplify = ", irreps_mid)
-        
         self.irreps_out = self.target_irreps
         self.linear = o3.Linear(
             irreps_mid, self.irreps_out, internal_weights=True, shared_weights=True
         )
 
-        print ("RealAgnosticResidualInteractionBlock: irreps_out = ", self.irreps_out)
-
         # Selector TensorProduct
         self.skip_tp = o3.FullyConnectedTensorProduct(
             self.node_feats_irreps, self.node_attrs_irreps, self.hidden_irreps
         )
-
-        print ("RealAgnosticResidualInteractionBlock: skip_tp = ", self.node_feats_irreps, self.node_attrs_irreps, self.hidden_irreps)
-
         self.reshape = reshape_irreps(self.irreps_out)
 
     def forward(
@@ -225,16 +370,9 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
         sc = self.skip_tp(node_feats, node_attrs)
         node_feats = self.linear_up(node_feats)
         tp_weights = self.conv_tp_weights(edge_feats)
-
-        print ("RealAgnosticResidualInteractionBlock: TP weights shape =", tp_weights.shape)
-        print ("RealAgnosticResidualInteractionBlock: node_feats[sender] shape =", node_feats[sender].shape, "edge_attrs shape = ", edge_attrs.shape)
-        print ("TP weights shape: ", tp_weights.shape)
         mji = self.conv_tp(
             node_feats[sender], edge_attrs, tp_weights
         )  # [n_edges, irreps]
-
-        #print (mji.shape)
-
         message = scatter_sum(
             src=mji, index=receiver, dim=0, dim_size=num_nodes
         )  # [n_nodes, irreps]
@@ -244,265 +382,7 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             sc,
         )  # [n_nodes, channels, (lmax + 1)**2]
 
-@compile_mode("script")
-class EquivariantProductBasisBlock(torch.nn.Module):
-    def __init__(
-        self,
-        node_feats_irreps: o3.Irreps,
-        target_irreps: o3.Irreps,
-        correlation: int,
-        use_sc: bool = True,
-        num_elements: Optional[int] = None,
-    ) -> None:
-        super().__init__()
 
-        self.use_sc = use_sc
-        self.symmetric_contractions = SymmetricContraction(
-            irreps_in=node_feats_irreps,
-            irreps_out=target_irreps,
-            correlation=correlation,
-            num_elements=num_elements,
-        )
-        # Update linear
-        self.linear = o3.Linear(
-            target_irreps,
-            target_irreps,
-            internal_weights=True,
-            shared_weights=True,
-        )
-        print ("EquivariantProductBasisBlock: irreps_in = ", node_feats_irreps)
-        print ("EquivariantProductBasisBlock: target_irreps = ", target_irreps)
-        
-        
-    def forward(
-        self,
-        node_feats: torch.Tensor,
-        sc: Optional[torch.Tensor],
-        node_attrs: torch.Tensor,
-    ) -> torch.Tensor:
-        node_feats = self.symmetric_contractions(node_feats, node_attrs)
-        if self.use_sc and sc is not None:
-            return self.linear(node_feats) + sc
-
-        return self.linear(node_feats)
-    
-
-@compile_mode("script")
-class SymmetricContraction(CodeGenMixin, torch.nn.Module):
-    def __init__(
-        self,
-        irreps_in: o3.Irreps,
-        irreps_out: o3.Irreps,
-        correlation: Union[int, Dict[str, int]],
-        irrep_normalization: str = "component",
-        path_normalization: str = "element",
-        internal_weights: Optional[bool] = None,
-        shared_weights: Optional[bool] = None,
-        cuda_optimized: Optional[bool] = False,
-        num_elements: Optional[int] = None,
-    ) -> None:
-        super().__init__()
-
-        if irrep_normalization is None:
-            irrep_normalization = "component"
-
-        if path_normalization is None:
-            path_normalization = "element"
-
-        assert irrep_normalization in ["component", "norm", "none"]
-        assert path_normalization in ["element", "path", "none"]
-
-        self.irreps_in = o3.Irreps(irreps_in)
-        self.irreps_out = o3.Irreps(irreps_out)
-
-        del irreps_in, irreps_out
-
-        if not isinstance(correlation, tuple):
-            corr = correlation
-            correlation = {}
-            for irrep_out in self.irreps_out:
-                correlation[irrep_out] = corr
-
-        assert shared_weights or not internal_weights
-
-        if internal_weights is None:
-            internal_weights = True
-
-        self.internal_weights = internal_weights
-        self.shared_weights = shared_weights
-
-        del internal_weights, shared_weights
-
-        self.contractions = torch.nn.ModuleList()
-
-        for irrep_out in self.irreps_out:
-            self.contractions.append(
-                Contraction(
-                    irreps_in=self.irreps_in,
-                    irrep_out=o3.Irreps(str(irrep_out.ir)),
-                    correlation=correlation[irrep_out],
-                    internal_weights=self.internal_weights,
-                    num_elements=num_elements,
-                    weights=self.shared_weights,
-                )
-            )
-
-    def forward(self, x: torch.Tensor, y: torch.Tensor):
-        outs = [contraction(x, y) for contraction in self.contractions]
-        return torch.cat(outs, dim=-1)
-
-
-@compile_mode("script")
-class Contraction(torch.nn.Module):
-    def __init__(
-        self,
-        irreps_in: o3.Irreps,
-        irrep_out: o3.Irreps,
-        correlation: int,
-        internal_weights: bool = True,
-        num_elements: Optional[int] = None,
-        weights: Optional[torch.Tensor] = None,
-    ) -> None:
-        super().__init__()
-
-        self.num_features = irreps_in.count((0, 1))
-        self.coupling_irreps = o3.Irreps([irrep.ir for irrep in irreps_in])
-        self.correlation = correlation
-        dtype = torch.get_default_dtype()
-        for nu in range(1, correlation + 1):
-            U_matrix = U_matrix_real(
-                irreps_in=self.coupling_irreps,
-                irreps_out=irrep_out,
-                correlation=nu,
-                dtype=dtype,
-            )[-1]
-            self.register_buffer(f"U_matrix_{nu}", U_matrix)
-
-        # Tensor contraction equations
-        self.contractions_weighting = torch.nn.ModuleList()
-        self.contractions_features = torch.nn.ModuleList()
-
-        # Create weight for product basis
-        self.weights = torch.nn.ParameterList([])
-
-        for i in range(correlation, 0, -1):
-            # Shapes definying
-            num_params = self.U_tensors(i).size()[-1]
-            num_equivariance = 2 * irrep_out.lmax + 1
-            num_ell = self.U_tensors(i).size()[-2]
-
-            if i == correlation:
-                parse_subscript_main = (
-                    [ALPHABET[j] for j in range(i + min(irrep_out.lmax, 1) - 1)]
-                    + ["ik,ekc,bci,be -> bc"]
-                    + [ALPHABET[j] for j in range(i + min(irrep_out.lmax, 1) - 1)]
-                )
-                graph_module_main = torch.fx.symbolic_trace(
-                    lambda x, y, w, z: torch.einsum(
-                        "".join(parse_subscript_main), x, y, w, z
-                    )
-                )
-
-                # Optimizing the contractions
-                self.graph_opt_main = opt_einsum_fx.optimize_einsums_full(
-                    model=graph_module_main,
-                    example_inputs=(
-                        torch.randn(
-                            [num_equivariance] + [num_ell] * i + [num_params]
-                        ).squeeze(0),
-                        torch.randn((num_elements, num_params, self.num_features)),
-                        torch.randn((BATCH_EXAMPLE, self.num_features, num_ell)),
-                        torch.randn((BATCH_EXAMPLE, num_elements)),
-                    ),
-                )
-                # Parameters for the product basis
-                w = torch.nn.Parameter(
-                    torch.randn((num_elements, num_params, self.num_features))
-                    / num_params
-                )
-                self.weights_max = w
-            else:
-                # Generate optimized contractions equations
-                parse_subscript_weighting = (
-                    [ALPHABET[j] for j in range(i + min(irrep_out.lmax, 1))]
-                    + ["k,ekc,be->bc"]
-                    + [ALPHABET[j] for j in range(i + min(irrep_out.lmax, 1))]
-                )
-                parse_subscript_features = (
-                    ["bc"]
-                    + [ALPHABET[j] for j in range(i - 1 + min(irrep_out.lmax, 1))]
-                    + ["i,bci->bc"]
-                    + [ALPHABET[j] for j in range(i - 1 + min(irrep_out.lmax, 1))]
-                )
-
-                # Symbolic tracing of contractions
-                graph_module_weighting = torch.fx.symbolic_trace(
-                    lambda x, y, z: torch.einsum(
-                        "".join(parse_subscript_weighting), x, y, z
-                    )
-                )
-                graph_module_features = torch.fx.symbolic_trace(
-                    lambda x, y: torch.einsum("".join(parse_subscript_features), x, y)
-                )
-
-                # Optimizing the contractions
-                graph_opt_weighting = opt_einsum_fx.optimize_einsums_full(
-                    model=graph_module_weighting,
-                    example_inputs=(
-                        torch.randn(
-                            [num_equivariance] + [num_ell] * i + [num_params]
-                        ).squeeze(0),
-                        torch.randn((num_elements, num_params, self.num_features)),
-                        torch.randn((BATCH_EXAMPLE, num_elements)),
-                    ),
-                )
-                graph_opt_features = opt_einsum_fx.optimize_einsums_full(
-                    model=graph_module_features,
-                    example_inputs=(
-                        torch.randn(
-                            [BATCH_EXAMPLE, self.num_features, num_equivariance]
-                            + [num_ell] * i
-                        ).squeeze(2),
-                        torch.randn((BATCH_EXAMPLE, self.num_features, num_ell)),
-                    ),
-                )
-                self.contractions_weighting.append(graph_opt_weighting)
-                self.contractions_features.append(graph_opt_features)
-                # Parameters for the product basis
-                w = torch.nn.Parameter(
-                    torch.randn((num_elements, num_params, self.num_features))
-                    / num_params
-                )
-                self.weights.append(w)
-        if not internal_weights:
-            self.weights = weights[:-1]
-            self.weights_max = weights[-1]
-
-    def forward(self, x: torch.Tensor, y: torch.Tensor):
-        out = self.graph_opt_main(
-            self.U_tensors(self.correlation),
-            self.weights_max,
-            x,
-            y,
-        )
-        for i, (weight, contract_weights, contract_features) in enumerate(
-            zip(self.weights, self.contractions_weighting, self.contractions_features)
-        ):
-            c_tensor = contract_weights(
-                self.U_tensors(self.correlation - i - 1),
-                weight,
-                y,
-            )
-            c_tensor = c_tensor + out
-            out = contract_features(c_tensor, x)
-        resize_shape = torch.prod(torch.tensor(out.shape[1:]))
-        return out.view(out.shape[0], resize_shape)
-
-    def U_tensors(self, nu: int):
-        return dict(self.named_buffers())[f"U_matrix_{nu}"]
-
-
-@compile_mode("script")
 class MACE(torch.nn.Module):
     def __init__(
         self,
@@ -519,52 +399,47 @@ class MACE(torch.nn.Module):
         atomic_energies: np.ndarray,
         avg_num_neighbors: float,
         atomic_numbers: List[int],
-        correlation: int,
+        correlation: Union[int, List[int]],
         gate: Optional[Callable],
         radial_MLP: Optional[List[int]] = None,
+        radial_type: Optional[str] = "bessel",
     ):
         super().__init__()
         self.register_buffer(
             "atomic_numbers", torch.tensor(atomic_numbers, dtype=torch.int64)
         )
-        self.register_buffer("r_max", torch.tensor(r_max, dtype=torch.float64))
+        self.register_buffer(
+            "r_max", torch.tensor(r_max, dtype=torch.get_default_dtype())
+        )
         self.register_buffer(
             "num_interactions", torch.tensor(num_interactions, dtype=torch.int64)
         )
+        if isinstance(correlation, int):
+            correlation = [correlation] * num_interactions
         # Embedding
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
         node_feats_irreps = o3.Irreps([(hidden_irreps.count(o3.Irrep(0, 1)), (0, 1))])
-
         self.node_embedding = LinearNodeEmbeddingBlock(
             irreps_in=node_attr_irreps, irreps_out=node_feats_irreps
         )
-
         self.radial_embedding = RadialEmbeddingBlock(
             r_max=r_max,
             num_bessel=num_bessel,
             num_polynomial_cutoff=num_polynomial_cutoff,
+            radial_type=radial_type,
         )
         edge_feats_irreps = o3.Irreps(f"{self.radial_embedding.out_dim}x0e")
 
         sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
         num_features = hidden_irreps.count(o3.Irrep(0, 1))
         interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
-
-        
-        self.spherical_harmonics = SphericalHarmonics(
+        self.spherical_harmonics = o3.SphericalHarmonics(
             sh_irreps, normalize=True, normalization="component"
         )
         if radial_MLP is None:
             radial_MLP = [64, 64, 64]
         # Interactions and readout
         self.atomic_energies_fn = AtomicEnergiesBlock(atomic_energies)
-
-        print ("MACE: node_attrs_irreps=", node_attr_irreps)
-        print ("MACE: node_feats_irreps=", node_feats_irreps)
-        print ("MACE: edge_attrs_irreps=", sh_irreps)
-        print ("MACE: edge_feats_irreps=",edge_feats_irreps)
-        print ("MACE: target_irreps=",interaction_irreps)
-        print ("MACE: hidden_irreps=",hidden_irreps)
 
         inter = interaction_cls_first(
             node_attrs_irreps=node_attr_irreps,
@@ -584,13 +459,10 @@ class MACE(torch.nn.Module):
             use_sc_first = True
 
         node_feats_irreps_out = inter.target_irreps
-
-        print ("MACE: node_feats_irreps_out=",node_feats_irreps_out)
-
         prod = EquivariantProductBasisBlock(
             node_feats_irreps=node_feats_irreps_out,
             target_irreps=hidden_irreps,
-            correlation=correlation,
+            correlation=correlation[0],
             num_elements=num_elements,
             use_sc=use_sc_first,
         )
@@ -620,7 +492,7 @@ class MACE(torch.nn.Module):
             prod = EquivariantProductBasisBlock(
                 node_feats_irreps=interaction_irreps,
                 target_irreps=hidden_irreps_out,
-                correlation=correlation,
+                correlation=correlation[i + 1],
                 num_elements=num_elements,
                 use_sc=True,
             )
@@ -645,7 +517,7 @@ class MACE(torch.nn.Module):
         data["node_attrs"].requires_grad_(True)
         data["positions"].requires_grad_(True)
         num_graphs = data["ptr"].numel() - 1
-        displacement = torch.zeros(
+        displacement = torch.empty(
             (num_graphs, 3, 3),
             dtype=data["positions"].dtype,
             device=data["positions"].device,
@@ -655,7 +527,8 @@ class MACE(torch.nn.Module):
                 data["positions"],
                 data["shifts"],
                 displacement,
-            ) = get_symmetric_displacement(
+            ) = timeit(
+                get_symmetric_displacement,
                 positions=data["positions"],
                 unit_shifts=data["unit_shifts"],
                 cell=data["cell"],
@@ -665,54 +538,70 @@ class MACE(torch.nn.Module):
             )
 
         # Atomic energies
-        node_e0 = self.atomic_energies_fn(data["node_attrs"])
-        e0 = scatter_sum(
-            src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs
+        node_e0 = timeit(self.atomic_energies_fn, data["node_attrs"])
+        # node_e0 = self.atomic_energies_fn(data["node_attrs"])
+        e0 = timeit(
+            scatter_sum, src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs
         )  # [n_graphs,]
 
         # Embeddings
-        node_feats = self.node_embedding(data["node_attrs"])
-        vectors, lengths = get_edge_vectors_and_lengths(
+        node_feats = timeit(self.node_embedding, data["node_attrs"])
+        vectors, lengths = timeit(
+            get_edge_vectors_and_lengths,
             positions=data["positions"],
             edge_index=data["edge_index"],
             shifts=data["shifts"],
         )
-        edge_attrs = self.spherical_harmonics(vectors)
-        edge_feats = self.radial_embedding(lengths)
+
+        edge_attrs = timeit(self.spherical_harmonics, vectors)
+        edge_feats = timeit(self.radial_embedding, lengths)
 
         # Interactions
         energies = [e0]
         node_energies_list = [node_e0]
+        node_feats_list = []
         for interaction, product, readout in zip(
             self.interactions, self.products, self.readouts
         ):
-            node_feats, sc = interaction(
+            node_feats, sc = timeit(
+                interaction,
                 node_attrs=data["node_attrs"],
                 node_feats=node_feats,
                 edge_attrs=edge_attrs,
                 edge_feats=edge_feats,
                 edge_index=data["edge_index"],
             )
-            node_feats = product(
-                node_feats=node_feats,
-                sc=sc,
-                node_attrs=data["node_attrs"],
+
+            node_feats = timeit(
+                product, node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]
             )
-            node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
-            energy = scatter_sum(
-                src=node_energies, index=data["batch"], dim=-1, dim_size=num_graphs
+
+            node_feats_list.append(node_feats)
+            node_energies = timeit(readout, node_feats).squeeze(-1)  # [n_nodes, ]
+            energy = timeit(
+                scatter_sum,
+                src=node_energies,
+                index=data["batch"],
+                dim=-1,
+                dim_size=num_graphs,
             )  # [n_graphs,]
             energies.append(energy)
             node_energies_list.append(node_energies)
 
+        # Concatenate node features
+        node_feats_out = torch.cat(node_feats_list, dim=-1)
+
         # Sum over energy contributions
-        contributions = torch.stack(energies, dim=-1)
-        print("contributions", contributions.shape)
-        total_energy = torch.sum(contributions, dim=-1)  # [n_graphs, ]
-        node_energy_contributions = torch.stack(node_energies_list, dim=-1)
-        node_energy = torch.sum(node_energy_contributions, dim=-1)  # [n_nodes, ]
+        contributions = timeit(torch.stack, energies, dim=-1)
+        total_energy = timeit(torch.sum, contributions, dim=-1)  # [n_graphs, ]
+        node_energy_contributions = timeit(torch.stack, node_energies_list, dim=-1)
+        node_energy = timeit(
+            torch.sum, node_energy_contributions, dim=-1
+        )  # [n_nodes, ]
+
         # Outputs
-        forces, virials, stress = get_outputs(
+        forces, virials, stress = timeit(
+            get_outputs,
             energy=total_energy,
             positions=data["positions"],
             displacement=displacement,
@@ -731,192 +620,105 @@ class MACE(torch.nn.Module):
             "virials": virials,
             "stress": stress,
             "displacement": displacement,
+            "node_feats": node_feats_out,
         }
 
 
-@compile_mode("script")
-class ScaleShiftMACE(MACE):
-    def __init__(
-        self,
-        atomic_inter_scale: float,
-        atomic_inter_shift: float,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.scale_shift = ScaleShiftBlock(
-            scale=atomic_inter_scale, shift=atomic_inter_shift
-        )
+def print_recursive(dictionary, indent=0):
+    for key, value in dictionary.items():
+        print("\t" * indent + f"{key}:", end=" ")
+        if isinstance(value, dict):
+            print()
+            print_recursive(value, indent + 1)
+        else:
+            print(value * 1000, "ms")
 
-    def forward(
-        self,
-        data: Dict[str, torch.Tensor],
-        training: bool = False,
-        compute_force: bool = True,
-        compute_virials: bool = False,
-        compute_stress: bool = False,
-        compute_displacement: bool = False,
-    ) -> Dict[str, Optional[torch.Tensor]]:
-        # Setup
-        data["positions"].requires_grad_(True)
-        data["node_attrs"].requires_grad_(True)
-        num_graphs = data["ptr"].numel() - 1
-        displacement = torch.zeros(
-            (num_graphs, 3, 3),
-            dtype=data["positions"].dtype,
-            device=data["positions"].device,
-        )
-        if compute_virials or compute_stress or compute_displacement:
-            (
-                data["positions"],
-                data["shifts"],
-                displacement,
-            ) = get_symmetric_displacement(
-                positions=data["positions"],
-                unit_shifts=data["unit_shifts"],
-                cell=data["cell"],
-                edge_index=data["edge_index"],
-                num_graphs=num_graphs,
-                batch=data["batch"],
-            )
 
-        # Atomic energies
-        node_e0 = self.atomic_energies_fn(data["node_attrs"])
-        e0 = scatter_sum(
-            src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs
-        )  # [n_graphs,]
+def recursive_sum(dictionary):
+    total = 0.0
+    for value in dictionary.values():
+        if isinstance(value, dict):
+            total += recursive_sum(value)
+        else:
+            total += value
 
-        # Embeddings
-        node_feats = self.node_embedding(data["node_attrs"])
-        vectors, lengths = get_edge_vectors_and_lengths(
-            positions=data["positions"],
-            edge_index=data["edge_index"],
-            shifts=data["shifts"],
-        )
-        edge_attrs = self.spherical_harmonics(vectors)
-        edge_feats = self.radial_embedding(lengths)
+    return total
 
-        # Interactions
-        node_es_list = []
-        for interaction, product, readout in zip(
-            self.interactions, self.products, self.readouts
-        ):
-            node_feats, sc = interaction(
-                node_attrs=data["node_attrs"],
-                node_feats=node_feats,
-                edge_attrs=edge_attrs,
-                edge_feats=edge_feats,
-                edge_index=data["edge_index"],
-            )
-            node_feats = product(
-                node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]
-            )
-            node_es_list.append(readout(node_feats).squeeze(-1))  # {[n_nodes, ], }
 
-        # Sum over interactions
-        node_inter_es = torch.sum(
-            torch.stack(node_es_list, dim=0), dim=0
-        )  # [n_nodes, ]
-        node_inter_es = self.scale_shift(node_inter_es)
+def run_test():
+    global run_timeit
+    from ase import build
+    from mace import modules
 
-        # Sum over nodes in graph
-        inter_e = scatter_sum(
-            src=node_inter_es, index=data["batch"], dim=-1, dim_size=num_graphs
-        )  # [n_graphs,]
+    size = 9
+    cutoff = 4.0
 
-        # Add E_0 and (scaled) interaction energy
-        total_energy = e0 + inter_e
-        node_energy = node_e0 + node_inter_es
+    # build very large diamond structure
+    atoms = build.bulk("C", "diamond", a=3.567, cubic=True)
+    atoms_list = [atoms.repeat((size, size, size))]
+    print("Number of atoms", len(atoms_list[0]))
 
-        forces, virials, stress = get_outputs(
-            energy=inter_e,
-            positions=data["positions"],
-            displacement=displacement,
-            cell=data["cell"],
-            training=training,
-            compute_force=compute_force,
-            compute_virials=compute_virials,
-            compute_stress=compute_stress,
-        )
+    configs = [data.config_from_atoms(atoms) for atoms in atoms_list]
 
-        output = {
-            "energy": total_energy,
-            "node_energy": node_energy,
-            "interaction_energy": inter_e,
-            "forces": forces,
-            "virials": virials,
-            "stress": stress,
-            "displacement": displacement,
-        }
-
-        return output
-    
-
-def run_test(benchmark_file):
-
-    atoms_list = ase.io.read(benchmark_file, format="extxyz", index=":")
-    configs = [data.config_from_atoms(atoms) for atoms in atoms_list] * 5
-
-    z_table = tools.get_atomic_number_table_from_zs(
-        z
-        for config in configs
-        for z in config.atomic_numbers
+    z_table = tools.AtomicNumberTable(
+        [int(z) for z in np.unique(configs[0].atomic_numbers)]
     )
 
     nnodes = configs[0].atomic_numbers.shape[0]
 
     data_loader = torch_geometric.dataloader.DataLoader(
         dataset=[
-            data.AtomicData.from_config(
-                config, z_table=z_table, cutoff=4.5
-            )
+            data.AtomicData.from_config(config, z_table=z_table, cutoff=cutoff)
             for config in configs
         ],
-        batch_size=5,
+        batch_size=1,
         shuffle=False,
         drop_last=False,
     )
+    atomic_energies = np.array([1.0], dtype=float)
 
     batch = next(iter(data_loader)).to("cuda")
 
-    sender = batch['edge_index'][0]
-    receiver = batch['edge_index'][1]
+    model_config = dict(
+        r_max=cutoff,
+        num_bessel=8,
+        num_polynomial_cutoff=6,
+        max_ell=3,
+        interaction_cls=RealAgnosticResidualInteractionBlock,
+        interaction_cls_first=RealAgnosticResidualInteractionBlock,
+        num_interactions=2,
+        num_elements=1,
+        hidden_irreps=o3.Irreps("96x0e"),
+        MLP_irreps=o3.Irreps("16x0e"),
+        gate=torch.nn.functional.silu,
+        atomic_energies=atomic_energies,
+        avg_num_neighbors=70,
+        atomic_numbers=z_table.zs,
+        correlation=3,
+        radial_type="bessel",
+    )
+    model = MACE(**model_config).to("cuda")
+    model = optimize_cuda_mace(model)
 
-    mace = ScaleShiftMACE(atomic_inter_scale = 1.0, 
-                   atomic_inter_shift = 1.0,
-                   r_max=4.0,
-                   num_bessel=8,
-                   num_polynomial_cutoff=5.0,
-                   max_ell=3,
-                   interaction_cls = RealAgnosticResidualInteractionBlock,
-                   interaction_cls_first = RealAgnosticInteractionBlock,
-                   num_interactions=2,
-                   num_elements=3,
-                   hidden_irreps=o3.Irreps("96x0e + 96x1o"),
-                   MLP_irreps=o3.Irreps("16x0e"),
-                   
-                   atomic_energies=np.zeros(3),
-                   avg_num_neighbors=3.0,
-                   atomic_numbers=z_table.zs,
-                   correlation=3,
-                   gate=None).to("cuda")
-    
-    nrepeats = 1
+    warmup = 50
+    for i in range(warmup):
+        out = model(batch)
+    torch.cuda.synchronize()
 
+    run_timeit = True
     start = time()
-    for i in range (nrepeats):
-        output = mace(batch)
+    out = model(batch, compute_force=False)
     torch.cuda.synchronize()
     end = time()
-    
-    print (end - start)
 
+    print((end - start) * 1000, "ms")
 
-
+    print_recursive(timings)
+    print(recursive_sum(timings) * 1000, "ms")
 
 
 def main(args=None):
-    import os
-    run_test(os.path.dirname(__file__) + "/small_mol.xyz")
+    run_test()
 
 
 if __name__ == "__main__":

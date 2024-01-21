@@ -10,6 +10,7 @@ mace_ops/cuda/equivariant_message_passing.cu
 mace_ops/cuda/generators.py
 mace_ops/cuda/instruction.py
 mace_ops/cuda/invariant_message_passing.cu
+mace_ops/cuda/invariant_message_passing_new.cu
 mace_ops/cuda/invariant_message_passing_old.cu
 mace_ops/cuda/irreps.py
 mace_ops/cuda/linear.cu
@@ -20,5 +21,3 @@ mace_ops/cuda/tensor_product_kernels.cu
 mace_ops/ops/invariant_message_passing.py
 mace_ops/ops/linear.py
 mace_ops/ops/symmetric_contraction.py
-tests/test_cg.py
-tests/test_elemental_embedding.py

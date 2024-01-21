@@ -32,7 +32,7 @@ __host__ __device__ int32_t find_integer_divisor(int32_t x, int32_t bdim)
 }
 
 #define WARP_SIZE 32
-#define NWARPS_PER_BLOCK 4
+#define NWARPS_PER_BLOCK 8
 
 template <typename scalar_t, const int TM, const int TN>
 __global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel(
@@ -49,12 +49,12 @@ __global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel(
     void *sptr = buffer;
     size_t space = 0;
 
-    scalar_t *buffer_out = shared_array<scalar_t>(16 * 128, sptr, &space);
+    scalar_t *buffer_out = shared_array<scalar_t>(16 * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
 
-    float regM[16] = {0.0};
-    float regN[TN] = {0.0};
-    float regWeights[4 * TN] = {0.0};
-    float result[16 * TN] = {0.0};
+    scalar_t regM[16] = {0.0};
+    scalar_t regN[TN] = {0.0};
+    scalar_t regWeights[4 * TN] = {0.0};
+    scalar_t result[16 * TN] = {0.0};
 
     const uint threadCol = threadIdx.x % WARP_SIZE;
     const uint threadRow = threadIdx.x / WARP_SIZE;
@@ -207,7 +207,7 @@ torch::Tensor forward_gpu(
         size_t space = 0;
         void *sptr = nullptr;
 
-        shared_array<scalar_t>(16 * 128, sptr, &space); // 64 * 128 * 8 = 65kb of shared memory...too large...
+        shared_array<scalar_t>(16 * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space); // 64 * 128 * 8 = 65kb of shared memory...too large...
 
         forward_kernel<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
             X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -256,7 +256,7 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_ker
     scalar_t regX[TN] = {0.0};
     scalar_t regW[4 * TN] = {0.0};
 
-    scalar_t regGradX[TN] = {0.0};
+    double regGradX[TN] = {0.0};
     scalar_t regGradY[16] = {0.0};
     scalar_t regGradW[4 * TN] = {0.0};
 
@@ -268,9 +268,9 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_ker
     for (int n = 0; n < TN; n++)
     {
         if (N_start + n * WARP_SIZE + threadCol < X.size(1))
-            for (int m = 0; m < 4; m++)
+            for (int m = 0; m < 16 / NWARPS_PER_BLOCK; m++)
             {
-                buffer_grad_in[(m * 4 + threadRow) * X.size(1) + n * WARP_SIZE + threadCol] = grad_in[node_index][m * 4 + threadRow][N_start + n * WARP_SIZE + threadCol];
+                buffer_grad_in[(m * NWARPS_PER_BLOCK + threadRow) * X.size(1) + n * WARP_SIZE + threadCol] = grad_in[node_index][m * NWARPS_PER_BLOCK + threadRow][N_start + n * WARP_SIZE + threadCol];
             }
     }
 
@@ -309,7 +309,7 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_ker
                     }
             }
 
-                     for (int L = 0; L < 4; L++)
+            for (int L = 0; L < 4; L++)
             {
                 uint mstart = L * L;
                 uint mend = (L + 1) * (L + 1);
@@ -329,7 +329,7 @@ __global__ void __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) backward_edge_ker
 
                             regGradW[L * TN + n] += sph * regX[n] * gradin;
 
-                            regGradX[n] += sph * w * gradin;
+                            regGradX[n] += ((double)sph) * ((double)w) * ((double)gradin);
 
                             dgradY += gradin * w * regX[n];
                         }
@@ -447,7 +447,7 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                     gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
             }
-            else if (nfeatures == WARP_SIZE)
+            else if (nfeatures == 32)
             {
                 backward_edge_kernel<scalar_t, 4, 1><<<gridDim, blockDim, space>>>(
                     X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),

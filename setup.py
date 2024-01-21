@@ -19,9 +19,9 @@ __status__ = "Alpha"
 __description__ = "GPU-Accelerated Sparse Symmetric Contractions and Tensor Products"
 __url__ = "TODO"
 
-host_flags = []  # ['-O3']
-debug_flags = []  # ['-G', '-lineinfo']
-nvcc_flags = []  # ['-O3', '--use_fast_math']
+host_flags = []
+debug_flags = [] 
+nvcc_flags = []  
 
 
 def readme():
@@ -81,6 +81,13 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
 
+    invariant_message_passing_new = CUDAExtension(
+        '.cuda.invariant_message_passing_new', [
+            'mace_ops/cuda/invariant_message_passing_new.cu'
+        ],
+        extra_compile_args={'cxx': host_flags,
+                            'nvcc': nvcc_flags})
+
     symmetric_contraction = CUDAExtension(
         '.cuda.symmetric_contraction', [
             'mace_ops/cuda/symmetric_contraction_kernels.cu'
@@ -105,7 +112,7 @@ if torch.cuda.is_available() and CUDA_HOME is not None:
         extra_compile_args={'cxx': host_flags,
                             'nvcc': nvcc_flags})
 
-
+    ext_modules.append(invariant_message_passing_new)
     ext_modules.append(invariant_message_passing_old)
     ext_modules.append(invariant_message_passing)
     ext_modules.append(equivariant_message_passing)
