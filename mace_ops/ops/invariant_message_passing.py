@@ -13,7 +13,7 @@ class InvariantMessagePassingTP(torch.nn.Module):
         tp_weights: torch.Tensor,  # [nedges, 4, nfeats]
         sender_list: torch.Tensor,  # [nedges] -> must be monotonically increasing
         receiver_list: torch.Tensor,  # [nedges] -> must be monotonically increasing
-        nnodes,
+        nnodes : int,
     ):
         return torch.ops.invariant_tp_new.forward(
             node_feats, edge_attrs, tp_weights, sender_list, receiver_list, nnodes
