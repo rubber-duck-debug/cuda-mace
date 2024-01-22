@@ -283,11 +283,11 @@ __global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel(
         }
     }
 
-    __syncthreads();
-
-    // now need to accumulate partial results from each warp.
+        // now need to accumulate partial results from each warp.
     for (int n = 0; n < TN; n++)
     {
+        __syncthreads();
+        
         for (int m = 0; m < 16; m++)
         {
             buffer_out[m * NWARPS_PER_BLOCK * WARP_SIZE + threadRow * WARP_SIZE + threadCol] = result[m * TN + n];
