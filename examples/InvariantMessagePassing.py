@@ -204,6 +204,7 @@ def check_correctness(
     tp_weights_gradcheck = tp_weights.clone().detach().requires_grad_(True)
 
     # run the reference
+    """
     torch.cuda.synchronize()
     out_ref = reference(
         node_feats_ref[sender_list],
@@ -234,8 +235,9 @@ def check_correctness(
     check_output(edge_attrs_ref.grad, edge_attrs_python.grad, "edge_attr grad")
     check_output(tp_weights_ref.grad, tp_weights_python.grad, "tp_weights grad")
     check_output(node_feats_ref.grad, node_feats_python.grad, "node feats grad")
-
-    """from e3nn import o3
+    """
+    
+    from e3nn import o3
     from mace.modules.irreps_tools import tp_out_irreps_with_instructions
 
     node_feats_irreps = o3.Irreps(f"{nfeatures}x0e")
@@ -266,11 +268,11 @@ def check_correctness(
     
     torch.cuda.synchronize()
     
-    print ("Checking ref output vs e3nn backwards.")
-    check_output(edge_attrs_ref.grad, edge_attrs_e3nn.grad, "E3NN edge_attr grad")
-    check_output(tp_weights_ref.grad, tp_weights_e3nn.grad, "E3NN tp_weights grad")
-    check_output(node_feats_ref.grad, node_feats_e3nn.grad, "E3NN node feats grad")
-    """
+    #print ("Checking ref output vs e3nn backwards.")
+    #check_output(edge_attrs_ref.grad, edge_attrs_e3nn.grad, "E3NN edge_attr grad")
+    #check_output(tp_weights_ref.grad, tp_weights_e3nn.grad, "E3NN tp_weights grad")
+    #check_output(node_feats_ref.grad, node_feats_e3nn.grad, "E3NN node feats grad")
+    
     
     tp = InvariantMessagePassingTP()
 
@@ -282,65 +284,42 @@ def check_correctness(
     osum.backward()
     torch.cuda.synchronize()
 
+    print (node_feats_e3nn.grad - node_feats_cuda.grad)
     
-    print ("Checking ref output vs CUDA forwards.")
-    check_output(out_ref, cuda_out, "CUDA forward")
-    print ("Checking ref output vs CUDA backwards.")
-    check_output(edge_attrs_ref.grad, edge_attrs_cuda.grad, "CUDA edge_attr grad")
-    check_output(tp_weights_ref.grad, tp_weights_cuda.grad, "CUDA tp_weights grad")
-    check_output(node_feats_ref.grad, node_feats_cuda.grad, "CUDA node feats grad")
+    idx = torch.where(node_feats_e3nn.grad - node_feats_cuda.grad> 1e-5)
+    
+    
+    print (idx[0])
+    print (idx[1])
+    print ((node_feats_e3nn.grad - node_feats_cuda.grad)[idx])
+
+    
+    print (len(idx[0]), node_feats_cuda.grad.numel())
+    
+    #print ("Checking e3nn output vs CUDA forwards.")
+    #check_output(message, cuda_out, "CUDA forward")
+    print ("Checking e3nn output vs CUDA backwards.")
+    check_output(edge_attrs_e3nn.grad, edge_attrs_cuda.grad, "CUDA edge_attr grad")
+    check_output(tp_weights_e3nn.grad, tp_weights_cuda.grad, "CUDA tp_weights grad")
+    check_output(node_feats_e3nn.grad, node_feats_cuda.grad, "CUDA node feats grad")
 
     #print("Checking CUDA implementation via finite difference.")
-    #print(gradcheck(tp.forward, (node_feats_gradcheck[sender_list], edge_attrs_gradcheck, tp_weights_gradcheck, receiver_list, nnodes), eps=1e-2, atol=1e-2))
-    #print(gradcheck(tp_old.forward, (node_feats_gradcheck, edge_attrs_gradcheck, tp_weights_gradcheck, sender_list, receiver_list), eps=1e-2, atol=1e-2))
-    #print(gradcheck(InvariantMPTP.apply, (node_feats_gradcheck, edge_attrs_gradcheck, tp_weights_gradcheck, sender_list, receiver_list), eps=1e-2, atol=1e-2))"""
+    #print(gradcheck(tp.forward, (node_feats_gradcheck.double(), edge_attrs_gradcheck.double(), tp_weights_gradcheck.double(), sender_list, receiver_list, nnodes), eps=1e-5, atol=1e-5))
 
 
 def accuracy(dtype, device):
-    nnodes = 3
-    nedges = nnodes * 5
-    nfeatures = 32
-    L_MAX = 3
-    nl = (L_MAX + 1) ** 2
-
+    node_feats = torch.load("node_feats.pt")
+    edge_attrs = torch.load("edge_attrs.pt")
+    tp_weights = torch.load("tp_weights.pt")
+    receiver_list = torch.load("receiver.pt")
+    sender_list = torch.load("sender.pt")
+    
     print(f"--DTYPE: {dtype}")
     print(f"Benchmarking dtype {dtype} and device {device}")
-    print(f"nodes: {nnodes} and edges: {nedges}")
-    print(f"nfeatures: {nfeatures} and nsphericalharmonics: {nl}")
-
-    node_feats = torch.randn(
-        (nnodes, nfeatures), dtype=dtype, device=device, requires_grad=True
-    )
-
-    edge_attrs = torch.randn(
-        (nnodes, nl), dtype=dtype, device=device, requires_grad=True
-    )
-    tp_weights = torch.randn(
-        (nnodes, L_MAX + 1, nfeatures), dtype=dtype, device=device, requires_grad=True
-    )
-
-    receiver_list = torch.sort(
-        torch.randint(nnodes, (nedges,), device=device, dtype=torch.int32)
-    )[0]
-
-    r = torch.randperm(receiver_list.shape[0])
-    sender_list = receiver_list[r]  # mimic sender_list by permutation
-
-    edge_attrs = (
-        (edge_attrs[receiver_list] - (edge_attrs[sender_list] + 0.5))
-        .clone()
-        .detach()
-        .requires_grad_(True)
-    )  # mimic pair list
-    tp_weights = (
-        (tp_weights[receiver_list] - (tp_weights[sender_list] + 0.5))
-        .clone()
-        .detach()
-        .requires_grad_(True)
-    )  # mimic pair list
-
+    print(f"nodes: {node_feats.shape[0]} and edges: {edge_attrs.shape[0]}")
+    print(f"nfeatures: {node_feats.shape[1]} and nsphericalharmonics: {edge_attrs.shape[1]}")
     check_correctness(
-        node_feats, edge_attrs, tp_weights, sender_list, receiver_list, nnodes
+        node_feats, edge_attrs, tp_weights, sender_list.int(), receiver_list.int(), node_feats.shape[0]
     )
 
 

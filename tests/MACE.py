@@ -250,15 +250,14 @@ def invariant_residual_interaction_forward(
 
     #tp_weights = torch.randn(tp_weights.shape[0], 4, 96, device='cuda', dtype=torch.float32, requires_grad=True)
     #torch.cuda.synchronize()
-    nf  = node_feats[sender]
     torch.cuda.synchronize()
     
     start = time()
     message = self.tp.forward(
-        nf,
+        node_feats,
         edge_attrs,
-        #tp_weights,
         tp_weights.view(tp_weights.shape[0], -1, node_feats.shape[-1]),
+        sender.int(),
         receiver.int(),
         num_nodes,
     )
@@ -295,9 +294,10 @@ def invariant_interaction_forward(
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
     message = self.tp.forward(
-        node_feats[sender],
+        node_feats,
         edge_attrs,
         tp_weights.view(tp_weights.shape[0], -1, node_feats.shape[-1]),
+        sender.int(),
         receiver.int(),
         num_nodes,
     )
