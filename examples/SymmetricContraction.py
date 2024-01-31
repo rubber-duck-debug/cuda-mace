@@ -60,5 +60,7 @@ end = time()
 print (end - start)
 torch.cuda.cudart().cudaProfilerStop()
 
-model = torch.compile(cuda_contraction)
+model = torch.jit.script(cuda_contraction)
 print (model)
+model.save('model.pt')
+model = torch.jit.load('model.pt')

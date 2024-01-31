@@ -9,6 +9,7 @@ class LinearElementRef(torch.nn.Module):
     def __init__(self, irreps_in, irreps_out, e3nn_instructions, e3nn_weights, num_elements):
 
         super().__init__()
+        
         self.num_elements = num_elements
         self.irreps_in = irreps_in
         self.irreps_out = irreps_out

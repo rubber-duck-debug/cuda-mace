@@ -1,86 +1,13 @@
 import torch
 from e3nn import o3
 from mace.tools.cg import U_matrix_real
-from mace_ops import cuda #loads CUDA libraries
-
-def _symmetric_contraction(
-            X,
-            atom_types,
-            U3_num_nonsparse_1,
-            U3_num_nonsparse_2,
-            U3_num_nonsparse_3,
-            U3_indices_0,
-            U3_indices_1,
-            U3_indices_2,
-            U3_indices_3,
-            U3_values_0,
-            U3_values_1,
-            U3_values_2,
-            U3_values_3,
-            U2_num_nonsparse_1,
-            U2_num_nonsparse_2,
-            U2_indices_1,
-            U2_indices_2,
-            U2_values_1,
-            U2_values_2,
-            U1_num_nonsparse,
-            U1_index,
-            W3,
-            W2,
-            W1,
-            W3_L0_size : int,
-            W2_L0_size : int,
-            W1_L0_size : int,
-            W3_size,
-            W2_size,
-            W1_size,
-            U3_max_nonsparse,
-            nthreadX: int,
-            nthreadY: int,
-            nthreadZ: int) -> torch.Tensor:
-    
-    return torch.ops.mace_cuda_symm_contraction.symmetric_contraction(
-            X,
-            atom_types,
-            U3_num_nonsparse_1,
-            U3_num_nonsparse_2,
-            U3_num_nonsparse_3,
-            U3_indices_0,
-            U3_indices_1,
-            U3_indices_2,
-            U3_indices_3,
-            U3_values_0,
-            U3_values_1,
-            U3_values_2,
-            U3_values_3,
-            U2_num_nonsparse_1,
-            U2_num_nonsparse_2,
-            U2_indices_1,
-            U2_indices_2,
-            U2_values_1,
-            U2_values_2,
-            U1_num_nonsparse,
-            U1_index,
-            W3,
-            W2,
-            W1,
-            W3_L0_size,
-            W2_L0_size,
-            W1_L0_size,
-            W3_size,
-            W2_size,
-            W1_size,
-            U3_max_nonsparse,
-            nthreadX,
-            nthreadY,
-            nthreadZ)
-    
 
 class SymmetricContraction(torch.nn.Module):
 
     def __init__(self, irreps_in: o3.Irreps, irreps_out: o3.Irreps, W_tensors, correlation=3, nthreadX=32, nthreadY=4, nthreadZ=1, device="cuda", dtype=torch.float32):
         super().__init__()
 
+        self.cuda_obj = torch.classes.symm_contract.SymmetricContraction()
         self.device=device
         self.dtype=dtype
         self.irreps_in = irreps_in
@@ -114,7 +41,7 @@ class SymmetricContraction(torch.nn.Module):
         self.setup_sparse_matrices()
         self.setup_weights()
 
-        shared_mem_required = torch.ops.mace_cuda_symm_contraction.LGT0_shared_memory_required(
+        shared_mem_required = torch.ops.symm_contract.LGT0_shared_memory_required(
             nthreadX, nthreadY, nthreadZ,  
             self.u3_max_nonsparse_tensor.max().item(), 
             16,
@@ -122,16 +49,15 @@ class SymmetricContraction(torch.nn.Module):
 
         if (shared_mem_required > 49152):
             print ("adjusting shared memory to fit:", shared_mem_required, "bytes")
-            for device_id in range(torch.cuda.device_count()):
-                if torch.ops.mace_cuda_symm_contraction.set_shared_mem_size(shared_mem_required, device_id, self.dtype):
-                    print("shared memory reallocation accepted on device:", device_id)
+            if torch.ops.symm_contract.set_shared_mem_size(shared_mem_required, self.dtype):
+                print("shared memory reallocation accepted")
             
     def forward(self, x, atom_types):
 
         assert x.shape[-1] % 32 == 0, "channel dimension of x ([-1]) must be a multiple of 32."
         assert x.shape[1] == 16, "l dimension of x ([1]) must be 16."
         
-        return _symmetric_contraction(  
+        return self.cuda_obj.forward(  
                     x, 
                     atom_types,
                     self.U3_num_nonsparse_1,

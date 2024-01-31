@@ -1,7 +1,8 @@
 import torch
 import math
 from time import time
-from mace_ops import cuda
+
+import mace_ops
 from mace_ops.ops.invariant_message_passing import (
     InvariantMessagePassingTP,
 )
