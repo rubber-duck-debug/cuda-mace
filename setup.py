@@ -7,7 +7,13 @@ import os
 import re
 import torch
 
-ext_modules = []
+import sys
+from setuptools import Extension, setup
+from setuptools.command.bdist_egg import bdist_egg
+from setuptools.command.build_ext import build_ext
+from wheel.bdist_wheel import bdist_wheel
+import subprocess
+
 
 __author__ = "Nicholas J. Browning"
 __credits__ = "Nicholas J. Browning (2023), https://github.com/nickjbrowning"
@@ -19,128 +25,91 @@ __status__ = "Alpha"
 __description__ = "GPU-Accelerated Sparse Symmetric Contractions and Tensor Products"
 __url__ = "TODO"
 
-host_flags = []
-debug_flags = [] 
-nvcc_flags = []  
+ROOT = os.path.realpath(os.path.dirname(__file__))
 
 
-def readme():
-    with open('README.md') as f:
-        return f.read()
+class universal_wheel(bdist_wheel):
+    # When building the wheel, the `wheel` package assumes that if we have a
+    # binary extension then we are linking to `libpython.so`; and thus the wheel
+    # is only usable with a single python version. This is not the case for
+    # here, and the wheel will be compatible with any Python >=3.6. This is
+    # tracked in https://github.com/pypa/wheel/issues/185, but until then we
+    # manually override the wheel tag.
+    def get_tag(self):
+        tag = bdist_wheel.get_tag(self)
+        # tag[2:] contains the os/arch tags, we want to keep them
+        return ("py3", "none") + tag[2:]
 
 
-def requirements():
-    with open('requirements.txt') as f:
-        return [line.rstrip() for line in f]
+class bdist_egg_disabled(bdist_egg):
+    """Disabled version of bdist_egg
+
+    Prevents setup.py install performing setuptools' default easy_install,
+    which it should never ever do.
+    """
+
+    def run(self):
+        sys.exit(
+            "Aborting implicit building of eggs. "
+            + "Use `pip install .` or `python setup.py bdist_wheel && pip "
+            + "install dist/sphericart-*.whl` to install from source."
+        )
 
 
-def batch_rename(src, dst, src_dir_fd=None, dst_dir_fd=None):
-    '''Same as os.rename, but returns the renaming result.'''
-    os.rename(src, dst,
-              src_dir_fd=src_dir_fd,
-              dst_dir_fd=dst_dir_fd)
-    return dst
+class cmake_ext(build_ext):
+    """Build the native library using cmake"""
+
+    def run(self):
+        source_dir = os.path.join(ROOT, "mace_ops")
+        build_dir = os.path.join(ROOT, "build", "cmake-build")
+        install_dir = os.path.join(
+            os.path.realpath(self.build_lib), "mace_ops")
+
+        os.makedirs(build_dir, exist_ok=True)
+
+        cmake_options = [
+            f"-DCMAKE_INSTALL_PREFIX={install_dir}"
+            #f"-DPYTHON_EXECUTABLE={sys.executable}",
+        ]
+
+        CUDA_HOME = os.environ.get("CUDA_HOME")
+        if CUDA_HOME is None:
+            sys.exit("$CUDA_HOME is not defined.")
+
+        # ARCHFLAGS is used by cibuildwheel to pass the requested arch to the
+        # compilers
+        ARCHFLAGS = os.environ.get("ARCHFLAGS")
+        if ARCHFLAGS is not None:
+            cmake_options.append(f"-DCMAKE_C_FLAGS={ARCHFLAGS}")
+            cmake_options.append(f"-DCMAKE_CXX_FLAGS={ARCHFLAGS}")
+
+        subprocess.run(
+            ["cmake", source_dir, *cmake_options],
+            cwd=build_dir,
+            check=True,
+        )
+        subprocess.run(
+            ["cmake", "--build", build_dir, "--target", "install"],
+            check=True,
+        )
 
 
-class _CommandInstallCythonized(_install_lib):
-    def __init__(self, *args, **kwargs):
-        _install_lib.__init__(self, *args, **kwargs)
+if __name__ == "__main__":
 
-    def install(self):
-        # let the distutils' install_lib do the hard work
-        outfiles = _install_lib.install(self)
-        # batch rename the outfiles:
-        # for each file, match string between
-        # second last and last dot and trim it
-        matcher = re.compile('\.([^.]+)\.so$')
-        return [batch_rename(file, re.sub(matcher, '.so', file))
-                for file in outfiles]
-
-
-if torch.cuda.is_available() and CUDA_HOME is not None:
-
-    equivariant_message_passing = CUDAExtension(
-        '.cuda.equivariant_message_passing', [
-            'mace_ops/cuda/equivariant_message_passing.cu'
+    setup(
+        version=open(os.path.join("mace_ops", "VERSION")).readline().strip(),
+        ext_modules=[
+            Extension(name="mace_ops", sources=[]),
         ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-
-    
-    invariant_message_passing = CUDAExtension(
-        '.cuda.invariant_message_passing', [
-            'mace_ops/cuda/invariant_message_passing.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-    
-    invariant_message_passing_old = CUDAExtension(
-        '.cuda.invariant_message_passing_old', [
-            'mace_ops/cuda/invariant_message_passing_old.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-
-    invariant_message_passing_new = CUDAExtension(
-        '.cuda.invariant_message_passing_new', [
-            'mace_ops/cuda/invariant_message_passing_new.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-
-    symmetric_contraction = CUDAExtension(
-        '.cuda.symmetric_contraction', [
-            'mace_ops/cuda/symmetric_contraction_kernels.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-
-
-    linear_wmma = CUDAExtension(
-        '.cuda.linear_wmma', [
-            'mace_ops/cuda/linear_wmma.cu'
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-    
-    
-    print (cpp_extension.include_paths()+ ['/mace_ops/cuda/include'])
-    embedding_tools = CUDAExtension(
-        '.cuda.embedding_tools', [
-            'mace_ops/cuda/embedding_tools.cu',
-        ],
-        extra_compile_args={'cxx': host_flags,
-                            'nvcc': nvcc_flags})
-
-    ext_modules.append(invariant_message_passing_new)
-    ext_modules.append(invariant_message_passing_old)
-    ext_modules.append(invariant_message_passing)
-    ext_modules.append(equivariant_message_passing)
-    ext_modules.append(symmetric_contraction)
-    #ext_modules.append(linear)
-    ext_modules.append(linear_wmma)
-    #ext_modules.append(embedding_tools)
-
-else:
-    print("ERROR: cuda not available, or CUDA_HOME not set.")
-    exit()
-
-setup(
-    name='mace ops',
-    packages=['mace_ops.cuda', 'mace_ops.ops'],
-    version=__version__,
-    author=__author__,
-    author_email=__email__,
-    platforms='Any',
-    description=__description__,
-    long_description='',
-    keywords=['Machine Learning'],
-    classifiers=[],
-    url=__url__,
-    install_requires=requirements(),
-
-    ext_package='mace_ops',
-    ext_modules=ext_modules,
-    cmdclass={'build_ext': BuildExtension,
-              'install_lib': _CommandInstallCythonized
-              })
+        cmdclass={
+            "build_ext": cmake_ext,
+            "bdist_egg": bdist_egg if "bdist_egg" in sys.argv else bdist_egg_disabled,
+            "bdist_wheel": universal_wheel,
+        },
+        package_data={
+            "mace_ops": [
+                "mace_ops/lib/*",
+                "mace_ops/include/*",
+            ]
+        }
+    )

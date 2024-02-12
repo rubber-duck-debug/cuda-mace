@@ -1,0 +1,9 @@
+README.md
+pyproject.toml
+setup.py
+mace_ops/mace_ops.egg-info/PKG-INFO
+mace_ops/mace_ops.egg-info/SOURCES.txt
+mace_ops/mace_ops.egg-info/dependency_links.txt
+mace_ops/mace_ops.egg-info/not-zip-safe
+mace_ops/mace_ops.egg-info/requires.txt
+mace_ops/mace_ops.egg-info/top_level.txt

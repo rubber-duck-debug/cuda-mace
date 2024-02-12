@@ -1,0 +1,21 @@
+[project]
+name = "mace_ops"
+requires-python = ">=3.6"
+dependencies = ["torch >= 1.13"]
+version= "0.1"
+
+### ======================================================================== ###
+
+[build-system]
+requires = [
+    "setuptools >=44",
+    "wheel >=0.36",
+    "cmake",
+    "torch >= 1.13",
+]
+
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+zip-safe = false
+packages = ["mace_ops.ops"]
