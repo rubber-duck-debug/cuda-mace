@@ -213,6 +213,8 @@ def invariant_residual_interaction_forward(
     sc = self.skip_tp(node_feats, node_attrs).contiguous()
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
+
+    print("irif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
     message = self.tp.forward(
         node_feats,
         edge_attrs,
@@ -224,8 +226,8 @@ def invariant_residual_interaction_forward(
     ).float()
     message = self.linear(message) / self.avg_num_neighbors
     return (
-        message.contiguous(),
-        sc.contiguous(),
+        message,
+        sc,
     )  # [n_nodes, channels, (lmax + 1)**2]
 
 
@@ -242,7 +244,8 @@ def invariant_interaction_forward(
     num_nodes = torch.tensor(node_feats.shape[0])
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
-    
+
+    print("iif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
     message = self.tp.forward(
         node_feats,
         edge_attrs,
@@ -254,7 +257,7 @@ def invariant_interaction_forward(
     ).float()
     message = self.linear(message) / self.avg_num_neighbors
     message = self.skip_tp(message, node_attrs)
-    
+
     return (
         message.contiguous(),
         None,
@@ -366,7 +369,9 @@ def accuracy(
         # make a copy of the model
         output_opt = model_opt(
             batch.to_dict(), training=False, compute_force=True)
-        output_org_float32 = model(batch_3, training=False, compute_force=True)
+        model = model.float()
+        output_org_float32 = model(
+            batch_3.to_dict(), training=False, compute_force=True)
         model = model.double()
         model.atomic_energies_fn.atomic_energies = (
             model.atomic_energies_fn.atomic_energies.double()
@@ -374,7 +379,8 @@ def accuracy(
         batch_2.positions = batch_2.positions.double()
         batch_2.node_attrs = batch_2.node_attrs.double()
         batch_2.shifts = batch_2.shifts.double()
-        output_org = model(batch_2, training=False, compute_force=True)
+        output_org = model(batch_2.to_dict(),
+                           training=False, compute_force=True)
         print("energy org", output_org["energy"])
         print("energy opt", output_opt["energy"])
         error_energy = (output_org["energy"] -
@@ -383,7 +389,7 @@ def accuracy(
             (output_org_float32["energy"] - output_org["energy"]).abs().mean()
         )
         print("error energy float32", error_energy_float32)
-        # print("error energy", error_energy)
+        print("error energy", error_energy)
         # assert torch.allclose(output_org["energy"], output_opt["energy"], atol=1e-5)
         error_forces = (output_org["forces"] -
                         output_opt["forces"]).abs().mean()
@@ -427,12 +433,12 @@ def main(args=None):
     model_opt_path = args.output
     model_opt = jit.compile(model_opt)
 
-    #print(model_opt_path)
+    # print(model_opt_path)
     model_opt.save(model_opt_path)
     model_opt = torch.load(model_opt_path).to("cuda")
-    
-    #print (model_opt)
-    
+
+    # print (model_opt)
+
     if args.benchmark:
         times_opt = []
         times_org = []
@@ -478,6 +484,7 @@ def main(args=None):
         plt.savefig("benchmark.pdf")
     if args.accuracy:
         model = torch.load(args.model).to("cuda")
+        model = jit.compile(model)
         # model = jit.compile(model)
         # model_opt = jit.compile(model_opt)
         accuracy(model, model_opt, args.benchmark_file)

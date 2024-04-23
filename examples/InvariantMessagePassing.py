@@ -325,7 +325,7 @@ def accuracy(dtype, device):
 
 
 def benchmark(dtype, device):
-    nnodes = 5800
+    nnodes = 1000
     nedges = nnodes * 45
 
     nfeatures = 96
@@ -368,13 +368,13 @@ def benchmark(dtype, device):
     edge_attrs_cuda_old = edge_attrs.clone().detach().requires_grad_(True)
     tp_weights_cuda_old = tp_weights.clone().detach().requires_grad_(True)
 
-    node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
-    edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
-    tp_weights_cuda = tp_weights.clone().detach().requires_grad_(True)
+    node_feats_cuda = node_feats.clone().detach().contiguous().requires_grad_(True)
+    edge_attrs_cuda = edge_attrs.clone().detach().contiguous().requires_grad_(True)
+    tp_weights_cuda = tp_weights.clone().detach().contiguous().requires_grad_(True)
 
     torch.cuda.synchronize()
-    start = time()
     torch.cuda.cudart().cudaProfilerStart()
+    start = time()
     for i in range(1000):
         cuda_out = tp.forward(
             node_feats_cuda,

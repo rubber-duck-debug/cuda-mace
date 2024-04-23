@@ -18,7 +18,150 @@ using namespace torch::autograd;
 #define FULL_MASK 0xffffffff
 
 #define WARP_SIZE 32
-#define NWARPS_PER_BLOCK 8
+#define NWARPS_PER_BLOCK 4
+
+template <typename scalar_t, const int TM, const int TN>
+__global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel3(
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X, // [nnodes nchannels]
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y, // [nedges, (L+1)**2]
+    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> sender_list,      //
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,    // which index we need to sum a particular edge into -> monotonically increasing.
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> first_occurences, // the indexes in reciever_list which deliniate the set of edges per node.
+    torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
+{
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    const uint threadCol = threadIdx.x % WARP_SIZE;
+    const uint threadRow = threadIdx.x / WARP_SIZE;
+
+    const uint N = X.size(1);
+    const uint edge_start = first_occurences[blockIdx.x];
+    const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1) ? receiver_list.size(0) : first_occurences[blockIdx.x + 1];
+    const uint node_index = receiver_list[edge_start];
+
+    // check if this node has neighbours
+    if (edge_end - edge_start == 0)
+    {
+        return;
+    }
+
+    for (int m = threadRow; m < 16; m += NWARPS_PER_BLOCK)
+    {
+        int32_t lm_index = sqrt(m);
+
+        for (int feature = threadCol; feature < N; feature += WARP_SIZE)
+        {
+
+            double tmp = 0.0;
+
+            for (uint edge = edge_start; edge < edge_end; edge++)
+            {
+                tmp += Y[edge][m] * X[edge][feature] * radial[edge][lm_index][feature];
+            }
+
+            output[node_index][m][feature] = tmp;
+        }
+    }
+}
+
+template <typename scalar_t, const int TM, const int TN>
+__global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel2(
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> X, // [nnodes nchannels]
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> Y, // [nedges, (L+1)**2]
+    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> radial,
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> sender_list,      //
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> receiver_list,    // which index we need to sum a particular edge into -> monotonically increasing.
+    const torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits> first_occurences, // the indexes in reciever_list which deliniate the set of edges per node.
+    torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> output)
+{
+
+    extern __shared__ char buffer[];
+
+    void *sptr = buffer;
+    size_t space = 0;
+
+    scalar_t *buffer_radial = shared_array<scalar_t>(radial.size(1) * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
+    scalar_t *buffer_Y = shared_array<scalar_t>(16 * NWARPS_PER_BLOCK, sptr, &space);
+    scalar_t *buffer_X = shared_array<scalar_t>(NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
+    double *buffer_out = shared_array<double>(16 * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
+
+    const uint threadCol = threadIdx.x % WARP_SIZE;
+    const uint threadRow = threadIdx.x / WARP_SIZE;
+
+    const uint N = X.size(1);
+    const uint edge_start = first_occurences[blockIdx.x];
+    const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1) ? receiver_list.size(0) : first_occurences[blockIdx.x + 1];
+    const uint node_index = receiver_list[edge_start];
+
+    // check if this node has neighbours
+    if (edge_end - edge_start == 0)
+    {
+        return;
+    }
+
+    int niter = find_integer_divisor(edge_end - edge_start, NWARPS_PER_BLOCK);
+
+    for (int feature = threadCol; feature < N; feature += WARP_SIZE)
+    {
+        for (int tid = threadIdx.x; tid < 16 * NWARPS_PER_BLOCK * WARP_SIZE; tid += blockDim.x)
+        {
+            buffer_out[tid] = 0.0;
+        }
+
+        for (uint ni = 0; ni < niter; ni++)
+        {
+            uint edge = edge_start + ni * NWARPS_PER_BLOCK + threadRow;
+
+            if (edge < edge_end)
+            {
+                uint sender_id = sender_list[edge];
+
+                if (threadCol < 16)
+                {
+                    buffer_Y[threadCol * NWARPS_PER_BLOCK + threadRow] = Y[edge][threadCol];
+                }
+
+                buffer_X[threadRow * WARP_SIZE + threadCol] = X[edge][feature];
+
+                for (int L = 0; L < 4; L++)
+                {
+                    buffer_radial[threadRow * WARP_SIZE * 4 + L * WARP_SIZE + threadCol] = radial[edge][L][feature];
+                }
+            }
+
+            __syncthreads();
+
+            for (uint m = 0; m < 16; m++)
+            {
+                int32_t lm_index = sqrt(m);
+                // perform outer product in registers
+
+                buffer_out[threadRow * WARP_SIZE * 16 + m * WARP_SIZE + threadCol] += buffer_radial[threadRow * WARP_SIZE * 4 + lm_index * WARP_SIZE + threadCol] *
+                                                                                      buffer_Y[m * NWARPS_PER_BLOCK + threadRow] *
+                                                                                      buffer_X[threadRow * WARP_SIZE + threadCol];
+            }
+        }
+
+        __syncthreads();
+
+        for (int m = threadRow; m < 16; m += NWARPS_PER_BLOCK)
+        {
+            double tmp = 0.0;
+
+            for (int j = 0; j < NWARPS_PER_BLOCK; j++)
+            {
+                tmp += buffer_out[j * WARP_SIZE * 16 + m * WARP_SIZE + threadCol];
+            }
+
+            output[node_index][m][feature] = tmp;
+        }
+    }
+}
 
 template <typename scalar_t, const int TM, const int TN>
 __global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel(
@@ -178,7 +321,8 @@ torch::Tensor forward_gpu(
                                             .dtype(X.dtype())
                                             .device(X.device()));
 
-    dim3 gridDim(nnodes, find_integer_divisor(nfeatures, 128));
+    // dim3 gridDim(nnodes, find_integer_divisor(nfeatures, 128));
+    dim3 gridDim(nnodes);
 
     dim3 blockDim(NWARPS_PER_BLOCK * WARP_SIZE, 1, 1);
 
@@ -188,11 +332,18 @@ torch::Tensor forward_gpu(
             size_t space = 0;
             void *sptr = nullptr;
 
-            shared_array<double>(16 * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space); // 64 * 128 * 8 = 65kb of shared memory...too large...
+            //shared_array<double>(16 * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space); // 64 * 128 * 8 = 65kb of shared memory...too large...
+            
+            //shared_array<double>(16 * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
+            //shared_array<scalar_t>(radial.size(1) * NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
+            //shared_array<scalar_t>(16 * NWARPS_PER_BLOCK, sptr, &space);
+            //shared_array<scalar_t>(NWARPS_PER_BLOCK * WARP_SIZE, sptr, &space);
+
+
             //shared_array<scalar_t>(16 * NWARPS_PER_BLOCK, sptr, &space);
             if (nfeatures >= 128)
             {
-                forward_kernel<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
+                forward_kernel3<scalar_t, 4, 4><<<gridDim, blockDim, space>>>(
                     X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
@@ -203,7 +354,7 @@ torch::Tensor forward_gpu(
             }
             else if (nfeatures == 96)
             {
-                forward_kernel<scalar_t, 4, 3><<<gridDim, blockDim, space>>>(
+                forward_kernel3<scalar_t, 4, 3><<<gridDim, blockDim, space>>>(
                     X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
@@ -213,7 +364,7 @@ torch::Tensor forward_gpu(
                     output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
             }else if (nfeatures == 64)
             {
-                forward_kernel<scalar_t, 4, 2><<<gridDim, blockDim, space>>>(
+                forward_kernel3<scalar_t, 4, 2><<<gridDim, blockDim, space>>>(
                     X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
@@ -223,7 +374,7 @@ torch::Tensor forward_gpu(
                     output.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
             }else if (nfeatures == 32)
             {
-                forward_kernel<scalar_t, 4, 1><<<gridDim, blockDim, space>>>(
+                forward_kernel3<scalar_t, 4, 1><<<gridDim, blockDim, space>>>(
                     X.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     radial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
@@ -554,7 +705,6 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
 
-            cudaDeviceSynchronize();
 
             backward_node_kernel<scalar_t, 3><<<gridDim, blockDim, space_node>>>(
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -580,7 +730,6 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
 
-            cudaDeviceSynchronize();
 
             backward_node_kernel<scalar_t, 2><<<gridDim, blockDim, space_node>>>(
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -605,7 +754,6 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                 gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                 gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
 
-            cudaDeviceSynchronize();
 
            backward_node_kernel<scalar_t, 1><<<gridDim, blockDim, space_node>>>(
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -627,8 +775,6 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                     first_occurences.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
                     gradY.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
                     gradRadial.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>());
-
-                cudaDeviceSynchronize();
 
                backward_node_kernel<scalar_t, 4><<<gridDim, blockDim, space_node>>>(
                 Y.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
