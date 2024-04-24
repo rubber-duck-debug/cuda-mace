@@ -56,14 +56,16 @@ __global__ __launch_bounds__(NWARPS_PER_BLOCK *WARP_SIZE) void forward_kernel3(
 
         for (int feature = threadCol; feature < N; feature += WARP_SIZE)
         {
-
-            double tmp = 0.0;
-
+            scalar_t tmp = 0.0;
+            scalar_t c = 0.0; // Compensation for lost precision
             for (uint edge = edge_start; edge < edge_end; edge++)
             {
-                tmp += Y[edge][m] * X[edge][feature] * radial[edge][lm_index][feature];
+                scalar_t y_x_radial = Y[edge][m] * X[edge][feature] * radial[edge][lm_index][feature];
+                scalar_t y_x_radial_compensated = y_x_radial - c;
+                scalar_t tmp_new = tmp + y_x_radial_compensated;
+                c = (tmp_new - tmp) - y_x_radial_compensated;
+                tmp = tmp_new;
             }
-
             output[node_index][m][feature] = tmp;
         }
     }
