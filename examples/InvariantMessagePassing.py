@@ -325,7 +325,7 @@ def accuracy(dtype, device):
 
 
 def benchmark(dtype, device):
-    nnodes = 1000
+    nnodes = 5800
     nedges = nnodes * 45
 
     nfeatures = 96
@@ -384,8 +384,8 @@ def benchmark(dtype, device):
             receiver_list,
             nnodes,
         )
-        #os = cuda_out.sum() * 2.0
-        #os.backward()
+        os = cuda_out.sum() * 2.0
+        os.backward()
     torch.cuda.synchronize()
     end = time()
     print(end - start)

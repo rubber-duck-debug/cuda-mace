@@ -214,7 +214,7 @@ def invariant_residual_interaction_forward(
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
 
-    print("irif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
+    # print("irif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
     message = self.tp.forward(
         node_feats,
         edge_attrs,
@@ -245,7 +245,7 @@ def invariant_interaction_forward(
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
 
-    print("iif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
+    # print("iif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
     message = self.tp.forward(
         node_feats,
         edge_attrs,
