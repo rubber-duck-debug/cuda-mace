@@ -39,7 +39,7 @@ find_package(Torch 1.13 REQUIRED)
 
 #enable relocatable device code (e.g for cuda_utils.cu)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -rdc=true -lineinfo")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80 -O3")
+#set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80 -O3")
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/cuda/include
@@ -73,7 +73,7 @@ target_compile_features(mace_ops PRIVATE cxx_std_17)
 
 set_target_properties(mace_ops PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 #set_target_properties(mace_ops PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-#set_target_properties(mace_ops PROPERTIES CUDA_ARCHITECTURES native)
+set_target_properties(mace_ops PROPERTIES CUDA_ARCHITECTURES native)
 
 set(CMAKE_CUDA_STANDARD 17)
 
