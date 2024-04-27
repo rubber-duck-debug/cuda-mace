@@ -298,6 +298,7 @@ def benchmark(
         drop_last=False,
     )
     batch = next(iter(data_loader)).to("cuda")
+    batch['positions'] = batch['positions'] + 0.1*torch.randn(batch['positions'].shape, dtype=batch['positions'].dtype, device=batch['positions'].device)
     print("num edges", batch.edge_index.shape)
     # warm up
     for _ in range(500):
@@ -346,23 +347,13 @@ def accuracy(
         drop_last=False,
     )
     batch = next(iter(data_loader)).to("cuda")
+    
     print("num edges", batch.edge_index.shape)
-    # def print_grad_hook(module, grad_input, grad_output):
-    #     print("Gradients at this layer: ", grad_output)
 
-    # for modules in model.modules():
-    #     print("modules", modules)
-    #     modules.register_backward_hook(print_grad_hook)
-
-    # def energy_model(positions:torch.Tensor):
-    #     batch.positions = positions
-    #     energy = model_opt(batch, training=False, compute_force=False)["energy"]
-    #     return energy
-    # print("check the gradient")
-    # positions_input = batch.positions.clone().detach().requires_grad_(True)
-    # torch.autograd.gradcheck(energy_model, positions_input, eps=1e-2, atol=1e-2)
     for batch in data_loader:
         batch = batch.to("cuda")
+        batch['positions'] = batch['positions'] + 0.1*torch.randn(batch['positions'].shape, dtype=batch['positions'].dtype, device=batch['positions'].device)
+        
         print("num nodes", batch.num_nodes)
         batch_2 = batch.clone()
         batch_3 = batch.clone()
@@ -397,6 +388,10 @@ def accuracy(
         error_forces_float32 = (
             (output_org_float32["forces"] - output_org["forces"]).abs().mean()
         )
+        print (output_org_float32["forces"])
+        print (output_org["forces"])
+        print (output_opt["forces"])
+        
         print("error forces float32", error_forces_float32)
         # compute relative forces error
         error_relative_forces = (
@@ -406,7 +401,7 @@ def accuracy(
         error_relative_components = (
             (
                 (output_org["forces"] - output_opt["forces"])
-                / (output_org["forces"] + 10e-6)
+                / (output_org["forces"] + 10e-9)
             )
             .abs()
             .mean()

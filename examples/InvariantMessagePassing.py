@@ -267,6 +267,8 @@ def check_correctness(
     osum = (message** 2.0).sum() 
     osum.backward()
     
+    print (osum)
+    
     torch.cuda.synchronize()
     
     #print ("Checking ref output vs e3nn backwards.")
@@ -284,6 +286,7 @@ def check_correctness(
     osum = (cuda_out ** 2.0).sum()
     osum.backward()
     torch.cuda.synchronize()
+    print (osum)
 
     print (node_feats_e3nn.grad - node_feats_cuda.grad)
     
@@ -309,11 +312,42 @@ def check_correctness(
 
 
 def accuracy(dtype, device):
-    node_feats = torch.load("node_feats.pt")
-    edge_attrs = torch.load("edge_attrs.pt")
-    tp_weights = torch.load("tp_weights.pt")
-    receiver_list = torch.load("receiver.pt")
-    sender_list = torch.load("sender.pt")
+    nnodes = 1000
+    nedges = nnodes * 45
+
+    nfeatures = 96
+    L_MAX = 3
+    nl = (L_MAX + 1) ** 2
+
+    print(f"--DTYPE: {dtype}")
+    print(f"Benchmarking dtype {dtype} and device {device}")
+    print(f"nodes: {nnodes} and edges: {nedges}")
+    print(f"nfeatures: {nfeatures} and nsphericalharmonics: {nl}")
+
+    node_feats = torch.randn(
+        (nnodes, nfeatures), dtype=dtype, device=device, requires_grad=True
+    )
+
+    edge_attrs = torch.randn(
+        (nnodes, nl), dtype=dtype, device=device, requires_grad=True
+    )
+    tp_weights = torch.randn(
+        (nnodes, L_MAX + 1, nfeatures), dtype=dtype, device=device, requires_grad=True
+    )
+
+    receiver_list = torch.sort(
+        torch.randint(nnodes, (nedges,), device=device, dtype=torch.int32)
+    )[0]
+
+    r = torch.randperm(receiver_list.shape[0])
+    sender_list = receiver_list[r]  # mimic sender_list by permutation
+
+    edge_attrs = edge_attrs[receiver_list] - (
+        edge_attrs[sender_list] + 0.5
+    )  # mimic pair list
+    tp_weights = tp_weights[receiver_list] - (
+        tp_weights[sender_list] + 0.5
+    )  # mimic pair list
     
     print(f"--DTYPE: {dtype}")
     print(f"Benchmarking dtype {dtype} and device {device}")
@@ -325,7 +359,7 @@ def accuracy(dtype, device):
 
 
 def benchmark(dtype, device):
-    nnodes = 5800
+    nnodes = 1000
     nedges = nnodes * 45
 
     nfeatures = 96
@@ -368,12 +402,12 @@ def benchmark(dtype, device):
     edge_attrs_cuda_old = edge_attrs.clone().detach().requires_grad_(True)
     tp_weights_cuda_old = tp_weights.clone().detach().requires_grad_(True)
 
-    node_feats_cuda = node_feats.clone().detach().contiguous().requires_grad_(True)
-    edge_attrs_cuda = edge_attrs.clone().detach().contiguous().requires_grad_(True)
-    tp_weights_cuda = tp_weights.clone().detach().contiguous().requires_grad_(True)
+    node_feats_cuda = node_feats.clone().detach().contiguous().cuda().requires_grad_(True)
+    edge_attrs_cuda = edge_attrs.clone().detach().contiguous().cuda().requires_grad_(True)
+    tp_weights_cuda = tp_weights.clone().detach().contiguous().cuda().requires_grad_(True)
 
     torch.cuda.synchronize()
-    torch.cuda.cudart().cudaProfilerStart()
+    #torch.cuda.cudart().cudaProfilerStart()
     start = time()
     for i in range(1000):
         cuda_out = tp.forward(
@@ -389,8 +423,8 @@ def benchmark(dtype, device):
     torch.cuda.synchronize()
     end = time()
     print(end - start)
-    torch.cuda.cudart().cudaProfilerStop()
+    #torch.cuda.cudart().cudaProfilerStop()
 
 if __name__ == "__main__":
-    #accuracy(torch.float32, "cuda")
-    benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py
+    accuracy(torch.float32, "cuda")
+    #benchmark(torch.float32, "cuda") # run this with nsys nvprof python3 examples/InvariantMessagePassing.py

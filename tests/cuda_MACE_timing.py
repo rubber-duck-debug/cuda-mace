@@ -191,7 +191,7 @@ def linear_to_cuda(linear):
 
 
 def element_linear_to_cuda(skip_tp):
-    print("elementlinear", skip_tp)
+    #print("elementlinear", skip_tp)
     num_elements = skip_tp.__dict__["irreps_in2"].dim
     n_channels = skip_tp.__dict__["irreps_in1"][0].dim
     lmax = skip_tp.__dict__["irreps_in1"].lmax
@@ -223,8 +223,8 @@ def invariant_residual_interaction_forward(
     sender = edge_index[0]
     receiver = edge_index[1]
     num_nodes = torch.tensor(node_feats.shape[0])
-    if run_timeit:
-        print (node_feats.shape, node_attrs.shape)
+    #if run_timeit:
+        #print (node_feats.shape, node_attrs.shape)
     start = time()
     sc = self.skip_tp(node_feats, node_attrs)
     torch.cuda.synchronize()
@@ -239,7 +239,7 @@ def invariant_residual_interaction_forward(
     if run_timeit:
         print("linear_up", (end - start) * 1000, "ms")
     
-    print (edge_feats.shape)
+    #print (edge_feats.shape)
     start = time()
     tp_weights = self.conv_tp_weights(edge_feats)
     torch.cuda.synchronize()
@@ -275,7 +275,7 @@ def invariant_residual_interaction_forward(
     if run_timeit:
         print("message", (end - start) * 1000, "ms")
     return (
-        message.contiguous(),
+        message,
         sc,
     )  # [n_nodes, channels, (lmax + 1)**2]
 
@@ -650,7 +650,7 @@ def run_test():
     from ase import build
     from mace import modules
 
-    size = 9
+    size = 5
     cutoff = 4.0
 
     # build very large diamond structure
@@ -678,6 +678,8 @@ def run_test():
     atomic_energies = np.array([1.0], dtype=float)
 
     batch = next(iter(data_loader)).to("cuda")
+    
+    print ('edge_index: ', batch['edge_index'].shape)
 
     model_config = dict(
         r_max=cutoff,
@@ -700,7 +702,7 @@ def run_test():
     model = MACE(**model_config).to("cuda")
     model = optimize_cuda_mace(model)
 
-    model = torch.jit.script(model)
+    #model = torch.jit.script(model)
     
     warmup = 50
     for i in range(warmup):
