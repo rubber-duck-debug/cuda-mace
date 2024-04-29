@@ -225,7 +225,6 @@ __global__ void backward_edge_inv_tp_kernel(
     torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> gradY,
     torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits> grad_radial)
 {
-
     extern __shared__ char buffer[];
 
     void *sptr = buffer;
@@ -490,10 +489,10 @@ std::vector<torch::Tensor> backward_gpu(torch::Tensor X,
                                                      .dtype(radial.dtype())
                                                      .device(radial.device()));
 
-    torch::Tensor gradX = torch::empty({X.size(0), X.size(1)},
-                                       torch::TensorOptions()
-                                           .dtype(X.dtype())
-                                           .device(X.device()));
+    torch::Tensor gradX = torch::empty_like(X,
+                                            torch::TensorOptions()
+                                                .dtype(X.dtype())
+                                                .device(X.device()));
 
     torch::Tensor gradY = torch::empty_like(Y,
                                             torch::TensorOptions()
