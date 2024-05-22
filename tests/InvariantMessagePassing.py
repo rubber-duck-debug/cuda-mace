@@ -65,8 +65,8 @@ def accuracy():
     from ase import build
     from mace import modules
 
-    size = 5
-    cutoff = 4.0
+    size = 2
+    cutoff = 2.0
 
     # build very large diamond structure
     atoms = build.bulk("C", "diamond", a=3.567, cubic=True)
@@ -160,6 +160,16 @@ def accuracy():
 
     sender = edge_index[0]
     receiver = edge_index[1]
+    
+        
+    print (sender)
+    print (receiver)
+    sort_sender_idx = torch.argsort(sender)
+    sorted_sender  = sender[sort_sender_idx]
+    sorted_receiver = receiver[sort_sender_idx]
+    
+    for i in range (sender.shape[0]):
+        print (i, sender[i].item(), receiver[i].item(), sorted_sender[i].item(), sorted_receiver[i].item())
 
     edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
     node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
@@ -324,7 +334,7 @@ def benchmark(args):
 
     sender = edge_index[0]
     receiver = edge_index[1]
-
+    
     if (args.grad):
         edge_attrs_cuda = edge_attrs.clone().detach().requires_grad_(True)
         node_feats_cuda = node_feats.clone().detach().requires_grad_(True)
@@ -338,9 +348,12 @@ def benchmark(args):
 
     sender = sender.int()
     receiver = receiver.int()
+    
+    ## torch::Tensor sorted_sender_idx = torch::argsort(sender_list).to(torch::kInt32);
+    ##torch::Tensor first_occurences_node = calculate_first_occurences_gpu_with_sort(sender_list, X.size(0), 64, sorted_sender_idx);
 
-    nb_iters = 30
-    warmup_iters = 20
+    nb_iters = 50
+    warmup_iters = 30
 
     for i in range (nb_iters):
         start = time()

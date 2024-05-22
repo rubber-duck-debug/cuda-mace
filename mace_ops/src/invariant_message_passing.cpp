@@ -19,15 +19,17 @@ torch::Tensor InvariantMessagePassingTPAutograd::forward(
     const int64_t nnodes)
 {
 
-    torch::Tensor first_occurences = calculate_first_occurences_gpu(receiver_list, nnodes, 64);
+    torch::Tensor first_occurences = calculate_first_occurences_gpu(receiver_list, nnodes, 128);
 
+    auto result  = forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences, nnodes);
+    
     if (X.requires_grad() || Y.requires_grad() || radial.requires_grad())
     {
         ctx->saved_data["nnodes"] = nnodes;
-        ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, first_occurences});
+        ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, first_occurences, result[1]});
     }
-
-    return forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences, nnodes);
+    
+    return result[0];
 }
 
 variable_list InvariantMessagePassingTPAutograd::backward(AutogradContext *ctx, variable_list grad_outputs)
@@ -41,10 +43,11 @@ variable_list InvariantMessagePassingTPAutograd::backward(AutogradContext *ctx, 
     auto sender_list = saved_variables[3];
     auto receiver_list = saved_variables[4];
     auto first_occurences = saved_variables[5];
+    auto node_edge_index = saved_variables[6];
 
     int64_t nnodes = ctx->saved_data["nnodes"].toInt();
 
-    auto result = backward_gpu(X, Y, radial, grad_outputs[0], sender_list, receiver_list, first_occurences, nnodes);
+    auto result = backward_gpu(X, Y, radial, grad_outputs[0], sender_list, receiver_list, first_occurences, node_edge_index, nnodes);
 
     torch::Tensor undef;
 

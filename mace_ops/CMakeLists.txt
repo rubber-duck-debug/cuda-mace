@@ -62,9 +62,17 @@ add_library(mace_ops SHARED
     "cuda/include/symmetric_contraction_impl.cuh"
     "cuda/src/symmetric_contraction_impl.cu"
 
+    "cuda/include/cubic_spline_impl.cuh"
+    "cuda/src/cubic_spline_impl.cu"
+
+    "cuda/include/spherical_harmonics_impl.cuh"
+    "cuda/src/spherical_harmonics_impl.cu"
+
     "src/linear_wmma.cpp"
     "src/invariant_message_passing.cpp"
     "src/symmetric_contraction.cpp"
+    "src/cubic_spline.cpp"
+    "src/spherical_harmonics.cpp"
 )
 
 target_link_libraries(mace_ops "${TORCH_LIBRARIES}")
@@ -72,7 +80,7 @@ target_link_libraries(mace_ops "${TORCH_LIBRARIES}")
 target_compile_features(mace_ops PRIVATE cxx_std_17)
 
 set_target_properties(mace_ops PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-#set_target_properties(mace_ops PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+set_target_properties(mace_ops PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 set_target_properties(mace_ops PROPERTIES CUDA_ARCHITECTURES native)
 
 set(CMAKE_CUDA_STANDARD 17)
