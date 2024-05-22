@@ -451,7 +451,7 @@ class MACE(torch.nn.Module):
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
         node_feats_irreps = o3.Irreps([(hidden_irreps.count(o3.Irrep(0, 1)), (0, 1))])
         
-        print ("LinearNodeEmbeddingBlock:", node_attr_irreps, "->", node_feats_irreps)
+        #print ("LinearNodeEmbeddingBlock:", node_attr_irreps, "->", node_feats_irreps)
         self.node_embedding = LinearNodeEmbeddingBlock(
             irreps_in=node_attr_irreps, irreps_out=node_feats_irreps
         )
@@ -570,7 +570,7 @@ class MACE(torch.nn.Module):
         if (self.profile):
             torch.cuda.nvtx.range_push("MACE::embeddings")
             
-        print ("node attrs:", data["node_attrs"].shape)
+        #print ("node attrs:", data["node_attrs"].shape)
         node_feats = self.node_embedding (data["node_attrs"])
         if (self.profile):
             torch.cuda.nvtx.range_pop()
