@@ -7,15 +7,11 @@
 using namespace std;
 using namespace torch;
 
-std::vector<torch::Tensor> evaluate_spline(
-    torch::Tensor r,
-    torch::Tensor coeffs,
-    torch::Tensor r_width);
+std::vector<torch::Tensor>
+evaluate_spline(torch::Tensor r, torch::Tensor coeffs, double r_width);
 
-torch::Tensor generate_coefficients(
-    torch::Tensor r,
-    torch::Tensor R,
-    torch::Tensor r_width);
+torch::Tensor generate_coefficients(torch::Tensor r, torch::Tensor R,
+                                    double r_width);
 
 torch::Tensor backward_spline(torch::Tensor grad_output, torch::Tensor R_deriv);
 

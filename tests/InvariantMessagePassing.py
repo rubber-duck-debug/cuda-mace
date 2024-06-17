@@ -197,30 +197,21 @@ def accuracy():
 
     cuda_out = tp.forward(
         node_feats_cuda,
-        edge_attrs_cuda,
+        edge_attrs_cuda.transpose(-1, -2),
         radial_feats_cuda,
         sender.int(),
         receiver.int(),
         nnodes,
     )
 
-    print (cuda_out.shape)
-    
-    print (ref_out - cuda_out)
-    
-    print (torch.abs(ref_out - cuda_out).mean())
+    print (torch.abs(ref_out - cuda_out).max())
 
     (cuda_out * 2.0).sum().backward()
     
     print ("--Ref MAEs--")
-
-    print (node_feats_ref.grad - node_feats_cuda.grad)
-    idx = torch.where(node_feats_ref.grad - node_feats_cuda.grad > 1e-4)
-    print ((node_feats_ref.grad - node_feats_cuda.grad)[idx])
-    print (idx)
-    print (torch.abs(node_feats_ref.grad - node_feats_cuda.grad).mean())
-    print (torch.abs(edge_attrs_ref.grad - edge_attrs_cuda.grad).mean())
-    print (torch.abs(radial_feats_ref.grad - radial_feats_cuda.grad).mean())
+    print (torch.abs(node_feats_ref.grad - node_feats_cuda.grad).max())
+    print (torch.abs(edge_attrs_ref.grad - edge_attrs_cuda.grad).max())
+    print (torch.abs(radial_feats_ref.grad - radial_feats_cuda.grad).max())
 
     mji = conv_tp(node_feats_e3nn[sender], edge_attrs_e3nn, radial_feats_e3nn)
 
@@ -230,9 +221,9 @@ def accuracy():
 
     print ("--E3NN MAEs--")
 
-    print (torch.abs(node_feats_e3nn.grad - node_feats_cuda.grad).mean())
-    print (torch.abs(edge_attrs_e3nn.grad - edge_attrs_cuda.grad).mean())
-    print (torch.abs(radial_feats_e3nn.grad.view(radial_feats.shape[0], -1, node_feats.shape[-1]) - radial_feats_cuda.grad).mean())
+    print (torch.abs(node_feats_e3nn.grad - node_feats_cuda.grad).max())
+    print (torch.abs(edge_attrs_e3nn.grad - edge_attrs_cuda.grad).max())
+    print (torch.abs(radial_feats_e3nn.grad.view(radial_feats.shape[0], -1, node_feats.shape[-1]) - radial_feats_cuda.grad).max())
 
 
 

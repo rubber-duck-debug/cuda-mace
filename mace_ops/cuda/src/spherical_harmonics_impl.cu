@@ -102,7 +102,7 @@ __global__ void spherical_harmonics_kernel(
   buffer_sph[8 * blockDim.x + threadIdx.x] = 0.54627421529604 * (x2 - y2);
 
   buffer_sph[9 * blockDim.x + threadIdx.x] =
-      0.59004358992664 * y * (y2 - 3 * x2);
+      -0.59004358992664 * y * (y2 - 3 * x2);
   buffer_sph[10 * blockDim.x + threadIdx.x] =
       2.64575131106459 * z * buffer_sph[4 * blockDim.x + threadIdx.x];
   tmp = -0.457045799464466 * (x2 + y2 - 4 * z2);

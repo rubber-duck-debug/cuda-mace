@@ -63,6 +63,9 @@ def build_parser():
     )
     return parser
 
+def spherical_harmonics_fn(self, lengths):
+    print ("HELLO!")
+    return self.sph_hrm.forward(lengths)
 
 def optimize_cuda_mace(model: MACE) -> None:
     """
@@ -79,7 +82,13 @@ def optimize_cuda_mace(model: MACE) -> None:
         normalization="component",
         backend="opt",
     )
-    model.spherical_harmonics = spherical_harmonics
+    model.spherical_harmonics.sph_hrm = torch.classes.spherical_harmonics.SphericalHarmonics()
+    
+    bound_method = spherical_harmonics_fn.__get__(
+                model.spherical_harmonics, model.spherical_harmonics.__class__
+            )
+    setattr(model.spherical_harmonics, "forward", bound_method)
+    
     num_elements = model.node_embedding.linear.irreps_in.num_irreps
     for i in range(n_layers):
         model.interactions[i].linear_up = linear_matmul(
@@ -372,6 +381,7 @@ def accuracy(
         batch_2.shifts = batch_2.shifts.double()
         output_org = model(batch_2.to_dict(),
                            training=False, compute_force=True)
+        print("energy org_f32", output_org_float32["energy"])
         print("energy org", output_org["energy"])
         print("energy opt", output_opt["energy"])
         error_energy = (output_org["energy"] -

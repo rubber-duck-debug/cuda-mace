@@ -7,6 +7,7 @@ using namespace torch;
 
 torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W);
 
-torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W, torch::Tensor elemental_embedding);
+torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W,
+                                    torch::Tensor elemental_embedding);
 
 #endif // LINEAR_WMMA_IMPL_CUH
