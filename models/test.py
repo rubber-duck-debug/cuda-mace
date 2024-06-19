@@ -579,7 +579,7 @@ if __name__ == "__main__":
     edge_splines  = []
     for i, interaction in enumerate(model.interactions):
         R = interaction.conv_tp_weights(bessel_j)
-        spline = torch.classes.cubic_spline.CubicSpline(r.cuda(), R.cuda())
+        spline = torch.classes.cubic_spline.CubicSpline(r.cuda(), R.cuda(), h)
         out = spline.forward(r)
         
         idx =  (torch.where(out - R > 1e-5))

@@ -132,7 +132,7 @@ __global__ void evaluate_kernel(
         r,
     const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits>
         coeff,
-    const double r_width,
+    const double r_width, const double r_max,
     torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits>
         R_out, /* [(r.shape[0] -1) * 4, R.shape[-1]]  */
     torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits>
@@ -143,36 +143,43 @@ __global__ void evaluate_kernel(
 
   const int i = blockIdx.x * NWARPS_PER_BLOCK + warpID;
 
-  if (i < r.size(0)) {
-    scalar_t h = r_width;
+  if (i >= r.size(0)) {
+    return;
+  }
 
-    scalar_t r_i = r[i];
-    int k = (int)(r_i / h);
+  scalar_t h = r_width;
 
-    scalar_t x = r_i - h * k;
-    scalar_t xx = x * x;
-    scalar_t xxx = xx * x;
+  scalar_t r_i = r[i];
 
-    __syncthreads();
+  if (r_i > r_max){
+    return;
+  }
 
-    for (int j = laneID; j < R_out.size(1); j += WARP_SIZE) {
+  int k = (int)(r_i / h);
 
-      scalar_t coeff_k0 = coeff[k][0][j];
-      scalar_t coeff_k1 = coeff[k][1][j];
-      scalar_t coeff_k2 = coeff[k][2][j];
-      scalar_t coeff_k3 = coeff[k][3][j];
+  scalar_t x = r_i - h * k;
+  scalar_t xx = x * x;
+  scalar_t xxx = xx * x;
 
-      R_out[i][j] = coeff_k0 + coeff_k1 * x + coeff_k2 * xx + coeff_k3 * xxx;
+  __syncthreads();
 
-      if (evaluate_deriv) {
-        R_deriv[i][j] = coeff_k1 + 2.0 * coeff_k2 * x + 3 * coeff_k3 * xx;
-      }
+  for (int j = laneID; j < R_out.size(1); j += WARP_SIZE) {
+
+    scalar_t coeff_k0 = coeff[k][0][j];
+    scalar_t coeff_k1 = coeff[k][1][j];
+    scalar_t coeff_k2 = coeff[k][2][j];
+    scalar_t coeff_k3 = coeff[k][3][j];
+
+    R_out[i][j] = coeff_k0 + coeff_k1 * x + coeff_k2 * xx + coeff_k3 * xxx;
+
+    if (evaluate_deriv) {
+      R_deriv[i][j] = coeff_k1 + 2.0 * coeff_k2 * x + 3 * coeff_k3 * xx;
     }
   }
 }
 
 std::vector<torch::Tensor>
-evaluate_spline(torch::Tensor r, torch::Tensor coeffs, double r_width) {
+evaluate_spline(torch::Tensor r, torch::Tensor coeffs, double r_width, double r_max) {
   const uint nsamples = r.size(0);
   const int noutputs = coeffs.size(2);
 
@@ -203,6 +210,7 @@ evaluate_spline(torch::Tensor r, torch::Tensor coeffs, double r_width) {
               r.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
               coeffs.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
               r_width,
+              r_max,
               R_out.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
               R_deriv
                   .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>());
@@ -211,6 +219,7 @@ evaluate_spline(torch::Tensor r, torch::Tensor coeffs, double r_width) {
               r.packed_accessor64<scalar_t, 1, torch::RestrictPtrTraits>(),
               coeffs.packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
               r_width,
+              r_max,
               R_out.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
               R_deriv
                   .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>());

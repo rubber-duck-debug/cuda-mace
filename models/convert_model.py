@@ -83,11 +83,11 @@ class InvariantInteraction(torch.nn.Module):
 
     def __init__(self, mace_model, profile=False):
         super().__init__()
-        self.linear_up = linear_matmul(mace_model.interactions[0].linear_up)
-        self.linear = linear_to_cuda(mace_model.interactions[0].linear)
+        self.linear_up = linear_matmul(mace_model.interactions[0].linear_up.float())
+        self.linear = linear_to_cuda(mace_model.interactions[0].linear.float())
         self.tp = InvariantMessagePassingTP()
         self.skip_tp = element_linear_to_cuda(
-            mace_model.interactions[0].skip_tp)
+            mace_model.interactions[0].skip_tp.float())
         self.avg_num_neighbors = mace_model.interactions[0].avg_num_neighbors
         self.profile = profile
 
@@ -153,10 +153,10 @@ class InvariantResidualInteraction(torch.nn.Module):
     def __init__(self, mace_model, profile=False):
         super().__init__()
 
-        self.linear_up = linear_matmul(mace_model.interactions[1].linear_up)
-        self.linear = linear_to_cuda(mace_model.interactions[1].linear)
+        self.linear_up = linear_matmul(mace_model.interactions[1].linear_up.float())
+        self.linear = linear_to_cuda(mace_model.interactions[1].linear.float())
         self.tp = InvariantMessagePassingTP()
-        self.skip_tp = mace_model.interactions[1].skip_tp
+        self.skip_tp = mace_model.interactions[1].skip_tp.float()
         self.avg_num_neighbors = mace_model.interactions[1].avg_num_neighbors
         self.profile = profile
 
@@ -232,19 +232,25 @@ class OptimizedInvariantMACE(torch.nn.Module):
             "num_interactions", deepcopy(mace_model.num_interactions)
         )
 
-        self.node_embedding = deepcopy(mace_model.node_embedding)
-        self.radial_embedding = deepcopy(mace_model.radial_embedding)
+        self.node_embedding = deepcopy(mace_model.node_embedding.float())
+        self.radial_embedding = deepcopy(mace_model.radial_embedding.float())
 
         self.spherical_harmonics = torch.classes.spherical_harmonics.SphericalHarmonics()
 
         # Interactions and readout
-        self.atomic_energies_fn = deepcopy(mace_model.atomic_energies_fn)
+        self.atomic_energies_fn = deepcopy(mace_model.atomic_energies_fn.float())
 
         self.interactions = torch.nn.ModuleList([InvariantInteraction(
             mace_model, profile), InvariantResidualInteraction(mace_model, profile)])
         self.products = deepcopy(mace_model.products)
-        self.readouts = deepcopy(mace_model.readouts)
+        
+        self.readouts = []
+        
+        for i in range (len(mace_model.readouts)):
+            self.readouts.append(mace_model.readouts[i].float())
 
+        self.readouts = torch.nn.ModuleList(self.readouts)
+        
         for i in range(mace_model.num_interactions):
             symm_contract = mace_model.products[i].symmetric_contractions
             all_weights = {}
@@ -282,21 +288,20 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 symmetric_contractions
             )
             self.products[i].linear = linear_matmul(
-                deepcopy(mace_model.products[i].linear))
+                deepcopy(mace_model.products[i].linear.float()))
 
-        r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 128, retstep=True)
-        r = torch.tensor(r, dtype=torch.float32).to("cuda")
-        print(r)
+        r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 8192, retstep=True)
+        r = torch.tensor(r, dtype=torch.float64).to("cuda")
         bessel_j = self.radial_embedding(r.unsqueeze(-1))
-
+        print ("H:", h)
         self.edge_splines = []
         for i, interaction in enumerate(mace_model.interactions):
             R = interaction.conv_tp_weights(bessel_j)
             spline = torch.classes.cubic_spline.CubicSpline(
-                r.cuda(), R.cuda(), h)
+                r.cuda(), R.cuda(), h, self.r_max.item())
             self.edge_splines.append(spline)
 
-        self.scale_shift = deepcopy(mace_model.scale_shift)
+        self.scale_shift = deepcopy(mace_model.scale_shift.float())
 
         self.profile = profile
         self.orig_model = mace_model
@@ -356,9 +361,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
             if (self.profile):
                 torch.cuda.nvtx.range_push("MACE::edge spline")
 
-            print(torch.sort(lengths.squeeze(-1)))
-
-            edge_feats = edge_spline.forward(lengths.squeeze(-1))
+            edge_feats = edge_spline.forward(lengths.squeeze(-1).double()).float()
 
             if (self.profile):
                 torch.cuda.nvtx.range_pop()
@@ -480,6 +483,172 @@ def compute_forces(
         return torch.zeros_like(positions)
     return -1 * gradient
 
+def test_components(
+    model,
+    model_opt,
+    size=2,
+) -> None:
+    from ase import build
+    # build very large diamond structure
+    atoms = build.bulk("C", "diamond", a=3.567, cubic=True)
+    atoms_list = [atoms.repeat((size, size, size))]
+    print("Number of atoms", len(atoms_list[0]))
+
+    configs = [data.config_from_atoms(atoms) for atoms in atoms_list]
+
+    z_table = tools.AtomicNumberTable([int(z) for z in model.atomic_numbers])
+
+    data_loader = torch_geometric.dataloader.DataLoader(
+        dataset=[
+            data.AtomicData.from_config(
+                config, z_table=z_table, cutoff=model.r_max.item()
+            )
+            for config in configs
+        ],
+        batch_size=1,
+        shuffle=False,
+        drop_last=False,
+    )
+    batch = next(iter(data_loader)).to("cuda")
+    batch['positions'] = batch['positions'] + 0.05*torch.randn(
+    batch['positions'].shape, dtype=batch['positions'].dtype, device=batch['positions'].device)
+    
+    batch_opt = batch.clone()
+    
+    num_graphs = batch["ptr"].numel() - 1
+    
+    node_e0 = model.atomic_energies_fn(batch["node_attrs"].double())
+    node_e0_opt = model_opt.atomic_energies_fn(batch_opt["node_attrs"])
+    print ('--node_e0--')
+    node_e0_error = torch.abs(node_e0 - node_e0_opt)
+    print ("max, mean error:", node_e0_error.max().item(), node_e0_error.mean().item())
+    
+    e0 = scatter_sum(
+            src=node_e0, index=batch["batch"], dim=-1, dim_size=num_graphs)  # [n_graphs,]
+    
+    e0_opt = scatter_sum(
+            src=node_e0_opt, index=batch_opt["batch"], dim=-1, dim_size=num_graphs)
+    print ('--e0--')
+    e0_error = torch.abs(e0 - e0_opt)
+    print ("max, mean error:", e0_error.max().item(), e0_error.mean().item())
+    
+    
+    node_feats = model.node_embedding(batch["node_attrs"].double())
+    node_feats_opt = model_opt.node_embedding(batch_opt["node_attrs"])
+    
+    num_nodes = torch.tensor(node_feats.shape[0])
+    
+    print ('--node_feats--')
+    node_feats_error = torch.abs(node_feats - node_feats_opt)
+    print ("max, mean error:", node_feats_error.max().item(), node_feats_error.mean().item())
+    
+    vectors, lengths = get_edge_vectors_and_lengths(
+            positions=batch["positions"],
+            edge_index=batch["edge_index"],
+            shifts=batch["shifts"],
+        )
+    vectors = vectors.double()
+    lengths = lengths.double()
+    
+    vectors_opt, lengths_opt = get_edge_vectors_and_lengths(
+            positions=batch_opt["positions"],
+            edge_index=batch_opt["edge_index"],
+            shifts=batch_opt["shifts"],
+        )
+    
+    edge_attrs = model.spherical_harmonics.forward(vectors)
+    edge_attrs_opt = model_opt.spherical_harmonics.forward(vectors_opt)
+    
+    print ('--edge_attrs--')
+    edge_attr_error = torch.abs(edge_attrs - edge_attrs_opt.transpose(-1, -2).contiguous())
+    print ("max, mean error:", edge_attr_error.max().item(), edge_attr_error.mean().item())
+    
+    edge_feats = model.radial_embedding(lengths)
+    edge_feats = model.interactions[0].conv_tp_weights(edge_feats)
+    
+    #need to compute edge_feats spline in double due to grad accuracy
+    edge_feats_opt = model_opt.edge_splines[0].forward(lengths_opt.squeeze(-1).double()).float()
+    
+    print ('--edge_feats--')
+    abs_error = torch.abs(edge_feats - edge_feats_opt)
+    print ("max, mean error:", abs_error.max().item(), abs_error.mean().item())
+    
+    node_feats = model.interactions[0].linear_up(node_feats)
+    node_feats_opt = model_opt.interactions[0].linear_up(node_feats_opt)
+
+    print ('--node_feats--')
+    abs_error = torch.abs(node_feats - node_feats_opt)
+    print ("max, mean error:", abs_error.max().item(), abs_error.mean().item())
+    
+    edge_index=batch["edge_index"]
+    sender = edge_index[0]
+    receiver = edge_index[1]
+    
+    node_attrs = batch["node_attrs"]
+    
+    mji = model.interactions[0].conv_tp(
+            node_feats[sender], edge_attrs, edge_feats
+        ).double()  # [n_edges, irreps]
+    message = scatter_sum(
+            src=mji, index=receiver, dim=0, dim_size=num_nodes
+        )  # [n_nodes, irreps]
+    
+    message = model.interactions[0].linear(message) / model.interactions[0].avg_num_neighbors
+    message = model.interactions[0].skip_tp(message, node_attrs.double())
+    
+    message_opt = model_opt.interactions[0].tp.forward(
+            node_feats_opt,
+            edge_attrs_opt,
+            edge_feats_opt.view(edge_feats.shape[0], -1, node_feats.shape[-1]),
+            sender.int(),
+            receiver.int(),
+            num_nodes,
+    )
+
+    message_opt = model_opt.interactions[0].linear(message_opt) / model_opt.interactions[0].avg_num_neighbors
+    message_opt = model_opt.interactions[0].skip_tp(message_opt, node_attrs)
+
+    print ("--message--")
+    #print (node_feats.dtype, edge_attrs.dtype, edge_feats.dtype, message.dtype)
+    #print (node_feats_opt.dtype, edge_attrs_opt.dtype, edge_feats_opt.dtype, message_opt.dtype)
+    abs_error = torch.abs(message_opt - model.interactions[0].reshape(message).transpose(-1, -2))
+    print ("max, mean error:", abs_error.max().item(), abs_error.mean().item())
+    
+    node_feats_new = model.products[0].forward(model.interactions[0].reshape(message), None, node_attrs.double())
+    node_feats_opt_new = model_opt.products[0].forward(message_opt, None, node_attrs)
+    
+    print ("--product--")
+    abs_error = torch.abs(node_feats_new - node_feats_opt_new)
+    print ("max, mean error:", abs_error.max().item(), abs_error.mean().item())
+    
+    print ('--node energies--')
+    #print (node_feats_new.shape)
+    node_energies =  model.readouts[0].forward(node_feats_new).squeeze(-1)  # [n_nodes, ]
+    #print (node_energies.shape)
+    #print (model.readouts[1].linear_1.weight.shape)
+    #print (model.readouts[1].linear_2.weight.shape)
+    node_energies_opt =  model_opt.readouts[0].forward(node_feats_opt_new).squeeze(-1)  # [n_nodes, ]
+    abs_error = torch.abs(node_energies - node_energies_opt)
+    print ("max, mean error:", abs_error.max().item(), abs_error.mean().item())
+    
+    print ('--energies--')
+    energy = scatter_sum(
+                src=node_energies,
+                index=batch["batch"],
+                dim=-1,
+                dim_size=num_graphs,
+            )
+    #print (energy, node_energies.sum())
+    # source of 10x error here in accumulation
+    energy_opt = scatter_sum(
+                src=node_energies_opt,
+                index=batch["batch"],
+                dim=-1,
+                dim_size=num_graphs,
+            )
+    abs_error = torch.abs(energy - energy_opt)
+    print ("max, mean error:", abs_error.max().item(), abs_error.mean().item())
+    
 
 def accuracy(
     model,
@@ -550,11 +719,14 @@ if __name__ == "__main__":
     parser = build_parser()
     args = parser.parse_args()
 
-    model = torch.load(args.model).to("cuda").float()
-
+    model = torch.load(args.model).to("cuda")
+    model = model.to(torch.float64)
+    
     opt_model = OptimizedInvariantMACE(deepcopy(model))
 
     print(model)
     print(opt_model)
 
-    accuracy(model, opt_model)
+    test_components(model, opt_model)
+    
+    #accuracy(model, opt_model)

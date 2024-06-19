@@ -122,6 +122,8 @@ __global__ void inv_tp_kernel(
         }
       }
 
+      __syncthreads();
+
       for (int i = 0; i < TN; i++) {
         for (int j = 0; j < TM; j++) {
           output[node_index][j * NWARPS_PER_BLOCK + m]
