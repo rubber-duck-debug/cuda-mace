@@ -232,13 +232,13 @@ class OptimizedInvariantMACE(torch.nn.Module):
             "num_interactions", deepcopy(mace_model.num_interactions)
         )
 
-        self.node_embedding = deepcopy(mace_model.node_embedding.float())
-        self.radial_embedding = deepcopy(mace_model.radial_embedding.float())
+        self.node_embedding = deepcopy(mace_model.node_embedding)
+        self.radial_embedding = deepcopy(mace_model.radial_embedding)
 
         self.spherical_harmonics = torch.classes.spherical_harmonics.SphericalHarmonics()
 
         # Interactions and readout
-        self.atomic_energies_fn = deepcopy(mace_model.atomic_energies_fn.float())
+        self.atomic_energies_fn = deepcopy(mace_model.atomic_energies_fn)
 
         self.interactions = torch.nn.ModuleList([InvariantInteraction(
             mace_model, profile), InvariantResidualInteraction(mace_model, profile)])
@@ -247,7 +247,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
         self.readouts = []
         
         for i in range (len(mace_model.readouts)):
-            self.readouts.append(mace_model.readouts[i].float())
+            self.readouts.append(mace_model.readouts[i].double())
 
         self.readouts = torch.nn.ModuleList(self.readouts)
         
@@ -290,10 +290,10 @@ class OptimizedInvariantMACE(torch.nn.Module):
             self.products[i].linear = linear_matmul(
                 deepcopy(mace_model.products[i].linear.float()))
 
-        r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 8192, retstep=True)
+        r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 4096, retstep=True)
         r = torch.tensor(r, dtype=torch.float64).to("cuda")
         bessel_j = self.radial_embedding(r.unsqueeze(-1))
-        print ("H:", h)
+    
         self.edge_splines = []
         for i, interaction in enumerate(mace_model.interactions):
             R = interaction.conv_tp_weights(bessel_j)
@@ -301,8 +301,8 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 r.cuda(), R.cuda(), h, self.r_max.item())
             self.edge_splines.append(spline)
 
-        self.scale_shift = deepcopy(mace_model.scale_shift.float())
-
+        self.scale_shift = deepcopy(mace_model.scale_shift.double())
+        
         self.profile = profile
         self.orig_model = mace_model
 
@@ -316,10 +316,9 @@ class OptimizedInvariantMACE(torch.nn.Module):
         if (self.profile):
             torch.cuda.nvtx.range_push("MACE::atomic_energies")
         # Atomic energies
-        node_e0 = self.atomic_energies_fn(data["node_attrs"])
+        node_e0 = self.atomic_energies_fn(data["node_attrs"].double())
         # node_e0 = self.atomic_energies_fn(data["node_attrs"])
-        e0 = scatter_sum(
-            src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs)  # [n_graphs,]
+        e0 = scatter_sum(src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs)  # [n_graphs,]
 
         if (self.profile):
             torch.cuda.nvtx.range_pop()
@@ -328,7 +327,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
         if (self.profile):
             torch.cuda.nvtx.range_push("MACE::embeddings")
         # print ("node attrs:", data["node_attrs"].shape)
-        node_feats = self.node_embedding(data["node_attrs"])
+        node_feats = self.node_embedding(data["node_attrs"].double())
 
         if (self.profile):
             torch.cuda.nvtx.range_pop()
@@ -351,9 +350,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
         if (self.profile):
             torch.cuda.nvtx.range_pop()
 
-        # Interactions
-        energies = [e0]
-        node_energies_list = [node_e0]
+        node_es_list  = []
         node_feats_list = []
         for j, (interaction, product, readout, edge_spline) in enumerate(zip(
             self.interactions, self.products, self.readouts, self.edge_splines)
@@ -371,7 +368,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
 
             node_feats, sc = interaction(
                 node_attrs=data["node_attrs"],
-                node_feats=node_feats,
+                node_feats=node_feats.float(),
                 edge_attrs=edge_attrs,
                 edge_feats=edge_feats,
                 edge_index=data["edge_index"],
@@ -396,29 +393,22 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 torch.cuda.nvtx.range_push("MACE::readout: {}".format(j))
 
             node_feats_list.append(node_feats)
-            node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
-            energy = scatter_sum(
-                src=node_energies,
-                index=data["batch"],
-                dim=-1,
-                dim_size=num_graphs,
-            )  # [n_graphs,]
-            energies.append(energy)
-            node_energies_list.append(node_energies)
-            if (self.profile):
-                torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("MACE:: node sum")
-
-        # Sum over energy contributions
-        contributions = torch.stack(energies, dim=-1)
-        total_energy = torch.sum(contributions, dim=-1)  # [n_graphs, ]
-
+            node_energies = readout(node_feats.double()).squeeze(-1)  # [n_nodes, ]
+            
+            node_es_list.append(node_energies)
+        
+        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)  # [n_nodes, ]
+        node_inter_es = self.scale_shift(node_inter_es)
+        inter_e = scatter_sum(
+            src=node_inter_es.double(), index=data["batch"], dim=-1, dim_size=num_graphs
+        )  # [n_graphs,]
+        
         if (self.profile):
             torch.cuda.nvtx.range_pop()
         # Outputs
-
+        
+        total_energy = e0 + inter_e
+        
         return total_energy
 
 
@@ -653,7 +643,7 @@ def test_components(
 def accuracy(
     model,
     model_opt,
-    size=2,
+    size=4,
 ) -> None:
     from ase import build
     # build very large diamond structure
@@ -694,6 +684,8 @@ def accuracy(
         forces_opt = compute_forces(
             output_opt, batch['positions'], training=False)
 
+        
+        
         model = model.double()
         model.atomic_energies_fn.atomic_energies = (
             model.atomic_energies_fn.atomic_energies.double()
@@ -707,11 +699,24 @@ def accuracy(
 
         output_org = model(batch2.to_dict(),
                            training=False, compute_force=True)
+        
+        model_f32 = model.float()
+        output_f32 = model_f32(batch.to_dict(),
+                           training=False, compute_force=True)
+        
         print("energy org", output_org["energy"])
         print("energy opt", output_opt)
+        print("energy f32", output_f32["energy"])
+        
+        abs_error = torch.abs(output_org["energy"] - output_opt)
+        
+        print ("---F64:F32_Opt absolute energy error (mean, max)---")
+        print ("%.5f %.5f" % (abs_error.mean().item(), abs_error.max().item()))
 
-        print(forces_opt)
-        print(output_org["forces"])
+        abs_error = torch.abs(output_org["forces"] - forces_opt)
+    
+        print ("---F64:F32_Opt absolute force error (mean, max)---")
+        print ("%.5f %.5f"% (abs_error.mean().item(), abs_error.max().item()))
 
 
 if __name__ == "__main__":
@@ -727,6 +732,6 @@ if __name__ == "__main__":
     print(model)
     print(opt_model)
 
-    test_components(model, opt_model)
+    #test_components(model, opt_model)
     
-    #accuracy(model, opt_model)
+    accuracy(model, opt_model)
