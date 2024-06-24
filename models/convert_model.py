@@ -215,7 +215,7 @@ class InvariantResidualInteraction(torch.nn.Module):
         )
 
 
-class OptimizedInvariantMACE(torch.nn.Module):
+class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
     def __init__(
         self,
         mace_model: torch.nn.Module,
@@ -727,7 +727,7 @@ if __name__ == "__main__":
     model = torch.load(args.model).to("cuda")
     model = model.to(torch.float64)
     
-    opt_model = OptimizedInvariantMACE(deepcopy(model))
+    opt_model = OptimizedScaleShiftInvariantMACE(deepcopy(model))
 
     print(model)
     print(opt_model)
