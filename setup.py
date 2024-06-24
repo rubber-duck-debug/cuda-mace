@@ -22,8 +22,7 @@ __version__ = "0.1"
 __maintainer__ = "Nicholas J. Browning"
 __email__ = "nickjbrowning@gmail.com"
 __status__ = "Alpha"
-__description__ = "GPU-Accelerated Sparse Symmetric Contractions and Tensor Products"
-__url__ = "TODO"
+__description__ = "CUDA implementation of MACE"
 
 ROOT = os.path.realpath(os.path.dirname(__file__))
 
