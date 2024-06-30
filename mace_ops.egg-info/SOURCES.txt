@@ -53,6 +53,9 @@ mace_ops/mace_ops.egg-info/dependency_links.txt
 mace_ops/mace_ops.egg-info/not-zip-safe
 mace_ops/mace_ops.egg-info/requires.txt
 mace_ops/mace_ops.egg-info/top_level.txt
+mace_ops/models/ScaleShiftMACE.py
+mace_ops/models/__init__.py
+mace_ops/models/test.py
 mace_ops/ops/__init__.py
 mace_ops/ops/invariant_message_passing.py
 mace_ops/ops/linear.py

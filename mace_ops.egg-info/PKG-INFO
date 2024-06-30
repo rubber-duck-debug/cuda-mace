@@ -1,5 +1,5 @@
 Metadata-Version: 2.1
-Name: mace-ops
+Name: mace_ops
 Version: 0.1
 Requires-Python: >=3.6
 Requires-Dist: torch>=1.13
