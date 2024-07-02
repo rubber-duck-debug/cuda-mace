@@ -12,6 +12,23 @@ using namespace torch::indexing;
 #define WARP_SIZE 32
 #define NWARPS_PER_BLOCK 4
 
+/*
+This code has been temporarily transplanted from sphericart. Code will be modified
+to be able to revert back to sphericart implementaton. In the meantime,\
+Please **CITE** sphericart if this code is used in any of your work.
+
+https://github.com/lab-cosmo/sphericart
+
+@article{sphericart,
+    title={Fast evaluation of spherical harmonics with sphericart},
+    author={Bigi, Filippo and Fraux, Guillaume and Browning, Nicholas J. and Ceriotti, Michele},
+    journal={J. Chem. Phys.},
+    year={2023},
+    number={159},
+    pages={064802},
+}
+*/
+
 template <typename scalar_t>
 __global__ void spherical_harmonics_kernel(
     const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits>
