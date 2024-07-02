@@ -46,7 +46,7 @@ from mace.modules.irreps_tools import (
 
 import math
 
-from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
+from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
 
 def reference(X, Y, radial, sender_list, receiver_list, nnodes):
     output = torch.zeros(nnodes, Y.shape[1], X.shape[1], device=X.device, dtype=X.dtype)

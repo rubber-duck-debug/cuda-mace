@@ -40,9 +40,9 @@ from mace.modules.irreps_tools import (
     tp_out_irreps_with_instructions,
 )
 
-from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
-from mace_ops.ops.linear import Linear, ElementalLinear
-from mace_ops.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
+from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
+from cuda_mace.ops.linear import Linear, ElementalLinear
+from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 
 def compute_forces_virials(
