@@ -1,7 +1,9 @@
 
-## Model Transplants
+### Model Transplants
 
-# Invariant Models
+## Invariant Models
+
+#ScaleShift
 ```python
 from cuda_mace.models import OptimizedScaleShiftInvariantMACE
 
@@ -14,6 +16,6 @@ A more detailed example can be found in `cuda_mace/examples/model_surgery`:
 python examples/model_surgery.py --model examples/SPICE_sm_inv_neut_E0_swa.model
 ```
 
-# Equivariant Models
+## Equivariant Models
 
 Not currently implemented
