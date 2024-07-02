@@ -2,7 +2,7 @@
 
 from typing import Tuple, List
 from dataclasses import dataclass, field, replace
-from mace_ops.cuda.irreps import Irreps
+from cuda_mace.cuda.irreps import Irreps
 import collections
 import math
 

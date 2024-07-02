@@ -3,7 +3,7 @@ from time import time
 import torch
 from e3nn import o3
 
-from mace_ops.ops.symmetric_contraction import SymmetricContraction as CUDAContraction_
+from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction_
 from mace.modules.symmetric_contraction import SymmetricContraction
 
 nchannels = 96

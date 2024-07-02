@@ -4,7 +4,7 @@ from typing import List
 from math import prod
 import torch
 from e3nn import o3
-from mace_ops.ops.linear import Linear
+from cuda_mace.ops.linear import Linear
 
 torch.backends.cuda.matmul.allow_tf32 = False
 

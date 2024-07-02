@@ -10,7 +10,8 @@ __global__ void calculate_first_occurences_kernel(
         receiver_list,
     const int32_t *__restrict__ sort_idx, bool use_sort,
     torch::PackedTensorAccessor64<int32_t, 1, torch::RestrictPtrTraits>
-        first_occurences) {
+        first_occurences)
+{
   extern __shared__ char buffer[];
   size_t offset = 0;
   int32_t *smem = reinterpret_cast<int32_t *>(buffer + offset);
@@ -21,13 +22,18 @@ __global__ void calculate_first_occurences_kernel(
 
   // load all elements of senderlist needed by block into shared memory
   for (int32_t i = threadIdx.x; i < NEIGHBOUR_NEDGES_PER_BLOCK + 1;
-       i += blockDim.x) {
+       i += blockDim.x)
+  {
     int32_t idx = block_start + i;
 
-    if (idx < nedges) {
-      if (use_sort) {
+    if (idx < nedges)
+    {
+      if (use_sort)
+      {
         smem[i] = receiver_list[sort_idx[idx]];
-      } else {
+      }
+      else
+      {
         smem[i] = receiver_list[idx];
       }
     }
@@ -37,14 +43,17 @@ __global__ void calculate_first_occurences_kernel(
 
   // deal with even boundaries
   for (int32_t i = 2 * threadIdx.x; i < NEIGHBOUR_NEDGES_PER_BLOCK;
-       i += 2 * blockDim.x) {
+       i += 2 * blockDim.x)
+  {
     int32_t idx = block_start + i;
 
-    if (idx + 1 < nedges) {
+    if (idx + 1 < nedges)
+    {
       int32_t loc1 = smem[i];
       int32_t loc2 = smem[i + 1];
 
-      if (loc1 != loc2) {
+      if (loc1 != loc2)
+      {
         first_occurences[loc2] = idx + 1;
       }
     }
@@ -52,27 +61,32 @@ __global__ void calculate_first_occurences_kernel(
 
   // deal with odd boundaries
   for (int32_t i = 2 * threadIdx.x + 1; i < NEIGHBOUR_NEDGES_PER_BLOCK + 1;
-       i += 2 * blockDim.x) {
+       i += 2 * blockDim.x)
+  {
     int32_t idx = block_start + i;
 
-    if (idx + 1 < nedges) {
+    if (idx + 1 < nedges)
+    {
       int32_t loc1 = smem[i];
       int32_t loc2 = smem[i + 1];
 
-      if (loc1 != loc2) {
+      if (loc1 != loc2)
+      {
         first_occurences[loc2] = idx + 1;
       }
     }
   }
 
   // deal with 0th element specifically, so we dont need to use torch::zeros
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
+  if (blockIdx.x == 0 && threadIdx.x == 0)
+  {
     first_occurences[0] = 0;
   }
 }
 
 torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list,
-                                             int64_t natoms, int64_t nthreadx) {
+                                             int64_t natoms, int64_t nthreadx)
+{
   torch::Tensor first_occurences =
       torch::empty(natoms, torch::TensorOptions()
                                .dtype(receiver_list.dtype())
@@ -103,7 +117,8 @@ torch::Tensor calculate_first_occurences_gpu(torch::Tensor receiver_list,
 torch::Tensor
 calculate_first_occurences_gpu_with_sort(torch::Tensor receiver_list,
                                          int64_t natoms, int64_t nthreadx,
-                                         torch::Tensor sort_indices) {
+                                         torch::Tensor sort_indices)
+{
   torch::Tensor first_occurences =
       torch::empty(natoms, torch::TensorOptions()
                                .dtype(receiver_list.dtype())
@@ -120,7 +135,8 @@ calculate_first_occurences_gpu_with_sort(torch::Tensor receiver_list,
 
   total_buff_size += (NEIGHBOUR_NEDGES_PER_BLOCK + 1) * sizeof(int32_t);
 
-  if (sort_indices.defined() && sort_indices.numel() != 0) {
+  if (sort_indices.defined() && sort_indices.numel() != 0)
+  {
     calculate_first_occurences_kernel<<<block_dim, grid_dim, total_buff_size>>>(
         receiver_list.packed_accessor64<int32_t, 1, torch::RestrictPtrTraits>(),
         sort_indices.data_ptr<int32_t>(), true,

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(mace_ops LANGUAGES CXX CUDA)
+project(cuda_mace LANGUAGES CXX CUDA)
 
 set(LIB_INSTALL_DIR "lib" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install libraries")
 set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install DLL/binaries")
@@ -46,7 +46,7 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/include
 )
 
-add_library(mace_ops SHARED
+add_library(cuda_mace SHARED
     "cuda/include/cuda_utils.cuh"
     "cuda/src/cuda_utils.cu"
 
@@ -75,16 +75,16 @@ add_library(mace_ops SHARED
     "src/spherical_harmonics.cpp"
 )
 
-target_link_libraries(mace_ops "${TORCH_LIBRARIES}")
+target_link_libraries(cuda_mace "${TORCH_LIBRARIES}")
 
-target_compile_features(mace_ops PRIVATE cxx_std_17)
+target_compile_features(cuda_mace PRIVATE cxx_std_17)
 
-set_target_properties(mace_ops PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-set_target_properties(mace_ops PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-set_target_properties(mace_ops PROPERTIES CUDA_ARCHITECTURES native)
+set_target_properties(cuda_mace PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+set_target_properties(cuda_mace PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
+set_target_properties(cuda_mace PROPERTIES CUDA_ARCHITECTURES native)
 
 set(CMAKE_CUDA_STANDARD 17)
 
-install(TARGETS mace_ops
+install(TARGETS cuda_mace
     LIBRARY DESTINATION "lib"
 )

@@ -2,8 +2,8 @@ import torch
 import math
 from time import time
 
-import mace_ops
-from mace_ops.ops.invariant_message_passing import (
+import cuda_mace
+from cuda_mace.ops.invariant_message_passing import (
     InvariantMessagePassingTP,
 )
 from torch.autograd import Function

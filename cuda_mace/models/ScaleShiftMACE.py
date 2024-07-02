@@ -19,9 +19,9 @@ from mace.modules.utils import (
     get_edge_vectors_and_lengths,
 )
 
-from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
-from mace_ops.ops.linear import Linear, ElementalLinear
-from mace_ops.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
+from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
+from cuda_mace.ops.linear import Linear, ElementalLinear
+from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 
 class SymmetricContractionWrapper(torch.nn.Module):
@@ -380,7 +380,6 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
             if (self.profile):
                 torch.cuda.nvtx.range_push("MACE::product: {}".format(j))
 
-            print(node_feats.shape, data["node_attrs"].shape)
             if (sc is not None):
                 print(sc.shape)
             node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]

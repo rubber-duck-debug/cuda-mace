@@ -17,9 +17,9 @@ from mace.modules.utils import (
     get_edge_vectors_and_lengths,
 )
 
-from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
-from mace_ops.ops.linear import Linear, ElementalLinear
-from mace_ops.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
+from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
+from cuda_mace.ops.linear import Linear, ElementalLinear
+from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 class SymmetricContractionWrapper(torch.nn.Module):
     def __init__(self, symmetric_contractions):

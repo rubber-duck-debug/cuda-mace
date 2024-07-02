@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+setup.py
+cuda_mace.egg-info/PKG-INFO
+cuda_mace.egg-info/SOURCES.txt
+cuda_mace.egg-info/dependency_links.txt
+cuda_mace.egg-info/not-zip-safe
+cuda_mace.egg-info/requires.txt
+cuda_mace.egg-info/top_level.txt
+cuda_mace/models/ScaleShiftMACE.py
+cuda_mace/models/__init__.py
+cuda_mace/models/test.py
+cuda_mace/ops/__init__.py
+cuda_mace/ops/invariant_message_passing.py
+cuda_mace/ops/linear.py
+cuda_mace/ops/symmetric_contraction.py

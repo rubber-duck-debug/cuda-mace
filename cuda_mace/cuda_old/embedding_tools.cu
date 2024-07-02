@@ -1,6 +1,6 @@
 #include <torch/script.h>
-#include "mace_ops/cuda/include/embedding_tools.h"
-#include "mace_ops/cuda/include/cuda_utils.h"
+#include "cuda_mace/cuda/include/embedding_tools.h"
+#include "cuda_mace/cuda/include/cuda_utils.h"
 
 #define FULL_MASK 0xffffffff
 

@@ -1,7 +1,7 @@
 from math import prod
 import torch
 from e3nn import o3
-from mace_ops.ops.linear import ElementalLinear 
+from cuda_mace.ops.linear import ElementalLinear 
 
     
 class LinearElementRef(torch.nn.Module):
