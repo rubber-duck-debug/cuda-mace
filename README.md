@@ -8,7 +8,7 @@ pip install . --no-build-isolation
 ```
 
 # Requirements
-Nvidia Ampere GPU or later (CC >= 8)
+Nvidia Ampere GPU or later (Compute Capability >= 8)
 
 # Model Transplants
 
