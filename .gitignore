@@ -1,9 +1,6 @@
-build/
-local/
-tests/linear_scaling.png
-.gitignore
-tests/multi_gpu_strong_scaling.png
-tests/plt_scaling.py
+build/*
+local/*
 tests/*
 *.pyc
 *.pt
+.vscode

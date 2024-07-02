@@ -45,43 +45,69 @@ from cuda_mace.ops.linear import Linear, ElementalLinear
 from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 
-timings = {}
-class_occurence = {}
-run_timeit = False
+def compute_forces_virials(
+    energy: torch.Tensor,
+    positions: torch.Tensor,
+    displacement: torch.Tensor,
+    cell: torch.Tensor,
+    training: bool = True,
+    compute_stress: bool = False,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+    grad_outputs: List[Optional[torch.Tensor]] = [torch.ones_like(energy)]
+    forces, virials = torch.autograd.grad(
+        outputs=[energy],  # [n_graphs, ]
+        inputs=[positions, displacement],  # [n_nodes, 3]
+        grad_outputs=grad_outputs,
+        retain_graph=training,  # Make sure the graph is not destroyed during training
+        create_graph=training,  # Create graph for second derivative
+        allow_unused=True,
+    )
+    stress = torch.zeros_like(displacement)
+    if compute_stress and virials is not None:
+        cell = cell.view(-1, 3, 3)
+        volume = torch.einsum(
+            "zi,zi->z",
+            cell[:, 0, :],
+            torch.cross(cell[:, 1, :], cell[:, 2, :], dim=1),
+        ).unsqueeze(-1)
+        stress = virials / volume.view(-1, 1, 1)
+    if forces is None:
+        forces = torch.zeros_like(positions)
+    if virials is None:
+        virials = torch.zeros((1, 3, 3))
 
+    return -1 * forces, -1 * virials, stress
 
-def get_name(obj):
-    if hasattr(obj, "__name__"):
-        return obj.__name__
-    elif hasattr(obj, "__class__") and hasattr(obj.__class__, "__name__"):
-        return obj.__class__.__name__
-    else:
-        raise ValueError("Object has no name attribute.")
+# nb_iters = 30
+#     warmup_iters = 20
 
+#     for i in range (nb_iters):
+#         start = time()
+#         if i == warmup_iters: torch.cuda.cudart().cudaProfilerStart()
+#         if i >= warmup_iters: torch.cuda.nvtx.range_push("iteration{}".format(i))
+#         if i >= warmup_iters: torch.cuda.nvtx.range_push("forward")
+#         cuda_out = tp.forward(
+#             node_feats_cuda,
+#             edge_attrs_cuda,
+#             radial_feats_cuda,
+#             sender,
+#             receiver,
+#             nnodes,
+#         )
+#         if i >= warmup_iters: torch.cuda.nvtx.range_pop()
 
-def timeit(fn, *args, **kwargs):
-    global run_timeit
-
-    if not run_timeit:
-        return fn(*args, **kwargs)
-    else:
-        start = time()
-        out = fn(*args, **kwargs)
-        torch.cuda.synchronize()
-        end = time()
-        if hasattr(fn, "__class__"):
-            if not fn.__class__ in class_occurence:
-                timings[fn.__class__.__name__] = {}
-                class_occurence[fn.__class__] = 0
-            else:
-                class_occurence[fn.__class__] += 1
-
-            fn_name = get_name(fn)
-            timings[fn.__class__.__name__][
-                fn_name + str(class_occurence[fn.__class__])
-            ] = (end - start)
-        return out
-
+#         if (args.grad):
+#             os = cuda_out.sum()
+            
+#             if i >= warmup_iters: torch.cuda.nvtx.range_push("backward")
+#             os.backward()
+#             if i >= warmup_iters: torch.cuda.nvtx.range_pop()
+            
+#         if i >= warmup_iters: torch.cuda.nvtx.range_pop()     
+#         end = time()
+        
+#         print ((end - start) * 1000)       
+#     torch.cuda.cudart().cudaProfilerStop()
 
 def optimize_cuda_mace(model) -> None:
     """
@@ -92,13 +118,16 @@ def optimize_cuda_mace(model) -> None:
     dtype = get_model_dtype(model)
     n_layers = int(model.num_interactions)
     sh_irreps = o3.Irreps.spherical_harmonics(3)
-    spherical_harmonics = SphericalHarmonics(
-        sh_irreps=sh_irreps,
-        normalize=True,
-        normalization="component",
-        backend="opt",
-    )
-    model.spherical_harmonics = spherical_harmonics
+    # spherical_harmonics = SphericalHarmonics(
+    #     sh_irreps=sh_irreps,
+    #     normalize=True,
+    #     normalization="component",
+    #     backend="opt",
+    # )
+    
+    #spherical_harmonics = torch.classes.spherical_harmonics.SphericalHarmonics()
+    
+    #model.spherical_harmonics = spherical_harmonics
     num_elements = model.node_embedding.linear.irreps_in.num_irreps
     for i in range(n_layers):
         model.interactions[i].linear_up = linear_matmul(model.interactions[i].linear_up)
@@ -219,61 +248,39 @@ def invariant_residual_interaction_forward(
     edge_feats: torch.Tensor,
     edge_index: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    global run_timeit
     sender = edge_index[0]
     receiver = edge_index[1]
     num_nodes = torch.tensor(node_feats.shape[0])
-    #if run_timeit:
-        #print (node_feats.shape, node_attrs.shape)
-    start = time()
+
+    torch.cuda.nvtx.range_push("RInteraction::skip tp")
     sc = self.skip_tp(node_feats, node_attrs)
-    torch.cuda.synchronize()
-    end = time()
-    if run_timeit:
-        print("skip_tp", (end - start) * 1000, "ms")
+    torch.cuda.nvtx.range_pop()
+        
     
-    start = time()
+    torch.cuda.nvtx.range_push("RInteraction::linear up")
     node_feats = self.linear_up(node_feats)
-    torch.cuda.synchronize()
-    end = time()
-    if run_timeit:
-        print("linear_up", (end - start) * 1000, "ms")
+    torch.cuda.nvtx.range_pop()
+        
+    #torch.cuda.nvtx.range_push("RInteraction::tp weights")
+    #tp_weights = self.conv_tp_weights(edge_feats)
+    #torch.cuda.nvtx.range_pop()
     
-    #print (edge_feats.shape)
-    start = time()
-    tp_weights = self.conv_tp_weights(edge_feats)
-    torch.cuda.synchronize()
-    end = time()
-
-    if run_timeit:
-        print("conv_tp_weights", (end - start) * 1000, "ms")
-
-    #tp_weights = torch.randn(tp_weights.shape[0], 4, 96, device='cuda', dtype=torch.float32, requires_grad=True)
-    #torch.cuda.synchronize()
-    torch.cuda.synchronize()
-    
-    start = time()
+    torch.cuda.nvtx.range_push("RInteraction::inv tp")
     message = self.tp.forward(
         node_feats,
         edge_attrs,
-        tp_weights.view(tp_weights.shape[0], -1, node_feats.shape[-1]),
+        edge_feats.view(edge_feats.shape[0], -1, node_feats.shape[-1]),
         sender.int(),
         receiver.int(),
         num_nodes,
     )
-    torch.cuda.synchronize()
-    end = time()
+    torch.cuda.nvtx.range_pop()
 
-    if run_timeit:
-        print("tp: ", (end - start) * 1000, "ms")
-
-    start = time()
+    
+    torch.cuda.nvtx.range_push("RInteraction::message linear")
     message = self.linear(message) / self.avg_num_neighbors
-    torch.cuda.synchronize()
-    end = time()
-
-    if run_timeit:
-        print("message", (end - start) * 1000, "ms")
+    torch.cuda.nvtx.range_pop()
+    
     return (
         message,
         sc,
@@ -291,19 +298,44 @@ def invariant_interaction_forward(
     sender = edge_index[0]
     receiver = edge_index[1]
     num_nodes = torch.tensor(node_feats.shape[0])
+    
+    if (self.profile):
+        torch.cuda.nvtx.range_push("Interaction::linear up")
     node_feats = self.linear_up(node_feats)
-    tp_weights = self.conv_tp_weights(edge_feats)
+    if (self.profile):
+        torch.cuda.nvtx.range_pop()
+    
+    #if (self.profile):
+    #    torch.cuda.nvtx.range_push("Interaction::tp weights")
+    #tp_weights = self.conv_tp_weights(edge_feats)
+    #if (self.profile):
+    #    torch.cuda.nvtx.range_pop()
+    
+    if (self.profile):
+        torch.cuda.nvtx.range_push("Interaction::inv tp")
     message = self.tp.forward(
         node_feats,
         edge_attrs,
-        tp_weights.view(tp_weights.shape[0], -1, node_feats.shape[-1]),
+        edge_feats.view(edge_feats.shape[0], -1, node_feats.shape[-1]),
         sender.int(),
         receiver.int(),
         num_nodes,
     )
+    if (self.profile):
+        torch.cuda.nvtx.range_pop()
 
+    if (self.profile):
+        torch.cuda.nvtx.range_push("Interaction::message linear")
     message = self.linear(message) / self.avg_num_neighbors
+    if (self.profile):
+        torch.cuda.nvtx.range_pop()
+
+    if (self.profile):
+        torch.cuda.nvtx.range_push("Interaction::skip tp")
     message = self.skip_tp(message, node_attrs)
+    if (self.profile):
+        torch.cuda.nvtx.range_pop()
+
     return (
         message,
         None,
@@ -340,8 +372,6 @@ class RealAgnosticResidualInteractionBlock(InteractionBlock):
             [input_dim] + self.radial_MLP + [self.conv_tp.weight_numel],
             torch.nn.functional.silu,
         )
-        
-        print ([input_dim] + self.radial_MLP + [self.conv_tp.weight_numel])
 
         # Linear
         irreps_mid = irreps_mid.simplify()
@@ -403,6 +433,7 @@ class MACE(torch.nn.Module):
         gate: Optional[Callable],
         radial_MLP: Optional[List[int]] = None,
         radial_type: Optional[str] = "bessel",
+        profile=False
     ):
         super().__init__()
         self.register_buffer(
@@ -419,6 +450,8 @@ class MACE(torch.nn.Module):
         # Embedding
         node_attr_irreps = o3.Irreps([(num_elements, (0, 1))])
         node_feats_irreps = o3.Irreps([(hidden_irreps.count(o3.Irrep(0, 1)), (0, 1))])
+        
+        #print ("LinearNodeEmbeddingBlock:", node_attr_irreps, "->", node_feats_irreps)
         self.node_embedding = LinearNodeEmbeddingBlock(
             irreps_in=node_attr_irreps, irreps_out=node_feats_irreps
         )
@@ -433,9 +466,10 @@ class MACE(torch.nn.Module):
         sh_irreps = o3.Irreps.spherical_harmonics(max_ell)
         num_features = hidden_irreps.count(o3.Irrep(0, 1))
         interaction_irreps = (sh_irreps * num_features).sort()[0].simplify()
-        self.spherical_harmonics = o3.SphericalHarmonics(
-            sh_irreps, normalize=True, normalization="component"
-        )
+        #self.spherical_harmonics = o3.SphericalHarmonics(
+        #    sh_irreps, normalize=True, normalization="component"
+        #)
+        self.spherical_harmonics = torch.classes.spherical_harmonics.SphericalHarmonics()
         if radial_MLP is None:
             radial_MLP = [64, 64, 64]
         # Interactions and readout
@@ -503,83 +537,98 @@ class MACE(torch.nn.Module):
                 )
             else:
                 self.readouts.append(LinearReadoutBlock(hidden_irreps))
+        
+        r,h = np.linspace(1e-12, self.r_max.item() + 1.0, 128, retstep=True)
+        r = torch.tensor(r, dtype=torch.float32)
+        bessel_j = self.radial_embedding(r.unsqueeze(-1)) 
+        
+        self.edge_splines  = []
+        for i, interaction in enumerate(self.interactions):
+            R = interaction.conv_tp_weights(bessel_j)
+            self.edge_splines.append(torch.classes.cubic_spline.CubicSpline(r.cuda(), R.cuda()))
+
+        self.profile = profile
 
     def forward(
         self,
         data: Dict[str, torch.Tensor],
-        training: bool = False,
-        compute_force: bool = True,
-        compute_virials: bool = False,
-        compute_stress: bool = False,
-        compute_displacement: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         # Setup
-        data["node_attrs"].requires_grad_(True)
-        data["positions"].requires_grad_(True)
         num_graphs = data["ptr"].numel() - 1
-        displacement = torch.empty(
-            (num_graphs, 3, 3),
-            dtype=data["positions"].dtype,
-            device=data["positions"].device,
-        )
-        if compute_virials or compute_stress or compute_displacement:
-            (
-                data["positions"],
-                data["shifts"],
-                displacement,
-            ) = timeit(
-                get_symmetric_displacement,
-                positions=data["positions"],
-                unit_shifts=data["unit_shifts"],
-                cell=data["cell"],
-                edge_index=data["edge_index"],
-                num_graphs=num_graphs,
-                batch=data["batch"],
-            )
 
+        if (self.profile):
+            torch.cuda.nvtx.range_push("MACE::atomic_energies")
         # Atomic energies
-        node_e0 = timeit(self.atomic_energies_fn, data["node_attrs"])
+        node_e0 = self.atomic_energies_fn(data["node_attrs"])
         # node_e0 = self.atomic_energies_fn(data["node_attrs"])
-        e0 = timeit(
-            scatter_sum, src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs
-        )  # [n_graphs,]
-
+        e0 = scatter_sum( src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs) # [n_graphs,]
+            
+        if (self.profile):
+            torch.cuda.nvtx.range_pop()
         # Embeddings
-        node_feats = timeit(self.node_embedding, data["node_attrs"])
-        vectors, lengths = timeit(
-            get_edge_vectors_and_lengths,
+        
+        if (self.profile):
+            torch.cuda.nvtx.range_push("MACE::embeddings")
+            
+        #print ("node attrs:", data["node_attrs"].shape)
+        node_feats = self.node_embedding (data["node_attrs"])
+        if (self.profile):
+            torch.cuda.nvtx.range_pop()
+            
+        if (self.profile):
+            torch.cuda.nvtx.range_push("MACE::edge vectors")
+        vectors, lengths = get_edge_vectors_and_lengths(
             positions=data["positions"],
             edge_index=data["edge_index"],
             shifts=data["shifts"],
         )
+        if (self.profile):
+            torch.cuda.nvtx.range_pop()
 
-        edge_attrs = timeit(self.spherical_harmonics, vectors)
-        edge_feats = timeit(self.radial_embedding, lengths)
-
+        if (self.profile):
+            torch.cuda.nvtx.range_push("MACE::sph")
+        edge_attrs = self.spherical_harmonics.forward(vectors)
+        if (self.profile):
+            torch.cuda.nvtx.range_pop()
+            
         # Interactions
         energies = [e0]
         node_energies_list = [node_e0]
         node_feats_list = []
-        for interaction, product, readout in zip(
-            self.interactions, self.products, self.readouts
+        for j, (interaction, product, readout, edge_spline) in enumerate(zip(
+            self.interactions, self.products, self.readouts, self.edge_splines)
         ):
-            node_feats, sc = timeit(
-                interaction,
+            if (self.profile):
+                torch.cuda.nvtx.range_push("MACE::edge spline")
+            edge_feats = edge_spline.forward(lengths.squeeze(-1))
+            if (self.profile):
+                torch.cuda.nvtx.range_pop()
+            
+            if (self.profile):
+                torch.cuda.nvtx.range_push("MACE::interaction: {}".format(j))
+            node_feats, sc = interaction(
                 node_attrs=data["node_attrs"],
                 node_feats=node_feats,
                 edge_attrs=edge_attrs,
                 edge_feats=edge_feats,
                 edge_index=data["edge_index"],
             )
+            if (self.profile):
+                torch.cuda.nvtx.range_pop()
 
-            node_feats = timeit(
-                product, node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]
+            if (self.profile):
+                torch.cuda.nvtx.range_push("MACE::product: {}".format(j))
+            node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]
             )
+            if (self.profile):
+                torch.cuda.nvtx.range_pop()
 
+            if (self.profile):
+                torch.cuda.nvtx.range_push("MACE::readout: {}".format(j))
+                
             node_feats_list.append(node_feats)
-            node_energies = timeit(readout, node_feats).squeeze(-1)  # [n_nodes, ]
-            energy = timeit(
-                scatter_sum,
+            node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
+            energy = scatter_sum(
                 src=node_energies,
                 index=data["batch"],
                 dim=-1,
@@ -587,70 +636,33 @@ class MACE(torch.nn.Module):
             )  # [n_graphs,]
             energies.append(energy)
             node_energies_list.append(node_energies)
+            if (self.profile):
+                torch.cuda.nvtx.range_pop()
 
+        if (self.profile):
+                torch.cuda.nvtx.range_push("MACE:: node sum")
+                
         # Concatenate node features
         node_feats_out = torch.cat(node_feats_list, dim=-1)
-
+        
         # Sum over energy contributions
-        contributions = timeit(torch.stack, energies, dim=-1)
-        total_energy = timeit(torch.sum, contributions, dim=-1)  # [n_graphs, ]
-        node_energy_contributions = timeit(torch.stack, node_energies_list, dim=-1)
-        node_energy = timeit(
-            torch.sum, node_energy_contributions, dim=-1
+        contributions = torch.stack(energies, dim=-1)
+        total_energy = torch.sum(contributions, dim=-1)  # [n_graphs, ]
+        node_energy_contributions = torch.stack(node_energies_list, dim=-1)
+        node_energy = torch.sum(node_energy_contributions, dim=-1
         )  # [n_nodes, ]
 
+        if (self.profile):
+            torch.cuda.nvtx.range_pop()
         # Outputs
-        forces, virials, stress = timeit(
-            get_outputs,
-            energy=total_energy,
-            positions=data["positions"],
-            displacement=displacement,
-            cell=data["cell"],
-            training=training,
-            compute_force=compute_force,
-            compute_virials=compute_virials,
-            compute_stress=compute_stress,
-        )
-
-        return {
-            "energy": total_energy,
-            "node_energy": node_energy,
-            "contributions": contributions,
-            "forces": forces,
-            "virials": virials,
-            "stress": stress,
-            "displacement": displacement,
-            "node_feats": node_feats_out,
-        }
-
-
-def print_recursive(dictionary, indent=0):
-    for key, value in dictionary.items():
-        print("\t" * indent + f"{key}:", end=" ")
-        if isinstance(value, dict):
-            print()
-            print_recursive(value, indent + 1)
-        else:
-            print(value * 1000, "ms")
-
-
-def recursive_sum(dictionary):
-    total = 0.0
-    for value in dictionary.values():
-        if isinstance(value, dict):
-            total += recursive_sum(value)
-        else:
-            total += value
-
-    return total
-
+        
+        return total_energy
 
 def run_test():
-    global run_timeit
     from ase import build
     from mace import modules
 
-    size = 5
+    size = 8
     cutoff = 4.0
 
     # build very large diamond structure
@@ -694,35 +706,157 @@ def run_test():
         MLP_irreps=o3.Irreps("16x0e"),
         gate=torch.nn.functional.silu,
         atomic_energies=atomic_energies,
-        avg_num_neighbors=70,
+        avg_num_neighbors=45,
         atomic_numbers=z_table.zs,
         correlation=3,
         radial_type="bessel",
+        profile=True
     )
     model = MACE(**model_config).to("cuda")
     model = optimize_cuda_mace(model)
 
     #model = torch.jit.script(model)
     
-    warmup = 50
+    warmup = 10
     for i in range(warmup):
         out = model(batch)
     torch.cuda.synchronize()
 
-    run_timeit = True
+    batch['positions'].requires_grad_(True)
+    batch["node_attrs"].requires_grad_(True)
+    
+    warmup = 1000
     start = time()
-    out = model(batch, compute_force=False)
+    for i in range(warmup):
+        out = model(batch)
+        os = out.sum()
+        os.backward()
+        torch.cuda.synchronize()
     torch.cuda.synchronize()
     end = time()
+    print (end - start)
+    
+    batch['positions'].requires_grad_(True)
+    batch["node_attrs"].requires_grad_(True)
+    
+    torch.cuda.cudart().cudaProfilerStart()
+    for i in range (5):
+        torch.cuda.nvtx.range_push("MACE::forward {}".format(i))
+        out = model(batch)
+        torch.cuda.synchronize()
+        torch.cuda.nvtx.range_pop()
+        
+        torch.cuda.nvtx.range_push("MACE::backward {}".format(i))
+        os = out.sum()
+        os.backward()
+        torch.cuda.synchronize()
+        torch.cuda.nvtx.range_pop()
+    torch.cuda.cudart().cudaProfilerStop()
 
-    print((end - start) * 1000, "ms")
-
-    print_recursive(timings)
-    print(recursive_sum(timings) * 1000, "ms")
 
 
+def run_benchmark():
+    from ase import build
+    from mace import modules
+    
+    sizes = (
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+        )
+    times = []
+    natoms = []
+    for size in sizes:
+        cutoff = 4.0
+
+        # build very large diamond structure
+        atoms = build.bulk("C", "diamond", a=3.567, cubic=True)
+        atoms_list = [atoms.repeat((size, size, size))]
+        print("Number of atoms", len(atoms_list[0]))
+
+        natoms.append(len(atoms_list[0]))
+        
+        configs = [data.config_from_atoms(atoms) for atoms in atoms_list]
+
+        z_table = tools.AtomicNumberTable(
+            [int(z) for z in np.unique(configs[0].atomic_numbers)]
+        )
+
+        nnodes = configs[0].atomic_numbers.shape[0]
+
+        data_loader = torch_geometric.dataloader.DataLoader(
+            dataset=[
+                data.AtomicData.from_config(config, z_table=z_table, cutoff=cutoff)
+                for config in configs
+            ],
+            batch_size=1,
+            shuffle=False,
+            drop_last=False,
+        )
+        atomic_energies = np.array([1.0], dtype=float)
+
+        batch = next(iter(data_loader)).to("cuda")
+        
+        print ('edge_index: ', batch['edge_index'].shape)
+
+        model_config = dict(
+            r_max=cutoff,
+            num_bessel=8,
+            num_polynomial_cutoff=6,
+            max_ell=3,
+            interaction_cls=RealAgnosticResidualInteractionBlock,
+            interaction_cls_first=RealAgnosticResidualInteractionBlock,
+            num_interactions=2,
+            num_elements=1,
+            hidden_irreps=o3.Irreps("96x0e"),
+            MLP_irreps=o3.Irreps("16x0e"),
+            gate=torch.nn.functional.silu,
+            atomic_energies=atomic_energies,
+            avg_num_neighbors=45,
+            atomic_numbers=z_table.zs,
+            correlation=3,
+            radial_type="bessel",
+            profile=True
+        )
+        model = MACE(**model_config).to("cuda")
+        model = optimize_cuda_mace(model)
+
+        #model = torch.jit.script(model)
+        
+        warmup = 10
+        for i in range(warmup):
+            out = model(batch)
+        torch.cuda.synchronize()
+
+        batch['positions'].requires_grad_(True)
+        batch["node_attrs"].requires_grad_(True)
+        
+        warmup = 1000
+        start = time()
+        for i in range(warmup):
+            out = model(batch)
+            os = out.sum()
+            os.backward()
+            torch.cuda.synchronize()
+        torch.cuda.synchronize()
+        end = time()
+        print (end - start)
+        
+        print (times.append(end - start))
+
+    print(natoms)
+    print([f"{t:.2f}" for t in times])
+    formatted_times = [f"{((1000.0 / t) * 86400) / 1000000.0:.2f}" for t in times]
+    print(formatted_times)
+    
 def main(args=None):
-    run_test()
+    run_benchmark()
+    #run_test()
 
 
 if __name__ == "__main__":

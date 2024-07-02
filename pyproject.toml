@@ -1,5 +1,5 @@
 [project]
-name = "mace_ops"
+name = "cuda_mace"
 requires-python = ">=3.6"
 dependencies = ["torch >= 1.13"]
 version= "0.1"
@@ -11,11 +11,11 @@ requires = [
     "setuptools >=44",
     "wheel >=0.36",
     "cmake",
-    "torch >= 1.13",
+    "torch >= 2.0",
 ]
 
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 zip-safe = false
-packages = ["mace_ops.ops"]
+packages = ["cuda_mace.ops", "cuda_mace.models"]

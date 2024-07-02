@@ -16,9 +16,9 @@ from mace.tools import torch_geometric, torch_tools
 import numpy as np
 import matplotlib.pyplot as plt
 
-from mace_ops.ops.invariant_message_passing import InvariantMessagePassingTP
-from mace_ops.ops.linear import Linear, ElementalLinear
-from mace_ops.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
+from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
+from cuda_mace.ops.linear import Linear, ElementalLinear
+from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 
 def build_parser():
@@ -63,6 +63,9 @@ def build_parser():
     )
     return parser
 
+def spherical_harmonics_fn(self, lengths):
+    print ("HELLO!")
+    return self.sph_hrm.forward(lengths)
 
 def optimize_cuda_mace(model: MACE) -> None:
     """
@@ -79,7 +82,13 @@ def optimize_cuda_mace(model: MACE) -> None:
         normalization="component",
         backend="opt",
     )
-    model.spherical_harmonics = spherical_harmonics
+    model.spherical_harmonics.sph_hrm = torch.classes.spherical_harmonics.SphericalHarmonics()
+    
+    bound_method = spherical_harmonics_fn.__get__(
+                model.spherical_harmonics, model.spherical_harmonics.__class__
+            )
+    setattr(model.spherical_harmonics, "forward", bound_method)
+    
     num_elements = model.node_embedding.linear.irreps_in.num_irreps
     for i in range(n_layers):
         model.interactions[i].linear_up = linear_matmul(
@@ -213,6 +222,8 @@ def invariant_residual_interaction_forward(
     sc = self.skip_tp(node_feats, node_attrs).contiguous()
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
+
+    # print("irif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
     message = self.tp.forward(
         node_feats,
         edge_attrs,
@@ -224,8 +235,8 @@ def invariant_residual_interaction_forward(
     ).float()
     message = self.linear(message) / self.avg_num_neighbors
     return (
-        message.contiguous(),
-        sc.contiguous(),
+        message,
+        sc,
     )  # [n_nodes, channels, (lmax + 1)**2]
 
 
@@ -242,7 +253,8 @@ def invariant_interaction_forward(
     num_nodes = torch.tensor(node_feats.shape[0])
     node_feats = self.linear_up(node_feats)
     tp_weights = self.conv_tp_weights(edge_feats)
-    
+
+    # print("iif", node_feats.shape,  edge_feats.shape, tp_weights.shape)
     message = self.tp.forward(
         node_feats,
         edge_attrs,
@@ -254,7 +266,7 @@ def invariant_interaction_forward(
     ).float()
     message = self.linear(message) / self.avg_num_neighbors
     message = self.skip_tp(message, node_attrs)
-    
+
     return (
         message.contiguous(),
         None,
@@ -295,6 +307,7 @@ def benchmark(
         drop_last=False,
     )
     batch = next(iter(data_loader)).to("cuda")
+    batch['positions'] = batch['positions'] + 0.1*torch.randn(batch['positions'].shape, dtype=batch['positions'].dtype, device=batch['positions'].device)
     print("num edges", batch.edge_index.shape)
     # warm up
     for _ in range(500):
@@ -343,30 +356,22 @@ def accuracy(
         drop_last=False,
     )
     batch = next(iter(data_loader)).to("cuda")
+    
     print("num edges", batch.edge_index.shape)
-    # def print_grad_hook(module, grad_input, grad_output):
-    #     print("Gradients at this layer: ", grad_output)
 
-    # for modules in model.modules():
-    #     print("modules", modules)
-    #     modules.register_backward_hook(print_grad_hook)
-
-    # def energy_model(positions:torch.Tensor):
-    #     batch.positions = positions
-    #     energy = model_opt(batch, training=False, compute_force=False)["energy"]
-    #     return energy
-    # print("check the gradient")
-    # positions_input = batch.positions.clone().detach().requires_grad_(True)
-    # torch.autograd.gradcheck(energy_model, positions_input, eps=1e-2, atol=1e-2)
     for batch in data_loader:
         batch = batch.to("cuda")
+        batch['positions'] = batch['positions'] + 0.1*torch.randn(batch['positions'].shape, dtype=batch['positions'].dtype, device=batch['positions'].device)
+        
         print("num nodes", batch.num_nodes)
         batch_2 = batch.clone()
         batch_3 = batch.clone()
         # make a copy of the model
         output_opt = model_opt(
             batch.to_dict(), training=False, compute_force=True)
-        output_org_float32 = model(batch_3, training=False, compute_force=True)
+        model = model.float()
+        output_org_float32 = model(
+            batch_3.to_dict(), training=False, compute_force=True)
         model = model.double()
         model.atomic_energies_fn.atomic_energies = (
             model.atomic_energies_fn.atomic_energies.double()
@@ -374,7 +379,9 @@ def accuracy(
         batch_2.positions = batch_2.positions.double()
         batch_2.node_attrs = batch_2.node_attrs.double()
         batch_2.shifts = batch_2.shifts.double()
-        output_org = model(batch_2, training=False, compute_force=True)
+        output_org = model(batch_2.to_dict(),
+                           training=False, compute_force=True)
+        print("energy org_f32", output_org_float32["energy"])
         print("energy org", output_org["energy"])
         print("energy opt", output_opt["energy"])
         error_energy = (output_org["energy"] -
@@ -383,7 +390,7 @@ def accuracy(
             (output_org_float32["energy"] - output_org["energy"]).abs().mean()
         )
         print("error energy float32", error_energy_float32)
-        # print("error energy", error_energy)
+        print("error energy", error_energy)
         # assert torch.allclose(output_org["energy"], output_opt["energy"], atol=1e-5)
         error_forces = (output_org["forces"] -
                         output_opt["forces"]).abs().mean()
@@ -391,6 +398,10 @@ def accuracy(
         error_forces_float32 = (
             (output_org_float32["forces"] - output_org["forces"]).abs().mean()
         )
+        print (output_org_float32["forces"])
+        print (output_org["forces"])
+        print (output_opt["forces"])
+        
         print("error forces float32", error_forces_float32)
         # compute relative forces error
         error_relative_forces = (
@@ -400,7 +411,7 @@ def accuracy(
         error_relative_components = (
             (
                 (output_org["forces"] - output_opt["forces"])
-                / (output_org["forces"] + 10e-6)
+                / (output_org["forces"] + 10e-9)
             )
             .abs()
             .mean()
@@ -427,12 +438,12 @@ def main(args=None):
     model_opt_path = args.output
     model_opt = jit.compile(model_opt)
 
-    #print(model_opt_path)
+    # print(model_opt_path)
     model_opt.save(model_opt_path)
     model_opt = torch.load(model_opt_path).to("cuda")
-    
-    #print (model_opt)
-    
+
+    # print (model_opt)
+
     if args.benchmark:
         times_opt = []
         times_org = []
@@ -478,6 +489,7 @@ def main(args=None):
         plt.savefig("benchmark.pdf")
     if args.accuracy:
         model = torch.load(args.model).to("cuda")
+        model = jit.compile(model)
         # model = jit.compile(model)
         # model_opt = jit.compile(model_opt)
         accuracy(model, model_opt, args.benchmark_file)

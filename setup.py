@@ -22,8 +22,7 @@ __version__ = "0.1"
 __maintainer__ = "Nicholas J. Browning"
 __email__ = "nickjbrowning@gmail.com"
 __status__ = "Alpha"
-__description__ = "GPU-Accelerated Sparse Symmetric Contractions and Tensor Products"
-__url__ = "TODO"
+__description__ = "CUDA implementation of MACE"
 
 ROOT = os.path.realpath(os.path.dirname(__file__))
 
@@ -60,10 +59,10 @@ class cmake_ext(build_ext):
     """Build the native library using cmake"""
 
     def run(self):
-        source_dir = os.path.join(ROOT, "mace_ops")
+        source_dir = os.path.join(ROOT, "cuda_mace")
         build_dir = os.path.join(ROOT, "build", "cmake-build")
         install_dir = os.path.join(
-            os.path.realpath(self.build_lib), "mace_ops")
+            os.path.realpath(self.build_lib), "cuda_mace")
 
         os.makedirs(build_dir, exist_ok=True)
 
@@ -97,9 +96,9 @@ class cmake_ext(build_ext):
 if __name__ == "__main__":
 
     setup(
-        version=open(os.path.join("mace_ops", "VERSION")).readline().strip(),
+        version=open(os.path.join("cuda_mace", "VERSION")).readline().strip(),
         ext_modules=[
-            Extension(name="mace_ops", sources=[]),
+            Extension(name="cuda_mace", sources=[]),
         ],
         cmdclass={
             "build_ext": cmake_ext,
@@ -107,9 +106,9 @@ if __name__ == "__main__":
             "bdist_wheel": universal_wheel,
         },
         package_data={
-            "mace_ops": [
-                "mace_ops/lib/*",
-                "mace_ops/include/*",
+            "cuda_mace": [
+                "cuda_mace/lib/*",
+                "cuda_mace/include/*",
             ]
         }
     )
