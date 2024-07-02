@@ -17,8 +17,9 @@ from mace.tools.scatter import scatter_sum
 
 from mace.modules.utils import (
     get_edge_vectors_and_lengths,
+    get_outputs,
+    get_symmetric_displacement,
 )
-
 from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
 from cuda_mace.ops.linear import Linear, ElementalLinear
 from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
@@ -309,9 +310,34 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
     def forward(
         self,
         data: Dict[str, torch.Tensor],
+        training: bool = False,
+        compute_force: bool = True,
+        compute_virials: bool = False,
+        compute_stress: bool = False,
+        compute_displacement: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         # Setup
+        data["positions"].requires_grad_(True)
+        data["node_attrs"].requires_grad_(True)
         num_graphs = data["ptr"].numel() - 1
+        displacement = torch.zeros(
+            (num_graphs, 3, 3),
+            dtype=data["positions"].dtype,
+            device=data["positions"].device,
+        )
+        if compute_virials or compute_stress or compute_displacement:
+            (
+                data["positions"],
+                data["shifts"],
+                displacement,
+            ) = get_symmetric_displacement(
+                positions=data["positions"],
+                unit_shifts=data["unit_shifts"],
+                cell=data["cell"],
+                edge_index=data["edge_index"],
+                num_graphs=num_graphs,
+                batch=data["batch"],
+            )
 
         if (self.profile):
             torch.cuda.nvtx.range_push("MACE::atomic_energies")
@@ -407,5 +433,27 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
         # Outputs
         
         total_energy = e0 + inter_e
-        
-        return total_energy
+
+        node_energy = node_e0 + node_inter_es
+
+        forces, virials, stress = get_outputs(
+            energy=inter_e,
+            positions=data["positions"],
+            displacement=displacement,
+            cell=data["cell"],
+            training=training,
+            compute_force=compute_force,
+            compute_virials=compute_virials,
+            compute_stress=compute_stress,
+        )
+        output = {
+            "energy": total_energy,
+            "node_energy": node_energy,
+            "interaction_energy": inter_e,
+            "forces": forces,
+            "virials": virials,
+            "stress": stress,
+            "displacement": displacement,
+        }
+
+        return output

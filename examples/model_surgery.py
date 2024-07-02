@@ -287,11 +287,7 @@ def accuracy(
         # make a copy of the model
         batch['positions'].requires_grad_(True)
         batch["node_attrs"].requires_grad_(True)
-        output_opt = model_opt(batch.to_dict())
-        forces_opt = compute_forces(
-            output_opt, batch['positions'], training=False)
-
-        
+        output_opt = model_opt(batch.to_dict(), training=False, compute_force=True)
         
         model = model.double()
         model.atomic_energies_fn.atomic_energies = (
@@ -315,12 +311,12 @@ def accuracy(
         print("energy opt", output_opt)
         print("energy f32", output_f32["energy"])
         
-        abs_error = torch.abs(output_org["energy"] - output_opt)
+        abs_error = torch.abs(output_org["energy"] - output_opt["energy"])
         
         print ("---F64:F32_Opt absolute energy error (mean, max)---")
         print ("%.5f %.5f" % (abs_error.mean().item(), abs_error.max().item()))
 
-        abs_error = torch.abs(output_org["forces"] - forces_opt)
+        abs_error = torch.abs(output_org["forces"] - output_opt["forces"])
     
         print ("---F64:F32_Opt absolute force error (mean, max)---")
         print ("%.5f %.5f"% (abs_error.mean().item(), abs_error.max().item()))

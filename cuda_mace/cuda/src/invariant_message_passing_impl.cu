@@ -56,9 +56,7 @@ __global__ void inv_tp_kernel(
 
   const uint N = X.size(1);
   const uint edge_start = first_occurences[blockIdx.x];
-  const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1)
-                            ? receiver_list.size(0)
-                            : first_occurences[blockIdx.x + 1];
+  const uint edge_end = first_occurences[output.size(0) + blockIdx.x];
   const uint node_index = receiver_list[edge_start];
 
   scalar_t regY[TM] = {0.0};
@@ -275,9 +273,7 @@ __global__ void backward_edge_inv_tp_kernel(
 
   const uint edge_start = first_occurences[blockIdx.x];
   const uint node_index = receiver_list[edge_start];
-  const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1)
-                            ? receiver_list.size(0)
-                            : first_occurences[blockIdx.x + 1];
+  const uint edge_end = first_occurences[grad_in.size(0) + blockIdx.x];
 
   const uint N_start = blockIdx.y * TN * WARP_SIZE;
 
@@ -423,9 +419,7 @@ __global__ void backward_node_inv_tp_kernel(
   const uint edge_start = first_occurences[blockIdx.x];
   // const uint node_index = sender_list[sorted_sender_idx[edge_start]];
   const uint node_index = receiver_list[edge_start];
-  const uint edge_end = (blockIdx.x == first_occurences.size(0) - 1)
-                            ? sender_list.size(0)
-                            : first_occurences[blockIdx.x + 1];
+  const uint edge_end = first_occurences[grad_in.size(0) + blockIdx.x];
 
   if (edge_end - edge_start == 0) {
     return;
