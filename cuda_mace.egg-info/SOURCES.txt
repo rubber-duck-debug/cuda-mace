@@ -9,7 +9,6 @@ cuda_mace.egg-info/requires.txt
 cuda_mace.egg-info/top_level.txt
 cuda_mace/models/ScaleShiftMACE.py
 cuda_mace/models/__init__.py
-cuda_mace/models/test.py
 cuda_mace/ops/__init__.py
 cuda_mace/ops/invariant_message_passing.py
 cuda_mace/ops/linear.py
