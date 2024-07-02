@@ -1,9 +1,9 @@
 
-### Model Transplants
+# Model Transplants
 
 ## Invariant Models
 
-# ScaleShift
+### ScaleShift
 ```python
 from cuda_mace.models import OptimizedScaleShiftInvariantMACE
 
