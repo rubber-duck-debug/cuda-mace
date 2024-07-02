@@ -327,18 +327,15 @@ def accuracy(
 
 
 if __name__ == "__main__":
-    from copy import deepcopy
     parser = build_parser()
     args = parser.parse_args()
 
     model = torch.load(args.model).to("cuda")
     model = model.to(torch.float64)
     
-    opt_model = OptimizedScaleShiftInvariantMACE(deepcopy(model))
+    opt_model = OptimizedScaleShiftInvariantMACE(model)
 
     print(model)
     print(opt_model)
-
-    #test_components(model, opt_model)
     
     accuracy(model, opt_model)
