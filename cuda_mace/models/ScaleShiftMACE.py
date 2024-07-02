@@ -317,6 +317,9 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
         compute_displacement: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         # Setup
+        if (self.profile):
+            torch.cuda.nvtx.range_push("MACE::forward")
+
         data["positions"].requires_grad_(True)
         data["node_attrs"].requires_grad_(True)
         num_graphs = data["ptr"].numel() - 1
@@ -428,10 +431,8 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
             src=node_inter_es.double(), index=data["batch"], dim=-1, dim_size=num_graphs
         )  # [n_graphs,]
         
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-        # Outputs
         
+        # Outputs
         total_energy = e0 + inter_e
 
         node_energy = node_e0 + node_inter_es
@@ -446,6 +447,7 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
             compute_virials=compute_virials,
             compute_stress=compute_stress,
         )
+
         output = {
             "energy": total_energy,
             "node_energy": node_energy,
@@ -455,5 +457,8 @@ class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
             "stress": stress,
             "displacement": displacement,
         }
+
+        if (self.profile):
+            torch.cuda.nvtx.range_pop()
 
         return output
