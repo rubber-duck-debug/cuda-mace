@@ -1,4 +1,15 @@
 
+# Installation
+
+```bash
+git clone https://github.com/nickjbrowning/cuda_mace.git
+cd cuda_mace
+pip install . --no-build-isolation
+```
+
+# Requirements
+Nvidia Ampere GPU or later (CC >= 8)
+
 # Model Transplants
 
 ## Invariant Models
