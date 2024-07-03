@@ -20,7 +20,7 @@ from cuda_mace.models import OptimizedInvariantMACE
 model = OptimizedInvariantMACE(torch.load("model.pt").double())
 ```
 
-To add nvtx ranges for profiling with nsight-sys purposes, you can pass `profile=True` in the constructor of `OptimizedInvariantMACE`. Doing so will add ranges for key operations and provide a clearer view of computational cost on the nsight timeline.
+To add nvtx ranges for profiling with nsight-sys, you can pass `profile=True` in the constructor of `OptimizedInvariantMACE`. Doing so will add ranges for key operations and provide a clearer view of computational cost on the nsight timeline.
 
 A more detailed example can be found in `cuda_mace/examples/model_surgery.py`:
 
