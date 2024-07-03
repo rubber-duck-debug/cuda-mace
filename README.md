@@ -27,6 +27,8 @@ A more detailed example can be found in `cuda_mace/examples/model_surgery.py`:
 python examples/model_surgery.py --model examples/SPICE_sm_inv_neut_E0_swa.model
 ```
 
+The above surgery code will output the optimized model by default to: `./optimized_model.model`
+
 ## Equivariant Models
 
 Not currently implemented
