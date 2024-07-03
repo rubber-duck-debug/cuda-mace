@@ -14,7 +14,6 @@ Nvidia Ampere GPU or later (Compute Capability >= 8)
 
 ## Invariant Models
 
-### ScaleShift
 ```python
 from cuda_mace.models import OptimizedInvariantMACE
 
