@@ -5,3 +5,4 @@ tests/*
 *.pt
 .vscode
 cuda_mace.egg-info/
+*.model

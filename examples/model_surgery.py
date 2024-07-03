@@ -21,19 +21,16 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description="Optimize a MACE model for CUDA inference."
     )
+    
     parser.add_argument("--model", type=str, help="Path to the MACE model.")
+    
     parser.add_argument(
         "--output",
         type=str,
         default="optimized_model.model",
         help="Path to the output file.",
     )
-    parser.add_argument(
-        "--dtype",
-        type=str,
-        default="float32",
-        help="Default dtype of the model.",
-    )
+
     parser.add_argument(
         "--benchmark",
         action="store_true",
@@ -44,13 +41,7 @@ def build_parser():
         "--accuracy",
         action="store_true",
         help="Benchmark the optimized model.",
-        default=False,
-    )
-    parser.add_argument(
-        "--benchmark_file",
-        type=str,
-        default="",
-        help="Path to the benchmark file.",
+        default=True,
     )
     return parser
 
@@ -301,7 +292,7 @@ def accuracy(
                            training=False, compute_force=True)
         
         print("energy org", output_org["energy"])
-        print("energy opt", output_opt)
+        print("energy opt", output_opt["energy"])
         print("energy f32", output_f32["energy"])
         
         abs_error = torch.abs(output_org["energy"] - output_opt["energy"])
@@ -324,7 +315,14 @@ if __name__ == "__main__":
     
     opt_model = OptimizedInvariantMACE(model)
 
+    print ("--Original model")
     print(model)
+    print ("--Optimized model")
     print(opt_model)
-    
-    accuracy(model, opt_model)
+
+    if (args.accuracy):
+        print ("--Analyzing errors")
+        accuracy(model, opt_model)
+
+    print (f"--Saving optimized model to: {args.output}")
+    torch.save(opt_model, args.output)
