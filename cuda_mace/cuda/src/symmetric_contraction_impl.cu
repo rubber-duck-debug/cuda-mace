@@ -49,7 +49,8 @@ symmetric_contraction_L0_forwards_kernel(
     const int u3_maxn_nonsparse,
     torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> out,
     torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad,
-    const bool requires_grad) {
+    const bool requires_grad)
+{
 
   extern __shared__ char buffer[];
   void *sptr = buffer;
@@ -89,26 +90,32 @@ symmetric_contraction_L0_forwards_kernel(
 
   int element = atom_types[blockIdx.x];
 
-  for (int i = threadIdx.y; i < w3_size; i += blockDim.y) {
+  for (int i = threadIdx.y; i < w3_size; i += blockDim.y)
+  {
     buffer_W3[i * blockDim.x + threadIdx.x] = W3[0][element][i][channel_id];
 
-    if (i < w2_size) {
+    if (i < w2_size)
+    {
       buffer_W2[i * blockDim.x + threadIdx.x] = W2[0][element][i][channel_id];
     }
 
-    if (i < w1_size) {
+    if (i < w1_size)
+    {
       buffer_W1[i * blockDim.x + threadIdx.x] = W1[0][element][i][channel_id];
     }
 
-    if (i < nl) {
+    if (i < nl)
+    {
       buffer_X[i * blockDim.x + threadIdx.x] = X[blockIdx.x][i][channel_id];
 
-      for (int j = threadIdx.x; j < nl; j += blockDim.x) {
+      for (int j = threadIdx.x; j < nl; j += blockDim.x)
+      {
         int num_nonzero_u3 = U3_num_nonzero[0][i][j];
 
         buffer_u3_nonzeros[i * nl + j] = num_nonzero_u3;
 
-        for (int k = 0; k < num_nonzero_u3; k++) {
+        for (int k = 0; k < num_nonzero_u3; k++)
+        {
           buffer_u3_indices[i * (nl * u3_maxn_nonsparse) + (k * nl) + j] =
               U3_indices[k][i][j]; // packed 32 bit integer containing 4 x uint8
                                    // indices
@@ -129,12 +136,14 @@ symmetric_contraction_L0_forwards_kernel(
 
   scalar_t output_1 = 0.0;
 
-  for (int i = threadIdx.y; i < nl; i += blockDim.y) {
+  for (int i = threadIdx.y; i < nl; i += blockDim.y)
+  {
     scalar_t Xi = buffer_X[i * blockDim.x + threadIdx.x];
 
     scalar_t uw1 = 0.0;
 
-    if (i == 0) {
+    if (i == 0)
+    {
       uw1 = buffer_W1[0 * blockDim.x + threadIdx.x];
     }
 
@@ -144,12 +153,14 @@ symmetric_contraction_L0_forwards_kernel(
     if (requires_grad)
       deriv1_tmp = uw1;
 
-    for (int j = 0; j < nl; j++) {
+    for (int j = 0; j < nl; j++)
+    {
       scalar_t Xj = buffer_X[j * blockDim.x + threadIdx.x];
 
       scalar_t uw2 = 0.0;
 
-      if (buffer_u2_nonzero[i * nl + j] > 0) {
+      if (buffer_u2_nonzero[i * nl + j] > 0)
+      {
         uw2 =
             buffer_u2_values[i * nl + j] *
             buffer_W2[buffer_u2_indices[i * nl + j] * blockDim.x + threadIdx.x];
@@ -163,7 +174,8 @@ symmetric_contraction_L0_forwards_kernel(
       if (requires_grad)
         deriv_1_j_tmp = uw2;
 
-      for (int k = 0; k < buffer_u3_nonzeros[i * nl + j]; k++) {
+      for (int k = 0; k < buffer_u3_nonzeros[i * nl + j]; k++)
+      {
         volatile int u3_mem_idx = i * (nl * u3_maxn_nonsparse) + (k * nl) + j;
 
         int compressed_indices = buffer_u3_indices[u3_mem_idx];
@@ -179,7 +191,8 @@ symmetric_contraction_L0_forwards_kernel(
 
         output_3 += u3 * w3_1 * Xk;
 
-        if (requires_grad) {
+        if (requires_grad)
+        {
           deriv_1_j_tmp +=
               u3 *
               (w3_1 +
@@ -196,7 +209,8 @@ symmetric_contraction_L0_forwards_kernel(
 
     output_1 += (output_2 + uw1) * Xi;
 
-    if (requires_grad) {
+    if (requires_grad)
+    {
       grad[blockIdx.x][0][i][channel_id] = deriv1_tmp;
     }
 
@@ -204,10 +218,12 @@ symmetric_contraction_L0_forwards_kernel(
 
     __syncthreads();
 
-    if (threadIdx.y == 0) {
+    if (threadIdx.y == 0)
+    {
       scalar_t output = 0.0;
 
-      for (int i = 0; i < blockDim.y; i++) {
+      for (int i = 0; i < blockDim.y; i++)
+      {
         output += buffer_out[i * blockDim.x + threadIdx.x];
       }
 
@@ -224,18 +240,22 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_gpu(
     torch::Tensor U1_indices, torch::Tensor W3, torch::Tensor W2,
     torch::Tensor W1, const int w3_size, const int w2_size, const int w1_size,
     torch::Tensor u3_n_nonsparse, const int64_t nthreadX = 32,
-    const int64_t nthreadY = 4, const int64_t nthreadZ = 1) {
+    const int64_t nthreadY = 4, const int64_t nthreadZ = 1)
+{
 
   torch::Tensor output =
       torch::empty({X.size(0), 1, X.size(2)},
                    torch::TensorOptions().dtype(X.dtype()).device(X.device()));
   torch::Tensor grad;
 
-  if (X.requires_grad()) {
+  if (X.requires_grad())
+  {
     grad = torch::empty(
         {X.size(0), 1, X.size(1), X.size(2)},
         torch::TensorOptions().dtype(X.dtype()).device(X.device()));
-  } else {
+  }
+  else
+  {
     grad = torch::empty(
         {1, 1, 1, 1},
         torch::TensorOptions().dtype(X.dtype()).device(X.device()));
@@ -245,14 +265,16 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_gpu(
   const int nl = X.size(1);
   const int nchannels = X.size(2);
 
-  auto find_num_blocks = [](int x, int bdim) { return (x + bdim - 1) / bdim; };
+  auto find_num_blocks = [](int x, int bdim)
+  { return (x + bdim - 1) / bdim; };
 
   dim3 block_dim(natoms, nchannels / nthreadX);
   // dim3 block_dim(natoms);
 
   dim3 grid(nthreadX, nthreadY, nthreadZ);
   AT_DISPATCH_FLOATING_TYPES(
-      X.type(), "symmetric_contraction_L0_forwards_gpu", ([&] {
+      X.type(), "symmetric_contraction_L0_forwards_gpu", ([&]
+                                                          {
         size_t shared_size = 0;
 
         void *sptr = nullptr;
@@ -296,8 +318,7 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_gpu(
             w3_size, w2_size, w1_size, u3_n_nonsparse[0].item<int>(),
             output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
             grad.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
-            X.requires_grad());
-      }));
+            X.requires_grad()); }));
 
   // cudaDeviceSynchronize();
 
@@ -368,7 +389,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
     torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits> out,
     torch::PackedTensorAccessor32<scalar_t, 4, torch::RestrictPtrTraits> grad,
-    const bool requires_grad) {
+    const bool requires_grad)
+{
 
   extern __shared__ char buffer[];
 
@@ -445,25 +467,30 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
   int y = global_idx / 16;
   int nthreadsy = blockDim.x * blockDim.y / 16;
 
-  if (threadIdx.z == 0) {
-    for (int i = y; i < nl; i += nthreadsy) {
+  if (threadIdx.z == 0)
+  {
+    for (int i = y; i < nl; i += nthreadsy)
+    {
       int U3_nsparse_1 = U3_num_nonzero_1[lout][i][x];
 
       buffer_U3_num_nonzero_1[i * nl + x] = U3_nsparse_1;
 
-      for (int k = 0; k < U3_nsparse_1; k++) {
+      for (int k = 0; k < U3_nsparse_1; k++)
+      {
         int u3_memidx = i * (nl * u3_maxn_nonsparse) + (k * nl) + x;
 
         buffer_U3_indices_1[u3_memidx] = U3_indices_1[lout][k][i][x];
         buffer_U3_values_1[u3_memidx] = U3_values_1[lout][k][i][x];
       }
 
-      if (requires_grad) {
+      if (requires_grad)
+      {
         int U3_nsparse_3 = U3_num_nonzero_3[lout][i][x];
 
         buffer_U3_num_nonzero_3[i * nl + x] = U3_nsparse_3;
 
-        for (int k = 0; k < U3_nsparse_3; k++) {
+        for (int k = 0; k < U3_nsparse_3; k++)
+        {
           int u3_memidx = i * (nl * u3_maxn_nonsparse) + (k * nl) + x;
 
           buffer_U3_indices_3[u3_memidx] = U3_indices_3[lout][k][i][x];
@@ -481,32 +508,39 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
   int prev_element = -1;
 
-  for (int ii = threadIdx.z; ii < NATOMS_PER_BLOCK; ii += blockDim.z) {
+  for (int ii = threadIdx.z; ii < NATOMS_PER_BLOCK; ii += blockDim.z)
+  {
     int atom_id = blockIdx.x * NATOMS_PER_BLOCK + ii;
 
-    if (atom_id >= natoms) {
+    if (atom_id >= natoms)
+    {
       return;
     }
 
     int element = atom_types[atom_id];
 
-    for (int i = threadIdx.y; i < nl; i += blockDim.y) {
+    for (int i = threadIdx.y; i < nl; i += blockDim.y)
+    {
       buffer_X[threadIdx.z * (nl * blockDim.x) + i * blockDim.x + threadIdx.x] =
           X[atom_id][i][channel_id];
     }
 
-    if (element != prev_element) {
-      for (int i = threadIdx.y; i < w3_size; i += blockDim.y) {
+    if (element != prev_element)
+    {
+      for (int i = threadIdx.y; i < w3_size; i += blockDim.y)
+      {
         buffer_W3[i * blockDim.x + threadIdx.x] =
             W3[lout][element][i][channel_id];
       }
 
-      for (int i = threadIdx.y; i < w2_size; i += blockDim.y) {
+      for (int i = threadIdx.y; i < w2_size; i += blockDim.y)
+      {
         buffer_W2[i * blockDim.x + threadIdx.x] =
             W2[lout][element][i][channel_id];
       }
 
-      for (int i = threadIdx.y; i < w1_size; i += blockDim.y) {
+      for (int i = threadIdx.y; i < w1_size; i += blockDim.y)
+      {
         buffer_W1[i * blockDim.x + threadIdx.x] =
             W1[lout][element][i][channel_id];
       }
@@ -522,7 +556,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
     // TODO use Z to parallelize over this dimension, Y dimension then goes over
     // channel_dim...
-    for (int i = threadIdx.y; i < nl; i += blockDim.y) {
+    for (int i = threadIdx.y; i < nl; i += blockDim.y)
+    {
       scalar_t output2 = 0.0;
       // first compute part of the forwards that we need for the backwards...
       scalar_t dB = 0.0;
@@ -530,11 +565,13 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
       // TODO use X to parallelize over this dimension, and warp reduce sum
       // later....
 
-      for (int j = 0; j < nl; j++) {
+      for (int j = 0; j < nl; j++)
+      {
         // compute uw2...
         scalar_t uw2 = 0.0;
 
-        if (buffer_U2_num_nonzero_1[i * nl + j] > 0) {
+        if (buffer_U2_num_nonzero_1[i * nl + j] > 0)
+        {
           uw2 = buffer_U2_values_1[i * nl + j] *
                 buffer_W2[buffer_U2_indices_1[i * nl + j] * blockDim.x +
                           threadIdx.x];
@@ -545,7 +582,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
         int nk3 = buffer_U3_num_nonzero_1[i * nl + j];
 
-        for (int k = 0; k < nk3; k++) {
+        for (int k = 0; k < nk3; k++)
+        {
           int u3_memidx = i * (nl * u3_maxn_nonsparse) + (k * nl) + j;
 
           int compressed_index = buffer_U3_indices_1[u3_memidx];
@@ -567,15 +605,18 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
                                               j * blockDim.x + threadIdx.x];
       }
 
-      if (requires_grad) {
-        for (int j = 0; j < nl; j++) {
+      if (requires_grad)
+      {
+        for (int j = 0; j < nl; j++)
+        {
           scalar_t Aia = 0.0;
           scalar_t dBi = 0.0;
 
           // compute uw2...
           scalar_t uw2 = 0.0;
 
-          if (buffer_U2_num_nonzero_1[j * nl + i] > 0) {
+          if (buffer_U2_num_nonzero_1[j * nl + i] > 0)
+          {
             uw2 = buffer_U2_values_1[j * nl + i] *
                   buffer_W2[buffer_U2_indices_1[j * nl + i] * blockDim.x +
                             threadIdx.x];
@@ -583,7 +624,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
           int nk3_2 = buffer_U3_num_nonzero_1[j * nl + i];
 
-          for (int k = 0; k < nk3_2; k++) {
+          for (int k = 0; k < nk3_2; k++)
+          {
             int u3_memidx = j * (nl * u3_maxn_nonsparse) + (k * nl) + i;
 
             int compressed_index = buffer_U3_indices_1[u3_memidx];
@@ -603,7 +645,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
           int nk3_3 = buffer_U3_num_nonzero_3[i * nl + j];
 
-          for (int k = 0; k < nk3_3; k++) {
+          for (int k = 0; k < nk3_3; k++)
+          {
             int u3_memidx = i * (nl * u3_maxn_nonsparse) + (k * nl) + j;
 
             int compressed_index = buffer_U3_indices_3[u3_memidx];
@@ -629,7 +672,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
       scalar_t uw1 = 0.0;
 
-      if (U1_num_nonzero[lout][i] > 0) {
+      if (U1_num_nonzero[lout][i] > 0)
+      {
         int uw1_idx = U1_index[lout][i];
 
         uw1 = buffer_W1[uw1_idx * blockDim.x + threadIdx.x];
@@ -638,7 +682,8 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
       output_1 += (output2 + uw1) * buffer_X[threadIdx.z * (nl * blockDim.x) +
                                              i * blockDim.x + threadIdx.x];
 
-      if (requires_grad) {
+      if (requires_grad)
+      {
 
         // reduce over channel_dim with warp instructions
 
@@ -665,10 +710,12 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
 
     __syncthreads();
 
-    if (threadIdx.y == 0) {
+    if (threadIdx.y == 0)
+    {
       scalar_t output_sum = 0.0;
 
-      for (int i = 0; i < blockDim.y; i++) {
+      for (int i = 0; i < blockDim.y; i++)
+      {
         output_sum += buffer_out[i * blockDim.x + threadIdx.x];
       }
 
@@ -695,7 +742,8 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
     torch::Tensor W1_size,          // nlout
     torch::Tensor U3_max_nonsparse, // nlout
     const int64_t nthreadX = 32, const int64_t nthreadY = 4,
-    const int64_t nthreadZ = 1) {
+    const int64_t nthreadZ = 1)
+{
 
   const int natoms = X.size(0);
   const int nl = X.size(1);
@@ -703,7 +751,8 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
   const int nlout = U3_num_nonzero_1.size(0);
   const int u3_maxn_nonsparse = U3_values_1.size(1);
 
-  auto find_num_blocks = [](int x, int bdim) { return (x + bdim - 1) / bdim; };
+  auto find_num_blocks = [](int x, int bdim)
+  { return (x + bdim - 1) / bdim; };
 
   torch::Tensor output =
       torch::empty({natoms, nlout, nchannels},
@@ -711,11 +760,14 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
 
   torch::Tensor grad;
 
-  if (X.requires_grad()) {
+  if (X.requires_grad())
+  {
     grad = torch::empty(
         {natoms, nlout, nl, nchannels},
         torch::TensorOptions().dtype(X.dtype()).device(X.device()));
-  } else {
+  }
+  else
+  {
     grad = torch::empty(
         {1, 1, 1, 1},
         torch::TensorOptions().dtype(X.dtype()).device(X.device()));
@@ -729,7 +781,8 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
   dim3 blockDim(nthreadX, nthreadY, nthreadZ);
 
   AT_DISPATCH_FLOATING_TYPES(
-      X.type(), "symmetric_contraction_LGT0_forwards_gpu", ([&] {
+      X.type(), "symmetric_contraction_LGT0_forwards_gpu", ([&]
+                                                            {
         size_t shared_size = 0;
         void *sptr = nullptr;
 
@@ -863,8 +916,7 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
 
             output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
             grad.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
-            X.requires_grad());
-      }));
+            X.requires_grad()); }));
 
   // cudaDeviceSynchronize();
 
@@ -878,7 +930,8 @@ __global__ void symm_contraction_backward_kernel(
     const torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits>
         grad_input,
     torch::PackedTensorAccessor32<scalar_t, 3, torch::RestrictPtrTraits>
-        grad_output) {
+        grad_output)
+{
   extern __shared__ char buffer[];
 
   const int natoms = grad_X.size(0);
@@ -894,16 +947,19 @@ __global__ void symm_contraction_backward_kernel(
   int atom_idx = blockIdx.x;
   int channel_id = blockIdx.y * blockDim.x + threadIdx.x;
 
-  for (int sph = threadIdx.y; sph < nl; sph += blockDim.y) {
+  for (int sph = threadIdx.y; sph < nl; sph += blockDim.y)
+  {
     buffer_grad[sph * blockDim.x + threadIdx.x] = 0.0;
   }
 
   __syncthreads();
 
-  for (int lout = 0; lout < nlout; lout++) {
+  for (int lout = 0; lout < nlout; lout++)
+  {
     scalar_t grad = grad_input[atom_idx][lout][channel_id];
 
-    for (int sph = threadIdx.y; sph < nl; sph += blockDim.y) {
+    for (int sph = threadIdx.y; sph < nl; sph += blockDim.y)
+    {
       buffer_grad[sph * blockDim.x + threadIdx.x] +=
           grad * grad_X[atom_idx][lout][sph][channel_id];
     }
@@ -911,7 +967,8 @@ __global__ void symm_contraction_backward_kernel(
 
   __syncthreads();
 
-  for (int sph = threadIdx.y; sph < nl; sph += blockDim.y) {
+  for (int sph = threadIdx.y; sph < nl; sph += blockDim.y)
+  {
     grad_output[atom_idx][sph][channel_id] =
         buffer_grad[sph * blockDim.x + threadIdx.x];
   }
@@ -920,7 +977,8 @@ __global__ void symm_contraction_backward_kernel(
 torch::Tensor symm_contraction_backward(torch::Tensor gradX,
                                         torch::Tensor grad_input,
                                         int nthreadX = 32, int nthreadY = 4,
-                                        int nthreadZ = 1) {
+                                        int nthreadZ = 1)
+{
 
   const int natoms = gradX.size(0);
   const int nlout = gradX.size(1);
@@ -936,7 +994,8 @@ torch::Tensor symm_contraction_backward(torch::Tensor gradX,
   dim3 grid(nthreadX, nthreadY, nthreadZ);
 
   AT_DISPATCH_FLOATING_TYPES(
-      gradX.type(), "symm_contraction_backward", ([&] {
+      gradX.type(), "symm_contraction_backward", ([&]
+                                                  {
         size_t shared_mem_amount =
             nthreadX * nl * sizeof(scalar_t); // buffer_grad storage
 
@@ -945,15 +1004,15 @@ torch::Tensor symm_contraction_backward(torch::Tensor gradX,
             gradX.packed_accessor32<scalar_t, 4, torch::RestrictPtrTraits>(),
             grad_input
                 .packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>(),
-            output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>());
-      }));
+            output.packed_accessor32<scalar_t, 3, torch::RestrictPtrTraits>()); }));
 
   // cudaDeviceSynchronize();
 
   return output;
 }
 
-int64_t curr_shared_mem() {
+int64_t curr_shared_mem()
+{
   int currentDevice;
   cudaGetDevice(&currentDevice);
 
@@ -969,11 +1028,13 @@ int64_t LGT0_shared_memory_required(int64_t nthreadsX, int64_t nthreadsY,
                                     int64_t u3_maxn_nonsparse, int64_t nl,
                                     int64_t W3_size, int64_t W2_size,
                                     int64_t W1_size,
-                                    torch::ScalarType scalar_type) {
+                                    torch::ScalarType scalar_type)
+{
   size_t shared_size = 0;
   void *sptr = nullptr;
 
-  switch (scalar_type) {
+  switch (scalar_type)
+  {
   case torch::ScalarType::Double:
     shared_array<double>(nthreadsZ * nthreadsX * nl, sptr, &shared_size);
     shared_array<double>(nthreadsX * nthreadsY, sptr, &shared_size);
@@ -1018,7 +1079,8 @@ int64_t LGT0_shared_memory_required(int64_t nthreadsX, int64_t nthreadsY,
   return shared_size;
 }
 
-bool set_shared_mem_size(int64_t amount, torch::ScalarType scalar_type) {
+bool set_shared_mem_size(int64_t amount, torch::ScalarType scalar_type)
+{
 
   int currentDevice;
   cudaGetDevice(&currentDevice);
@@ -1030,13 +1092,17 @@ bool set_shared_mem_size(int64_t amount, torch::ScalarType scalar_type) {
 
   bool accepted = amount <= deviceProp.sharedMemPerBlockOptin;
 
-  if (!accepted) {
+  if (!accepted)
+  {
     std::cerr << "Warning: requested shared memory buffer (" << amount;
     std::cerr << ") exceeds max available ("
               << deviceProp.sharedMemPerBlockOptin;
     std::cerr << ") on device " << deviceProp.name << std::endl;
-  } else {
-    switch (scalar_type) {
+  }
+  else
+  {
+    switch (scalar_type)
+    {
     case torch::ScalarType::Double:
       cudaFuncSetAttribute(symmetric_contraction_LGT0_forwards_kernel<double>,
                            cudaFuncAttributeMaxDynamicSharedMemorySize, amount);
