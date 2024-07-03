@@ -216,7 +216,7 @@ class InvariantResidualInteraction(torch.nn.Module):
         )
 
 
-class OptimizedScaleShiftInvariantMACE(torch.nn.Module):
+class OptimizedInvariantMACE(torch.nn.Module):
     def __init__(
         self,
         mace_model: torch.nn.Module,

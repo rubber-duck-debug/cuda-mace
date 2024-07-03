@@ -16,9 +16,9 @@ Nvidia Ampere GPU or later (Compute Capability >= 8)
 
 ### ScaleShift
 ```python
-from cuda_mace.models import OptimizedScaleShiftInvariantMACE
+from cuda_mace.models import OptimizedInvariantMACE
 
-model = OptimizedScaleShiftInvariantMACE(torch.load("model.pt").double())
+model = OptimizedInvariantMACE(torch.load("model.pt").double())
 ```
 
 A more detailed example can be found in `cuda_mace/examples/model_surgery.py`:

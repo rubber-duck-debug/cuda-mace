@@ -1,15 +1,8 @@
-from typing import Any, Callable, Dict, List, Optional, Type, Union, Tuple
-from copy import deepcopy
+from typing import Dict, List, Optional, Type
 import torch
 from mace.tools import torch_geometric
 from mace import data, tools
-from e3nn import o3, nn
-from mace import modules
 from time import time
-import inspect
-from math import sqrt
-
-from mace.modules.blocks import SphericalHarmonics
 
 from mace.tools.scatter import scatter_sum
 
@@ -17,7 +10,7 @@ from mace.modules.utils import (
     get_edge_vectors_and_lengths,
 )
 
-from cuda_mace.models import OptimizedScaleShiftInvariantMACE
+from cuda_mace.models import OptimizedInvariantMACE
 
 def build_parser():
     """
@@ -329,7 +322,7 @@ if __name__ == "__main__":
     model = torch.load(args.model).to("cuda")
     model = model.to(torch.float64)
     
-    opt_model = OptimizedScaleShiftInvariantMACE(model)
+    opt_model = OptimizedInvariantMACE(model)
 
     print(model)
     print(opt_model)

@@ -1,3 +1,3 @@
-from .ScaleShiftMACE import OptimizedScaleShiftInvariantMACE
+from .InvariantMACE import OptimizedInvariantMACE
 
-__all__ = ['OptimizedScaleShiftInvariantMACE']
+__all__ = ['OptimizedInvariantMACE']
