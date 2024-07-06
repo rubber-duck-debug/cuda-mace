@@ -182,7 +182,6 @@ std::vector<torch::Tensor>
 evaluate_spline(torch::Tensor r, torch::Tensor coeffs, double r_width, double r_max) {
   const uint nsamples = r.size(0);
   const int noutputs = coeffs.size(2);
-
   torch::Tensor R_out =
       torch::zeros({nsamples, noutputs},
                    torch::TensorOptions().dtype(r.dtype()).device(r.device()));

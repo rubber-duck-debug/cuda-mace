@@ -4,6 +4,7 @@
 
 #include <iostream>
 #include <torch/script.h>
+#include <torch/serialize/archive.h>
 
 using namespace std;
 using namespace torch::indexing;
@@ -11,9 +12,9 @@ using namespace torch::autograd;
 
 torch::Tensor CubicSplineAutograd::forward(AutogradContext *ctx,
                                            torch::Tensor r,
-                                           torch::Tensor coeffs,
-                                           double r_width,
+                                           torch::Tensor coeffs, double r_width,
                                            double r_max) {
+
   auto result = evaluate_spline(r, coeffs, r_width, r_max);
 
   if (r.requires_grad()) {
@@ -36,8 +37,8 @@ variable_list CubicSplineAutograd::backward(AutogradContext *ctx,
   return {result, undef, undef, undef};
 }
 
-CubicSpline::CubicSpline(torch::Tensor r_basis, torch::Tensor R,
-                         double r_width, double r_max) {
+CubicSpline::CubicSpline(torch::Tensor r_basis, torch::Tensor R, double r_width,
+                         double r_max) {
 
   this->coeffs = generate_coefficients(r_basis, R, r_width);
 
@@ -48,10 +49,21 @@ CubicSpline::CubicSpline(torch::Tensor r_basis, torch::Tensor R,
 
 // wrapper class which we expose to the API.
 torch::Tensor CubicSpline::forward(torch::Tensor r) {
-  return CubicSplineAutograd::apply(r, this->coeffs, this->r_width, this->r_max);
+  return CubicSplineAutograd::apply(r, this->coeffs, this->r_width,
+                                    this->r_max);
 }
 
 torch::Tensor CubicSpline::get_coefficients() { return this->coeffs; }
+
+// Method to save the state
+std::vector<torch::Tensor> CubicSpline::__getstate__() const {
+  return {this->coeffs};
+}
+
+// Method to load the state
+void CubicSpline::__setstate__(const std::vector<torch::Tensor> &state) {
+  this->coeffs = state[0];
+}
 
 TORCH_LIBRARY(cubic_spline, m) {
   m.class_<CubicSpline>("CubicSpline")

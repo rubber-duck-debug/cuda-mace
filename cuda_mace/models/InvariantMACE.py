@@ -20,6 +20,9 @@ from mace.modules.utils import (
     get_outputs,
     get_symmetric_displacement,
 )
+
+from mace.modules.blocks import NonLinearReadoutBlock
+
 from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
 from cuda_mace.ops.linear import Linear, ElementalLinear
 from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
@@ -245,12 +248,19 @@ class OptimizedInvariantMACE(torch.nn.Module):
             mace_model, profile), InvariantResidualInteraction(mace_model, profile)])
         self.products = deepcopy(mace_model.products)
         
-        self.readouts = []
+        readouts = []
         
         for i in range (len(mace_model.readouts)):
-            self.readouts.append(mace_model.readouts[i].double())
+            readout_i =  mace_model.readouts[i]
+            if (isinstance(readout_i, NonLinearReadoutBlock)):
+                readout_i.linear_1.weight = mace_model.readouts[i].linear_1.weight.double()
+                readout_i.linear_2.weight = mace_model.readouts[i].linear_2.weight.double()
+            else:
+                readout_i.linear.weight = mace_model.readouts[i].linear.weight.double()
+        
+            readouts.append(readout_i)
 
-        self.readouts = torch.nn.ModuleList(self.readouts)
+        self.readouts = torch.nn.ModuleList(readouts)
         
         for i in range(mace_model.num_interactions):
             symm_contract = mace_model.products[i].symmetric_contractions
@@ -374,8 +384,11 @@ class OptimizedInvariantMACE(torch.nn.Module):
         if (self.profile):
             torch.cuda.nvtx.range_push("MACE::sph")
 
-        edge_attrs = self.spherical_harmonics.forward(vectors)
+        if (vectors.dtype == torch.float64):
+            vectors = vectors.float()
 
+        edge_attrs = self.spherical_harmonics.forward(vectors)
+        
         if (self.profile):
             torch.cuda.nvtx.range_pop()
 
@@ -386,9 +399,15 @@ class OptimizedInvariantMACE(torch.nn.Module):
         ):
             if (self.profile):
                 torch.cuda.nvtx.range_push("MACE::edge spline")
+            
+            if (len(lengths.shape) == 2):
+                lengths = lengths.squeeze(-1)
 
-            edge_feats = edge_spline.forward(lengths.squeeze(-1).double()).float()
+            if (lengths.device != torch.float64):
+                lengths = lengths.double()
 
+            edge_feats = edge_spline.forward(lengths).float()
+            
             if (self.profile):
                 torch.cuda.nvtx.range_pop()
 
@@ -396,9 +415,9 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 torch.cuda.nvtx.range_push("MACE::interaction: {}".format(j))
 
             node_feats, sc = interaction(
-                node_attrs=data["node_attrs"],
+                node_attrs=data["node_attrs"].float(),
                 node_feats=node_feats.float(),
-                edge_attrs=edge_attrs,
+                edge_attrs=edge_attrs.float(),
                 edge_feats=edge_feats,
                 edge_index=data["edge_index"],
             )
@@ -409,10 +428,8 @@ class OptimizedInvariantMACE(torch.nn.Module):
             if (self.profile):
                 torch.cuda.nvtx.range_push("MACE::product: {}".format(j))
 
-            if (sc is not None):
-                print(sc.shape)
-            node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"]
-                                 )
+            node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"].float()
+                                 ).double()
 
             if (self.profile):
                 torch.cuda.nvtx.range_pop()
@@ -420,8 +437,19 @@ class OptimizedInvariantMACE(torch.nn.Module):
             if (self.profile):
                 torch.cuda.nvtx.range_push("MACE::readout: {}".format(j))
 
+            if (isinstance(readout, NonLinearReadoutBlock)):
+                #print ("NonLinearReadout")
+                readout.linear_1.weight = torch.nn.Parameter(readout.linear_1.weight.double())
+                readout.linear_2.weight = torch.nn.Parameter(readout.linear_2.weight.double())
+                #print (node_feats.shape, node_feats.dtype, readout.linear_1.weight.dtype)
+                #print (node_feats.shape, node_feats.dtype, readout.linear_2.weight.dtype)
+            else:
+                #print ("LinearReadout")
+                readout.linear.weight = torch.nn.Parameter(readout.linear.weight.double())
+                #print (node_feats.shape, node_feats.dtype, readout.linear.weight.dtype)
+            
             node_feats_list.append(node_feats)
-            node_energies = readout(node_feats.double()).squeeze(-1)  # [n_nodes, ]
+            node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
             
             node_es_list.append(node_energies)
         

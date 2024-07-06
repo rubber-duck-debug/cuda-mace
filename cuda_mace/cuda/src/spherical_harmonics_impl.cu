@@ -320,7 +320,6 @@ std::vector<torch::Tensor> spherical_harmonics(torch::Tensor xyz) {
 
           shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 16 * 3, sptr,
                                  &space);
-
           spherical_harmonics_kernel<scalar_t><<<gridDim, blockDim, space>>>(
               xyz.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
               sph_harmonics
