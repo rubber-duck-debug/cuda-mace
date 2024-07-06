@@ -9,6 +9,7 @@ pip install . --no-build-isolation
 
 # Requirements
 Nvidia Ampere GPU or later (Compute Capability >= 8)
+
 `high_perf` branch of MACE: https://github.com/ACEsuit/mace/tree/high_perf
 
 # Model Transplants
