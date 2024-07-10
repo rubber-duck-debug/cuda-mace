@@ -447,6 +447,8 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 #print ("LinearReadout")
                 readout.linear.weight = torch.nn.Parameter(readout.linear.weight.double())
                 #print (node_feats.shape, node_feats.dtype, readout.linear.weight.dtype)
+                
+                #print (readout.linear.weight)
             
             node_feats_list.append(node_feats)
             node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
