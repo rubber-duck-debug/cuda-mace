@@ -13,10 +13,11 @@ jobs:
       matrix:
         python-version: [3.11]
         pytorch-version: [2.4.0, 2.5.0]
-        cuda-version: [12.1, 12.4]
+        cuda-version: [12.1.0, 12.4.0]
         cuversion: [121, 124]
     env:
       CIBW_SKIP: cp36-*
+      #nvidia/cuda:12.1.0-devel-ubuntu20.04
       CIBW_MANYLINUX_X86_64_IMAGE: "nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04"
 
     steps:
