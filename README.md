@@ -8,11 +8,14 @@ pip install . --no-build-isolation
 ```
 
 # Requirements
+
 Nvidia Ampere GPU or later (Compute Capability >= 8)
+
+Pytorch
 
 `high_perf` branch of MACE: https://github.com/ACEsuit/mace/tree/high_perf
 
-CUDA SDK (https://developer.nvidia.com/cuda-downloads) installed. `CUDA_HOME` set (typically to /usr/local/cuda).
+CUDA SDK (https://developer.nvidia.com/cuda-downloads) installed, with `CUDA_HOME` set (typically to /usr/local/cuda).
 
 # Model Transplants
 
