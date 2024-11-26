@@ -16,7 +16,7 @@ jobs:
         cuda-version: [12.1.0, 12.4.0]
         cuversion: [121, 124]
     env:
-      CIBW_SKIP: cp36-*
+      CIBW_SKIP: cp36-* cp37-* cp38-* cp39-* cp310-*
       #nvidia/cuda:12.1.0-devel-ubuntu20.04
       CIBW_MANYLINUX_X86_64_IMAGE: "nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04"
 
