@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         python-version: [3.11]
-        pytorch-version: [2.3.0, 2.4.0, 2.5.0]
+        pytorch-version: [2.4.0, 2.5.0]
         cuda-version: [12.1, 12.4]
         cuversion: [121, 124]
     env:
