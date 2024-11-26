@@ -35,3 +35,7 @@ The above surgery code will save the optimized model by default to: `./optimized
 ## Equivariant Models
 
 Not currently implemented
+
+# License
+
+This codebase is provided under an Academic Software License. See LICENSE for further details.
