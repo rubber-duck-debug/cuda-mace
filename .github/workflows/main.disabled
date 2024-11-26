@@ -1,0 +1,67 @@
+name: Build PyTorch Wheels
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-wheels:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cibw-arch: ["x86_64"]
+        cibw-python: ['cp312-*']
+        python-version: [3.11]
+        pytorch-version: [2.4.0, 2.5.0]
+        cuda-version: [12.4.0]
+        cuversion: [124]
+    env:
+      CIBW_SKIP: cp36-* cp37-* cp38-* cp39-* cp310-*
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # Build the custom Manylinux Docker image
+    - name: Build Manylinux Docker Image
+      run: |
+        docker build --no-cache -t manylinux2014_${{ matrix.cibw-arch }} \
+          scripts/manylinux2014_${{ matrix.cibw-arch }}
+    
+    # Set up Python environment
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    # Install cibuildwheel and other required tools
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install cibuildwheel build
+
+    - name: Build wheels
+      run: |
+        echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
+        python -m cibuildwheel --platform linux .
+        mkdir -p dist
+        cp wheelhouse/*.whl dist/
+      env:
+        CIBW_BUILD_VERBOSITY: 3
+        CIBW_BUILD: ${{ matrix.cibw-python }}
+        CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
+        CIBW_ARCHS: ${{ matrix.cibw-arch }}
+        CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014_${{ matrix.cibw-arch }}
+        CIBW_ENVIRONMENT: >
+          CUDA_HOME=/usr/local/cuda
+          PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
+        CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
+          auditwheel repair --exclude libtorch.so --exclude libtorch_cpu.so --exclude libtorch_cuda.so --exclude libc10.so --exclude libc10_cuda.so -w {dest_dir} {wheel}
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: wheels
+        path: dist/

@@ -3,6 +3,7 @@
 
 #include "cuda_utils.cuh"
 #include "spherical_harmonics_impl.cuh"
+#include <c10/cuda/CUDAStream.h>
 
 using namespace std;
 using namespace torch::autograd;
@@ -13,7 +14,8 @@ using namespace torch::indexing;
 #define NWARPS_PER_BLOCK 4
 
 /*
-This code has been temporarily transplanted from sphericart. Code will be modified
+This code has been temporarily transplanted from sphericart to add in some
+multipliers directly. Code will be modified
 to be able to revert back to sphericart implementaton. In the meantime,\
 Please **CITE** sphericart if this code is used in any of your work.
 
@@ -21,10 +23,8 @@ https://github.com/lab-cosmo/sphericart
 
 @article{sphericart,
     title={Fast evaluation of spherical harmonics with sphericart},
-    author={Bigi, Filippo and Fraux, Guillaume and Browning, Nicholas J. and Ceriotti, Michele},
-    journal={J. Chem. Phys.},
-    year={2023},
-    number={159},
+    author={Bigi, Filippo and Fraux, Guillaume and Browning, Nicholas J. and
+Ceriotti, Michele}, journal={J. Chem. Phys.}, year={2023}, number={159},
     pages={064802},
 }
 */
@@ -71,10 +71,6 @@ __global__ void spherical_harmonics_kernel(
   }
 
   __syncthreads();
-
-  // scalar_t x = buffer_xyz[0 * blockDim.x + threadIdx.x];
-  // scalar_t y = buffer_xyz[1 * blockDim.x + threadIdx.x];
-  // scalar_t z = buffer_xyz[2 * blockDim.x + threadIdx.x];
 
   // MACE ordering x[:, [2, 0, 1]]
   scalar_t x = buffer_xyz[2 * blockDim.x + threadIdx.x];
@@ -304,6 +300,7 @@ std::vector<torch::Tensor> spherical_harmonics(torch::Tensor xyz) {
       torch::TensorOptions().dtype(xyz.dtype()).device(xyz.device()));
   //}
 
+  cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
   dim3 gridDim(find_integer_divisor(nsamples, WARP_SIZE * NWARPS_PER_BLOCK));
 
   dim3 blockDim(WARP_SIZE * NWARPS_PER_BLOCK, 1, 1);
@@ -320,7 +317,8 @@ std::vector<torch::Tensor> spherical_harmonics(torch::Tensor xyz) {
 
           shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 16 * 3, sptr,
                                  &space);
-          spherical_harmonics_kernel<scalar_t><<<gridDim, blockDim, space>>>(
+          spherical_harmonics_kernel<
+              scalar_t><<<gridDim, blockDim, space, stream>>>(
               xyz.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
               sph_harmonics
                   .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -328,7 +326,8 @@ std::vector<torch::Tensor> spherical_harmonics(torch::Tensor xyz) {
                   .packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
               true, true);
         } else {
-          spherical_harmonics_kernel<scalar_t><<<gridDim, blockDim, space>>>(
+          spherical_harmonics_kernel<
+              scalar_t><<<gridDim, blockDim, space, stream>>>(
               xyz.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
               sph_harmonics
                   .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
@@ -408,6 +407,8 @@ torch::Tensor spherical_harmonics_backward(torch::Tensor sph_deriv,
                                       .dtype(sph_deriv.dtype())
                                       .device(sph_deriv.device()));
 
+  cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+
   dim3 gridDim(find_integer_divisor(nsamples, WARP_SIZE * NWARPS_PER_BLOCK));
 
   dim3 blockDim(WARP_SIZE * NWARPS_PER_BLOCK, 1, 1);
@@ -419,7 +420,7 @@ torch::Tensor spherical_harmonics_backward(torch::Tensor sph_deriv,
 
         shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 3, sptr, &space);
         spherical_harmonics_backward_kernel<scalar_t>
-            <<<gridDim, blockDim, space>>>(
+            <<<gridDim, blockDim, space, stream>>>(
                 sph_deriv
                     .packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
                 grad_output
