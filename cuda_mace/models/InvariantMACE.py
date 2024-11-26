@@ -25,6 +25,7 @@ from mace.modules.blocks import NonLinearReadoutBlock
 
 from cuda_mace.ops.invariant_message_passing import InvariantMessagePassingTP
 from cuda_mace.ops.linear import Linear, ElementalLinear
+from cuda_mace.ops.cubic_spline import CubicSpline
 from cuda_mace.ops.symmetric_contraction import SymmetricContraction as CUDAContraction
 
 
@@ -85,15 +86,15 @@ def element_linear_to_cuda(skip_tp):
 
 class InvariantInteraction(torch.nn.Module):
 
-    def __init__(self, mace_model, profile=False):
+    def __init__(self, mace_model):
         super().__init__()
-        self.linear_up = linear_matmul(mace_model.interactions[0].linear_up.float())
+        self.linear_up = linear_matmul(
+            mace_model.interactions[0].linear_up.float())
         self.linear = linear_to_cuda(mace_model.interactions[0].linear.float())
         self.tp = InvariantMessagePassingTP()
         self.skip_tp = element_linear_to_cuda(
             mace_model.interactions[0].skip_tp.float())
         self.avg_num_neighbors = mace_model.interactions[0].avg_num_neighbors
-        self.profile = profile
 
     def forward(
         self,
@@ -108,15 +109,7 @@ class InvariantInteraction(torch.nn.Module):
         receiver = edge_index[1]
         num_nodes = torch.tensor(node_feats.shape[0])
 
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::linear up")
         node_feats = self.linear_up(node_feats)
-
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::inv tp")
 
         message = self.tp.forward(
             node_feats,
@@ -127,24 +120,9 @@ class InvariantInteraction(torch.nn.Module):
             num_nodes,
         )
 
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::message linear")
-
         message = self.linear(message) / self.avg_num_neighbors
 
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::skip tp")
-
         message = self.skip_tp(message, node_attrs)
-
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
 
         return (
             message,
@@ -154,15 +132,15 @@ class InvariantInteraction(torch.nn.Module):
 
 class InvariantResidualInteraction(torch.nn.Module):
 
-    def __init__(self, mace_model, profile=False):
+    def __init__(self, mace_model):
         super().__init__()
 
-        self.linear_up = linear_matmul(mace_model.interactions[1].linear_up.float())
+        self.linear_up = linear_matmul(
+            mace_model.interactions[1].linear_up.float())
         self.linear = linear_to_cuda(mace_model.interactions[1].linear.float())
         self.tp = InvariantMessagePassingTP()
         self.skip_tp = mace_model.interactions[1].skip_tp.float()
         self.avg_num_neighbors = mace_model.interactions[1].avg_num_neighbors
-        self.profile = profile
 
     def forward(
         self,
@@ -177,22 +155,8 @@ class InvariantResidualInteraction(torch.nn.Module):
         receiver = edge_index[1]
         num_nodes = torch.tensor(node_feats.shape[0])
 
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::skip tp")
         sc = self.skip_tp(node_feats, node_attrs)
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::linear up")
         node_feats = self.linear_up(node_feats)
-
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::inv tp")
-
         message = self.tp.forward(
             node_feats,
             edge_attrs,
@@ -202,16 +166,7 @@ class InvariantResidualInteraction(torch.nn.Module):
             num_nodes,
         )
 
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("InvariantInteraction::message linear")
-
         message = self.linear(message) / self.avg_num_neighbors
-
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
 
         return (
             message,
@@ -222,8 +177,7 @@ class InvariantResidualInteraction(torch.nn.Module):
 class OptimizedInvariantMACE(torch.nn.Module):
     def __init__(
         self,
-        mace_model: torch.nn.Module,
-        profile=False
+        mace_model: torch.nn.Module
     ):
         super().__init__()
         self.register_buffer(
@@ -245,23 +199,26 @@ class OptimizedInvariantMACE(torch.nn.Module):
         self.atomic_energies_fn = deepcopy(mace_model.atomic_energies_fn)
 
         self.interactions = torch.nn.ModuleList([InvariantInteraction(
-            mace_model, profile), InvariantResidualInteraction(mace_model, profile)])
+            mace_model), InvariantResidualInteraction(mace_model)])
         self.products = deepcopy(mace_model.products)
-        
+
         readouts = []
-        
-        for i in range (len(mace_model.readouts)):
-            readout_i =  mace_model.readouts[i]
+
+        for i in range(len(mace_model.readouts)):
+            readout_i = mace_model.readouts[i]
             if (isinstance(readout_i, NonLinearReadoutBlock)):
-                readout_i.linear_1.weight = mace_model.readouts[i].linear_1.weight.double()
-                readout_i.linear_2.weight = mace_model.readouts[i].linear_2.weight.double()
+                readout_i.linear_1.weight = mace_model.readouts[i].linear_1.weight.double(
+                )
+                readout_i.linear_2.weight = mace_model.readouts[i].linear_2.weight.double(
+                )
             else:
-                readout_i.linear.weight = mace_model.readouts[i].linear.weight.double()
-        
+                readout_i.linear.weight = mace_model.readouts[i].linear.weight.double(
+                )
+
             readouts.append(readout_i)
 
         self.readouts = torch.nn.ModuleList(readouts)
-        
+
         for i in range(mace_model.num_interactions):
             symm_contract = mace_model.products[i].symmetric_contractions
             all_weights = {}
@@ -301,20 +258,19 @@ class OptimizedInvariantMACE(torch.nn.Module):
             self.products[i].linear = linear_matmul(
                 deepcopy(mace_model.products[i].linear.float()))
 
-        r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 4096, retstep=True)
+        r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 256, retstep=True)
         r = torch.tensor(r, dtype=torch.float64).to("cuda")
         bessel_j = self.radial_embedding(r.unsqueeze(-1))
-    
+
         self.edge_splines = []
         for i, interaction in enumerate(mace_model.interactions):
             R = interaction.conv_tp_weights(bessel_j)
-            spline = torch.classes.cubic_spline.CubicSpline(
-                r.cuda(), R.cuda(), h, self.r_max.item())
+            spline = CubicSpline(
+                r.cuda().float(), R.cuda().float(), h, self.r_max.item())
             self.edge_splines.append(spline)
 
         self.scale_shift = deepcopy(mace_model.scale_shift.double())
-        
-        self.profile = profile
+
         self.orig_model = mace_model
 
     def forward(
@@ -327,9 +283,6 @@ class OptimizedInvariantMACE(torch.nn.Module):
         compute_displacement: bool = False,
     ) -> Dict[str, Optional[torch.Tensor]]:
         # Setup
-        if (self.profile):
-            torch.cuda.nvtx.range_push("MACE::forward")
-
         data["positions"].requires_grad_(True)
         data["node_attrs"].requires_grad_(True)
         num_graphs = data["ptr"].numel() - 1
@@ -352,67 +305,38 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 batch=data["batch"],
             )
 
-        if (self.profile):
-            torch.cuda.nvtx.range_push("MACE::atomic_energies")
         # Atomic energies
         node_e0 = self.atomic_energies_fn(data["node_attrs"].double())
         # node_e0 = self.atomic_energies_fn(data["node_attrs"])
-        e0 = scatter_sum(src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs)  # [n_graphs,]
+        e0 = scatter_sum(
+            src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs)  # [n_graphs,]
 
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-        # Embeddings
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("MACE::embeddings")
-        # print ("node attrs:", data["node_attrs"].shape)
         node_feats = self.node_embedding(data["node_attrs"].double())
 
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("MACE::edge vectors")
         vectors, lengths = get_edge_vectors_and_lengths(
             positions=data["positions"],
             edge_index=data["edge_index"],
             shifts=data["shifts"],
         )
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
-
-        if (self.profile):
-            torch.cuda.nvtx.range_push("MACE::sph")
 
         if (vectors.dtype == torch.float64):
             vectors = vectors.float()
 
         edge_attrs = self.spherical_harmonics.forward(vectors)
-        
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
 
-        node_es_list  = []
+        node_es_list = []
         node_feats_list = []
         for j, (interaction, product, readout, edge_spline) in enumerate(zip(
             self.interactions, self.products, self.readouts, self.edge_splines)
         ):
-            if (self.profile):
-                torch.cuda.nvtx.range_push("MACE::edge spline")
-            
+
             if (len(lengths.shape) == 2):
                 lengths = lengths.squeeze(-1)
 
             if (lengths.device != torch.float64):
                 lengths = lengths.double()
 
-            edge_feats = edge_spline.forward(lengths).float()
-            
-            if (self.profile):
-                torch.cuda.nvtx.range_pop()
-
-            if (self.profile):
-                torch.cuda.nvtx.range_push("MACE::interaction: {}".format(j))
+            edge_feats = edge_spline.forward(lengths.float())
 
             node_feats, sc = interaction(
                 node_attrs=data["node_attrs"].float(),
@@ -422,46 +346,31 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 edge_index=data["edge_index"],
             )
 
-            if (self.profile):
-                torch.cuda.nvtx.range_pop()
-
-            if (self.profile):
-                torch.cuda.nvtx.range_push("MACE::product: {}".format(j))
-
             node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"].float()
                                  ).double()
 
-            if (self.profile):
-                torch.cuda.nvtx.range_pop()
-
-            if (self.profile):
-                torch.cuda.nvtx.range_push("MACE::readout: {}".format(j))
-
             if (isinstance(readout, NonLinearReadoutBlock)):
-                #print ("NonLinearReadout")
-                readout.linear_1.weight = torch.nn.Parameter(readout.linear_1.weight.double())
-                readout.linear_2.weight = torch.nn.Parameter(readout.linear_2.weight.double())
-                #print (node_feats.shape, node_feats.dtype, readout.linear_1.weight.dtype)
-                #print (node_feats.shape, node_feats.dtype, readout.linear_2.weight.dtype)
+
+                readout.linear_1.weight = torch.nn.Parameter(
+                    readout.linear_1.weight.double())
+                readout.linear_2.weight = torch.nn.Parameter(
+                    readout.linear_2.weight.double())
             else:
-                #print ("LinearReadout")
-                readout.linear.weight = torch.nn.Parameter(readout.linear.weight.double())
-                #print (node_feats.shape, node_feats.dtype, readout.linear.weight.dtype)
-                
-                #print (readout.linear.weight)
-            
+                readout.linear.weight = torch.nn.Parameter(
+                    readout.linear.weight.double())
+
             node_feats_list.append(node_feats)
             node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
-            
+
             node_es_list.append(node_energies)
-        
-        node_inter_es = torch.sum(torch.stack(node_es_list, dim=0), dim=0)  # [n_nodes, ]
+
+        node_inter_es = torch.sum(torch.stack(
+            node_es_list, dim=0), dim=0)  # [n_nodes, ]
         node_inter_es = self.scale_shift(node_inter_es)
         inter_e = scatter_sum(
             src=node_inter_es.double(), index=data["batch"], dim=-1, dim_size=num_graphs
         )  # [n_graphs,]
-        
-        
+
         # Outputs
         total_energy = e0 + inter_e
 
@@ -487,8 +396,5 @@ class OptimizedInvariantMACE(torch.nn.Module):
             "stress": stress,
             "displacement": displacement,
         }
-
-        if (self.profile):
-            torch.cuda.nvtx.range_pop()
 
         return output

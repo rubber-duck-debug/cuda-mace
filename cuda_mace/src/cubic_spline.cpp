@@ -12,10 +12,11 @@ using namespace torch::autograd;
 
 torch::Tensor CubicSplineAutograd::forward(AutogradContext *ctx,
                                            torch::Tensor r,
+                                           torch::Tensor r_knots,
                                            torch::Tensor coeffs, double r_width,
                                            double r_max) {
 
-  auto result = evaluate_spline(r, coeffs, r_width, r_max);
+  auto result = evaluate_spline(r, r_knots, coeffs, r_width, r_max);
 
   if (r.requires_grad()) {
     ctx->save_for_backward({result[1]});
@@ -34,43 +35,21 @@ variable_list CubicSplineAutograd::backward(AutogradContext *ctx,
 
   torch::Tensor undef;
 
-  return {result, undef, undef, undef};
-}
-
-CubicSpline::CubicSpline(torch::Tensor r_basis, torch::Tensor R, double r_width,
-                         double r_max) {
-
-  this->coeffs = generate_coefficients(r_basis, R, r_width);
-
-  this->r_width = r_width;
-
-  this->r_max = r_max;
+  return {result, undef, undef, undef, undef};
 }
 
 // wrapper class which we expose to the API.
-torch::Tensor CubicSpline::forward(torch::Tensor r) {
-  return CubicSplineAutograd::apply(r, this->coeffs, this->r_width,
-                                    this->r_max);
-}
-
-torch::Tensor CubicSpline::get_coefficients() { return this->coeffs; }
-
-// Method to save the state
-std::vector<torch::Tensor> CubicSpline::__getstate__() const {
-  return {this->coeffs};
-}
-
-// Method to load the state
-void CubicSpline::__setstate__(const std::vector<torch::Tensor> &state) {
-  this->coeffs = state[0];
+torch::Tensor CubicSpline::forward(torch::Tensor r, torch::Tensor r_knots,
+                                   torch::Tensor coeffs, double r_width,
+                                   double r_max) {
+  return CubicSplineAutograd::apply(r, r_knots, coeffs, r_width, r_max);
 }
 
 TORCH_LIBRARY(cubic_spline, m) {
   m.class_<CubicSpline>("CubicSpline")
-      .def(torch::init<torch::Tensor, torch::Tensor, double, double>())
+      .def(torch::init<>(), "", {})
 
       .def("forward", &CubicSpline::forward)
-      .def("get_coefficients", &CubicSpline::get_coefficients)
       .def_pickle(
           [](const c10::intrusive_ptr<CubicSpline> &self)
               -> std::vector<torch::Tensor> { return self->__getstate__(); },

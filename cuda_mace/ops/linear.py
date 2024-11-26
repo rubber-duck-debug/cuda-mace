@@ -25,10 +25,10 @@ class Linear(torch.nn.Module):
         self.out_lmax = int(irreps_out.lmax)
         self.out_dim = int(irreps_out.dim / (self.out_lmax + 1) ** 2)
 
-        self.l_start = []
-        self.l_end = []
-        self.path_weights = []
-        self.weights = []
+        l_start = []
+        l_end = []
+        path_weights = []
+        weights = []
 
         flat_weight_index = 0
 
@@ -42,19 +42,18 @@ class Linear(torch.nn.Module):
             start = ins.i_in ** 2
             end = start + (2 * ins.i_in + 1)
 
-            self.l_start.append(start)
-            self.l_end.append(end)
-            self.path_weights.append(ins.path_weight)
-            self.weights.append(w.clone().detach())
+            l_start.append(start)
+            l_end.append(end)
+            path_weights.append(ins.path_weight)
+            weights.append(w.clone().detach())
 
             flat_weight_index += path_nweight
 
-        self.l_start = torch.tensor(self.l_start).int().cuda()
-        self.l_end = torch.tensor(self.l_end).int().cuda()
-        self.weights = torch.stack(self.weights).contiguous().cuda().float()
-        self.weights_transposed = self.weights.clone(
-        ).detach().transpose(-1, -2).contiguous().cuda()
-        self.path_weights = torch.tensor(self.path_weights).float()
+        self.register_buffer("weights", torch.stack(
+            weights).contiguous().cuda().float())
+
+        self.register_buffer("weights_transposed",  self.weights.clone(
+        ).detach().transpose(-1, -2).contiguous().cuda())
 
     def forward(self, x: torch.Tensor):
         return self.cuda_obj.forward(x, self.weights, self.weights_transposed)
@@ -97,15 +96,16 @@ class ElementalLinear(torch.nn.Module):
 
             flat_weight_index += path_nweight
 
-        self.weights = torch.zeros(
+        weights = torch.zeros(
             self.num_elements, 4, w.shape[-2], w.shape[-1], dtype=torch.float32, device='cuda')
 
         for i, ins in enumerate(self.instructions):
             start_l_idx, end_l_idx, w, path_weight = ins
-            self.weights[:, i, ...] = w
+            weights[:, i, ...] = w
 
-        self.weights_transposed = self.weights.clone(
-        ).detach().transpose(-1, -2).contiguous().cuda()
+        self.register_buffer("weights", weights)
+        self.register_buffer("weights_transposed", self.weights.clone(
+        ).detach().transpose(-1, -2).contiguous().cuda())
 
     def forward(self, x, y):
         # x : [batch,  num_l, num_channels]
