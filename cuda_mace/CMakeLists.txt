@@ -5,7 +5,6 @@ set(LIB_INSTALL_DIR "lib" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX wher
 set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install DLL/binaries")
 set(INCLUDE_INSTALL_DIR "include" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install headers")
 
-#OPTION(BUILD_SHARED_LIBS "Build shared libraries instead of static ones" OFF)
 SET(CUDA_SEPARABLE_COMPILATION ON)
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
@@ -39,7 +38,6 @@ find_package(Torch 1.13 REQUIRED)
 
 #enable relocatable device code (e.g for cuda_utils.cu)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -rdc=true -lineinfo")
-#set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -gencode arch=compute_80,code=sm_80 -O3")
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/cuda/include
