@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        cibw-arch: ["x86_64"]
+        cibw-python: ['cp312-*']
         python-version: [3.11]
         pytorch-version: [2.4.0, 2.5.0]
         cuda-version: [12.1.0, 12.4.0]
@@ -22,44 +24,42 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Build custom Docker image
+    # Build the custom Manylinux Docker image
+    - name: Build Manylinux Docker Image
       run: |
-        echo "Building Docker image for CUDA version ${{ matrix.cuda-version }}"
-        cat <<EOF > Dockerfile
-        FROM nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
-
-        # Ensure apt-get uses non-interactive mode
-        ENV DEBIAN_FRONTEND=noninteractive
-
-        RUN apt-get update && apt-get install -y software-properties-common && \
-        add-apt-repository ppa:deadsnakes/ppa
+        docker build -t manylinux2014_${{ matrix.cibw-arch }} \
+          scripts/manylinux2014_${{ matrix.cibw-arch }}
     
-        # Install Python and necessary dependencies
-        RUN apt-get update && apt-get install -y \
-            python3.11 \
-            python3.11-venv \
-            python3.11-distutils \
-            build-essential \
-            cmake \
-            git \
-            curl && \
-            ln -s /usr/bin/python3.11 /usr/bin/python
-
-        # Install pip
-        RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python
-        EOF
-
-        docker build -t cuda-python:${{ matrix.cuversion }} .
+    # Set up Python environment
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    # Install cibuildwheel and other required tools
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install cibuildwheel build
 
     - name: Build wheels
-      env:
-        CIBW_MANYLINUX_X86_64_IMAGE: "cuda-python:${{ matrix.cuversion }}"
       run: |
         echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
-        cibuildwheel --platform linux
+        python -m cibuildwheel --platform linux .
         mkdir -p dist
         cp wheelhouse/*.whl dist/
-
+      env:
+        CIBW_BUILD_VERBOSITY: 3
+        CIBW_BUILD: ${{ matrix.cibw-python }}
+        CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
+        CIBW_ARCHS: ${{ matrix.cibw-arch }}
+        CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014_${{ matrix.cibw-arch }}
+        CIBW_ENVIRONMENT: >
+          CUDA_HOME=/usr/local/cuda
+          PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
+        CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
+          auditwheel repair --exclude libtorch.so --exclude libtorch_cpu.so --exclude libtorch_cuda.so --exclude libc10.so --exclude libc10_cuda.so -w {dest_dir} {wheel}
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
