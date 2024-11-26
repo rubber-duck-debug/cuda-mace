@@ -38,4 +38,4 @@ Not currently implemented
 
 # License
 
-This codebase operates under an Academic Software License. See LICENSE for further details.
+This codebase is provided under an Academic Software License. See LICENSE for further details.
