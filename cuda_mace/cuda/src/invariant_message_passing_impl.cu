@@ -232,8 +232,6 @@ forward_gpu(torch::Tensor X, torch::Tensor Y, torch::Tensor radial,
 
        ));
 
-  // cudaDeviceSynchronize();
-
   return {output, node_edge_index};
 }
 
@@ -711,8 +709,6 @@ backward_gpu(torch::Tensor X, torch::Tensor Y, torch::Tensor radial,
               gradX.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>());
         }
       }));
-
-  // cudaDeviceSynchronize();
 
   return {gradX, gradY, gradRadial};
 }

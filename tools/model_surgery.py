@@ -250,6 +250,7 @@ if __name__ == "__main__":
         accuracy(model, opt_model, args.size)
 
     if (args.benchmark):
+        print("--Benchmarking")
         benchmark(model, opt_model, args.size, args.compare)
 
     print(f"--Saving optimized model to: {args.output}")

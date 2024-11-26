@@ -236,8 +236,6 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W) {
     streams.push_back(stream);
   }
 
-  // cudaDeviceSynchronize();
-
   for (int l = 0; l < streams.size(); l++) {
     cudaStreamDestroy(streams[l]);
   }
@@ -477,8 +475,6 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W,
       }
     }
   }
-
-  // cudaDeviceSynchronize();
 
   for (int l = 0; l < streams.size(); l++) {
     cudaStreamDestroy(streams[l]);
