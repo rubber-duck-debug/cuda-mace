@@ -15,8 +15,8 @@ jobs:
         cibw-python: ['cp312-*']
         python-version: [3.11]
         pytorch-version: [2.4.0, 2.5.0]
-        cuda-version: [12.1.0, 12.4.0]
-        cuversion: [121, 124]
+        cuda-version: [12.4.0]
+        cuversion: [124]
     env:
       CIBW_SKIP: cp36-* cp37-* cp38-* cp39-* cp310-*
 
