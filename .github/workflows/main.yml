@@ -28,17 +28,25 @@ jobs:
         cat <<EOF > Dockerfile
         FROM nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
 
+        # Ensure apt-get uses non-interactive mode
+        ENV DEBIAN_FRONTEND=noninteractive
+
+        RUN apt-get update && apt-get install -y software-properties-common && \
+        add-apt-repository ppa:deadsnakes/ppa
+    
         # Install Python and necessary dependencies
         RUN apt-get update && apt-get install -y \
-            python${{ matrix.python-version }} \
-            python${{ matrix.python-version }}-venv \
-            python${{ matrix.python-version }}-distutils \
-            build-essential cmake git curl && \
-            ln -s /usr/bin/python${{ matrix.python-version }} /usr/bin/python && \
-            curl -sS https://bootstrap.pypa.io/get-pip.py | python
+            python3.11 \
+            python3.11-venv \
+            python3.11-distutils \
+            build-essential \
+            cmake \
+            git \
+            curl && \
+            ln -s /usr/bin/python3.11 /usr/bin/python
 
-        # Install cibuildwheel dependencies
-        RUN python -m pip install --upgrade pip cibuildwheel
+        # Install pip
+        RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python
         EOF
 
         docker build -t cuda-python:${{ matrix.cuversion }} .
