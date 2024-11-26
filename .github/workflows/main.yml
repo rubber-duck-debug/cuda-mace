@@ -17,27 +17,37 @@ jobs:
         cuversion: [121, 124]
     env:
       CIBW_SKIP: cp36-* cp37-* cp38-* cp39-* cp310-*
-      #nvidia/cuda:12.1.0-devel-ubuntu20.04
-      CIBW_MANYLINUX_X86_64_IMAGE: "nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04"
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
+    - name: Build custom Docker image
       run: |
-        python -m pip install --upgrade pip
-        pip install torch==${{ matrix.pytorch-version }}+cu${{ matrix.cuversion }} --extra-index-url https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
-        pip install cmake
-        pip install cibuildwheel
+        echo "Building Docker image for CUDA version ${{ matrix.cuda-version }}"
+        cat <<EOF > Dockerfile
+        FROM nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
+
+        # Install Python and necessary dependencies
+        RUN apt-get update && apt-get install -y \
+            python${{ matrix.python-version }} \
+            python${{ matrix.python-version }}-venv \
+            python${{ matrix.python-version }}-distutils \
+            build-essential cmake git curl && \
+            ln -s /usr/bin/python${{ matrix.python-version }} /usr/bin/python && \
+            curl -sS https://bootstrap.pypa.io/get-pip.py | python
+
+        # Install cibuildwheel dependencies
+        RUN python -m pip install --upgrade pip cibuildwheel
+        EOF
+
+        docker build -t cuda-python:${{ matrix.cuversion }} .
 
     - name: Build wheels
+      env:
+        CIBW_MANYLINUX_X86_64_IMAGE: "cuda-python:${{ matrix.cuversion }}"
       run: |
+        echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
         cibuildwheel --platform linux
         mkdir -p dist
         cp wheelhouse/*.whl dist/
