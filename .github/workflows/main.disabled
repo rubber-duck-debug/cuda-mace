@@ -27,7 +27,7 @@ jobs:
     # Build the custom Manylinux Docker image
     - name: Build Manylinux Docker Image
       run: |
-        docker build -t manylinux2014_${{ matrix.cibw-arch }} \
+        docker build --no-cache -t manylinux2014_${{ matrix.cibw-arch }} \
           scripts/manylinux2014_${{ matrix.cibw-arch }}
     
     # Set up Python environment

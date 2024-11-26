@@ -13,7 +13,7 @@ version= "0.1"
 requires = [
     "setuptools >=44",
     "wheel >=0.36",
-    "cmake",
+    "cmake >=3.30",
     "torch >= 2.0",
 ]
 

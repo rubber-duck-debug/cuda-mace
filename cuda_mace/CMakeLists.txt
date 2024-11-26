@@ -81,7 +81,7 @@ target_compile_features(cuda_mace PRIVATE cxx_std_17)
 
 set_target_properties(cuda_mace PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 set_target_properties(cuda_mace PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-set_target_properties(cuda_mace PROPERTIES CUDA_ARCHITECTURES native)
+set_target_properties(cuda_mace PROPERTIES CUDA_ARCHITECTURES all)
 
 set(CMAKE_CUDA_STANDARD 17)
 

@@ -28,6 +28,7 @@ ENV CUDA_ROOT=/usr/local/cuda
 ENV CUDA_PATH=/usr/local/cuda
 ENV CUDADIR=/usr/local/cuda
 
+RUN echo "CUDA_HOME: ${CUDA_HOME}"
 # --------
 # Commands
 # --------
