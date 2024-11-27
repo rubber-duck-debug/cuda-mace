@@ -8,9 +8,7 @@ ARG CUDA_VER="12-4"
 RUN yum install -y yum-utils gcc gcc-c++ make zlib-devel bzip2-devel libffi-devel \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
     && yum install -y \
-    cuda-compiler-${CUDA_VER} \
-    cuda-libraries-${CUDA_VER} \
-    cuda-libraries-devel-${CUDA_VER} \
+    cuda-toolkit-${CUDA_VER} \
     && yum clean all \
     && rm -rf /var/cache/yum/* \
     && echo "/usr/local/cuda/lib64" >> /etc/ld.so.conf.d/999_nvidia_cuda.conf
