@@ -66,7 +66,7 @@ class cmake_ext(build_ext):
 
         os.makedirs(build_dir, exist_ok=True)
 
-        print(sys.executable)
+        print("sys executeable: ", sys.executable)
 
         cmake_options = [
             f"-DCMAKE_INSTALL_PREFIX={install_dir}"
