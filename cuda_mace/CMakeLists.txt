@@ -44,14 +44,33 @@ set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 message (STATUS "TORCH_CMAKE_PATH_OUTPUT: ${TORCH_CMAKE_PATH_OUTPUT}")
 
 # set(CUDA_ALL_GPU_ARCHITECTURES "3.5" "5.0")
-
+#TORCH_CMAKE_PATH_OUTPUT: /opt/python/cp311-cp311/lib/python3.11/site-packages/torch/share/cmake
 execute_process(
-    COMMAND "sed -i -E 's/set\(CUDA_ALL_GPU_ARCHITECTURES "3\.5" "5\.0"\)/set(CUDA_ALL_GPU_ARCHITECTURES "")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
+    COMMAND sed -i -E s/set\\\(CUDA_COMMON_GPU_ARCHITECTURES\ \"3\\.5\"\ \"5\\.0\"\\\)/set\\\(CUDA_COMMON_GPU_ARCHITECTURES\ \"\"\\\)/ ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE error
 )
 
+if (NOT ${result} EQUAL 0)
+    message(FATAL_ERROR "Error running sed: ${error}")
+else()
+    message(STATUS "sed command ran successfully.")
+endif()
+
+
 execute_process(
-    COMMAND "sed -i -E 's/set\(CUDA_COMMON_GPU_ARCHITECTURES "3\.5" "5\.0"\)/set(CUDA_COMMON_GPU_ARCHITECTURES "")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
+    COMMAND sed -i -E s/set\\\(CUDA_ALL_GPU_ARCHITECTURES\ \"3\\.5\"\ \"5\\.0\"\\\)/set\\\(CUDA_ALL_GPU_ARCHITECTURES\ \"\"\\\)/ ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake
+    RESULT_VARIABLE result
+    OUTPUT_VARIABLE output
+    ERROR_VARIABLE error
 )
+
+if (NOT ${result} EQUAL 0)
+    message(FATAL_ERROR "Error running sed: ${error}")
+else()
+    message(STATUS "sed command ran successfully.")
+endif()
 
 
 find_package(Torch 1.13 REQUIRED)
