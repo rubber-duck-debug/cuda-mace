@@ -90,6 +90,7 @@ class cmake_ext(build_ext):
             check=True,
         )
 
+        print (["cmake", source_dir, *cmake_options])
         subprocess.run(
             ["cmake", source_dir, *cmake_options],
             cwd=build_dir,
