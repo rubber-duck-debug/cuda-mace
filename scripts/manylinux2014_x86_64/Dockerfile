@@ -36,7 +36,7 @@ RUN yum install -y git-all
 RUN echo "CUDA_HOME: ${CUDA_HOME}" && \
     nvcc --version
 
-RUN pip install torch==2.4.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+RUN pip install torch==2.4.1+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
 RUN pip install numpy cmake
 
 RUN mkdir /workspace
