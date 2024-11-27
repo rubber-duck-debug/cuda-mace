@@ -15,7 +15,12 @@ RUN yum install -y yum-utils gcc gcc-c++ make zlib-devel bzip2-devel libffi-deve
     && rm -rf /var/cache/yum/* \
     && echo "/usr/local/cuda/lib64" >> /etc/ld.so.conf.d/999_nvidia_cuda.conf
 
-RUN /opt/python/cp311-cp311/bin/python3.11 -m ensurepip --upgrade
+ENV PATH="/opt/python/cp311-cp311/bin:${PATH}"
+
+RUN rm -f /opt/python/cp311-cp311/bin/python
+RUN ln -s /opt/python/cp311-cp311/bin/python3.11 /opt/python/cp311-cp311/bin/python
+
+RUN python -m ensurepip --upgrade
 
 # Set environment variables for CUDA
 ENV PATH="/usr/local/cuda/bin:${PATH}"
@@ -25,21 +30,19 @@ ENV CUDA_ROOT=/usr/local/cuda
 ENV CUDA_PATH=/usr/local/cuda
 ENV CUDADIR=/usr/local/cuda
 
-RUN dnf install git-all
+RUN yum install -y git-all
 
 # Verify the CUDA installation
 RUN echo "CUDA_HOME: ${CUDA_HOME}" && \
     nvcc --version
 
-RUN mkdir envs
+RUN pip install torch==2.4.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+RUN pip install numpy cmake
 
-RUN /opt/python/cp311-cp311/bin/pip install torch==2.4.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
-RUN /opt/python/cp311-cp311/bin/pip install cmake
+RUN mkdir /workspace
 
 # Clean up to reduce image size
 RUN yum clean all && rm -rf /var/cache/yum/*
-
-RUN mkdir /workspace
 
 # Default command (bash)
 CMD ["/bin/bash"]
