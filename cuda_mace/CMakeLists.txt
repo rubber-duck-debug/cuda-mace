@@ -18,6 +18,9 @@ else()
     message(FATAL_ERROR "Could not find CUDA Compiler. Make sure $CUDA_HOME is set.")
 endif()
 
+execute_process(
+    COMMAND ${Python_EXECUTABLE} --version
+)
 
 execute_process(
     COMMAND ${Python_EXECUTABLE} -c "import torch.utils; print(torch.utils.cmake_prefix_path)"
