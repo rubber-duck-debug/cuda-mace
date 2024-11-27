@@ -69,7 +69,7 @@ class cmake_ext(build_ext):
         print("sys executeable: ", sys.executable)
 
         cmake_options = [
-            f"-DCMAKE_INSTALL_PREFIX={install_dir}"
+            f"-DCMAKE_INSTALL_PREFIX={install_dir}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
         ]
 
@@ -90,7 +90,7 @@ class cmake_ext(build_ext):
             check=True,
         )
 
-        print (["cmake", source_dir, *cmake_options])
+        print(["cmake", source_dir, *cmake_options])
         subprocess.run(
             ["cmake", source_dir, *cmake_options],
             cwd=build_dir,
