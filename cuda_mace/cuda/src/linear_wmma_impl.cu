@@ -32,7 +32,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
     linear_wmma_kernel(const float *__restrict__ X, const float *__restrict__ W,
                        float *__restrict__ OUT, const int NNODES, const uint M,
                        const uint N, const uint K, const uint L) {
-
+#if __CUDA_ARCH__ >= 800
   const uint cCol = blockIdx.y;
 
   extern __shared__ char buffer[];
@@ -171,6 +171,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
       }
     }
   }
+#endif
 }
 
 torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W) {
@@ -184,8 +185,6 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W) {
       torch::zeros({NNODES, M, N},
                    torch::TensorOptions().dtype(X.dtype()).device(X.device()));
 
-#ifdef __CUDA_ARCH__
-#if __CUDA_ARCH__ >= 800
   dim3 blockDim;
 
   blockDim.x = WARP_SIZE;
@@ -241,18 +240,7 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W) {
   for (int l = 0; l < streams.size(); l++) {
     cudaStreamDestroy(streams[l]);
   }
-#else
-  TORCH_CHECK(
-      false,
-      "This kernel requires a CUDA architecture with compute capability 8.0 or "
-      "higher. Please ensure you're targeting a compatible architecture.");
-#endif
-#else
-  // Runtime error when not compiling for CUDA (i.e., on CPU)
-  TORCH_CHECK(false,
-              "This kernel requires a CUDA device with compute capability 8.0 "
-              "or higher. CPU compilation is not supported.");
-#endif
+
   return output;
 }
 
@@ -264,7 +252,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
         const int64_t element_id, const int64_t nelements,
         float *__restrict__ OUT, const int NNODES, const uint M, const uint N,
         const uint K, const uint L) {
-
+#if __CUDA_ARCH__ >= 800
   const uint cCol = blockIdx.y;
 
   extern __shared__ char buffer[];
@@ -398,6 +386,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
       }
     }
   }
+#endif
 }
 
 torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W,
