@@ -68,7 +68,7 @@ class cmake_ext(build_ext):
 
         cmake_options = [
             f"-DCMAKE_INSTALL_PREFIX={install_dir}"
-            #f"-DPYTHON_EXECUTABLE={sys.executable}",
+            f"-DPYTHON_EXECUTABLE={sys.executable}",
         ]
 
         CUDA_HOME = os.environ.get("CUDA_HOME")
