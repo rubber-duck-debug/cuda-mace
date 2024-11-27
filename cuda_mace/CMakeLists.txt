@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(cuda_mace LANGUAGES CXX CUDA Python)
+project(cuda_mace LANGUAGES CXX CUDA)
 
 set(LIB_INSTALL_DIR "lib" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install libraries")
 set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install DLL/binaries")
