@@ -19,6 +19,10 @@ else()
 endif()
 
 execute_process(
+    COMMAND which ${Python_EXECUTABLE}
+)
+
+execute_process(
     COMMAND ${Python_EXECUTABLE} --version
 )
 
