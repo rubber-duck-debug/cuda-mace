@@ -41,8 +41,6 @@ string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
 
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 
-message (STATUS "TORCH_CMAKE_PATH_OUTPUT: ${TORCH_CMAKE_PATH_OUTPUT}")
-
 execute_process(
     COMMAND sh -c "grep -q 'set(CUDA_ALL_GPU_ARCHITECTURES \"3.5\" \"5.0\")' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
     RESULT_VARIABLE grep_result
@@ -79,8 +77,6 @@ if (grep_result EQUAL 0)
     endif()
 
 endif()
-
-
 
 find_package(Torch 1.13 REQUIRED)
 

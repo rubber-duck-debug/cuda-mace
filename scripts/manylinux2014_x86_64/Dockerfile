@@ -1,5 +1,4 @@
-# Use the official manylinux_2_28_x86_64 base image
-FROM quay.io/pypa/manylinux_2_28_x86_64
+FROM quay.io/pypa/manylinux2014_x86_64
 
 # Set environment variable for CUDA version
 ARG CUDA_VER="12-4"
@@ -40,11 +39,11 @@ RUN pip install numpy cmake
 RUN mkdir /workspace
 
 # Add the remove_python.sh script to the container
-COPY remove_python.sh /scripts/remove_python.sh
+COPY remove_unused_python.sh /scripts/remove_unused_python.sh
 # Make the script executable
-RUN chmod +x /scripts/remove_python.sh
+RUN chmod +x /scripts/remove_unused_python.sh
 # Run the script to remove all Python versions except Python 3.11
-RUN /scripts/remove_python.sh python3.11
+RUN /scripts/remove_unused_python.sh python3.11
 
 # Clean up to reduce image size
 #RUN yum clean all && rm -rf /var/cache/yum/*
