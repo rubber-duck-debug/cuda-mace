@@ -43,8 +43,10 @@ set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 
 message (STATUS "TORCH_CMAKE_PATH_OUTPUT: ${TORCH_CMAKE_PATH_OUTPUT}")
 
+# set(CUDA_ALL_GPU_ARCHITECTURES "3.5" "5.0")
+
 execute_process(
-    COMMAND "sed -i -E '/^set\(CUDA_(KNOWN|COMMON|ALL)_GPU_ARCHITECTURES/s/\(.*\)/\(\)/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
+    COMMAND "sed -i -E 's/set\(CUDA_ALL_GPU_ARCHITECTURES "3\.5" "5\.0"\)/set(CUDA_ALL_GPU_ARCHITECTURES "")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
 )
 
 find_package(Torch 1.13 REQUIRED)
