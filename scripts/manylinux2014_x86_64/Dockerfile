@@ -15,17 +15,7 @@ RUN yum install -y yum-utils gcc gcc-c++ make zlib-devel bzip2-devel libffi-deve
     && rm -rf /var/cache/yum/* \
     && echo "/usr/local/cuda/lib64" >> /etc/ld.so.conf.d/999_nvidia_cuda.conf
 
-# Install Python 3.11 (if available from the repository)
-RUN yum install -y python3.11 python3.11-devel
-
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# Install pip for Python 3.11
-RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py \
-    && python get-pip.py \
-    && rm get-pip.py
-
-RUN pip install virtualenv
+RUN /opt/python/cp311-cp311/bin/python3.11 -m ensurepip --upgrade
 
 # Set environment variables for CUDA
 ENV PATH="/usr/local/cuda/bin:${PATH}"
@@ -39,8 +29,15 @@ ENV CUDADIR=/usr/local/cuda
 RUN echo "CUDA_HOME: ${CUDA_HOME}" && \
     nvcc --version
 
+RUN mkdir envs
+
+RUN /opt/python/cp311-cp311/bin/pip install torch==2.4.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
+RUN /opt/python/cp311-cp311/bin/pip install cmake
+
 # Clean up to reduce image size
 RUN yum clean all && rm -rf /var/cache/yum/*
+
+RUN mkdir /workspace
 
 # Default command (bash)
 CMD ["/bin/bash"]

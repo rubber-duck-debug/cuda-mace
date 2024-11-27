@@ -83,6 +83,12 @@ class cmake_ext(build_ext):
             cmake_options.append(f"-DCMAKE_CXX_FLAGS={ARCHFLAGS}")
 
         subprocess.run(
+            ["cmake --version"],
+            cwd=build_dir,
+            check=True,
+        )
+        
+        subprocess.run(
             ["cmake", source_dir, *cmake_options],
             cwd=build_dir,
             check=True,
