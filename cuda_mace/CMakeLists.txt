@@ -40,6 +40,7 @@ endif()
 string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 
+message (STATUS "TORCH_CMAKE_PATH_OUTPUT: ${TORCH_CMAKE_PATH_OUTPUT}")
 execute_process(
     COMMAND "sed -i -E '/^set\(CUDA_(KNOWN|COMMON|ALL)_GPU_ARCHITECTURES/s/\(.*\)/\(\)/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
 )
