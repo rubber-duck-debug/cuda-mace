@@ -46,7 +46,11 @@ message (STATUS "TORCH_CMAKE_PATH_OUTPUT: ${TORCH_CMAKE_PATH_OUTPUT}")
 # set(CUDA_ALL_GPU_ARCHITECTURES "3.5" "5.0")
 
 execute_process(
-    COMMAND "sed -i -E 's/set\(CUDA_(ALL|COMMON)_GPU_ARCHITECTURES "3\.5" "5\.0"\)/set(CUDA_ALL_GPU_ARCHITECTURES "")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
+    COMMAND "sed -i -E 's/set\(CUDA_ALL_GPU_ARCHITECTURES "3\.5" "5\.0"\)/set(CUDA_ALL_GPU_ARCHITECTURES "")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
+)
+
+execute_process(
+    COMMAND "sed -i -E 's/set\(CUDA_COMMON_GPU_ARCHITECTURES "3\.5" "5\.0"\)/set(CUDA_COMMON_GPU_ARCHITECTURES "")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
 )
 
 
