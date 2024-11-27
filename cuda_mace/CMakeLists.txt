@@ -40,8 +40,11 @@ endif()
 string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 
-find_package(Torch 1.13 REQUIRED)
+execute_process(
+    COMMAND "sed -i -E '/^set\(CUDA_(KNOWN|COMMON|ALL)_GPU_ARCHITECTURES/s/\(.*\)/\(\)/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
+)
 
+find_package(Torch 1.13 REQUIRED)
 
 #enable relocatable device code (e.g for cuda_utils.cu)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -rdc=true -lineinfo")
