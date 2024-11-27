@@ -17,7 +17,7 @@ import subprocess
 
 __author__ = "Nicholas J. Browning"
 __credits__ = "Nicholas J. Browning (2023), https://github.com/nickjbrowning"
-__license__ = "MIT"
+__license__ = "Academic Software License"
 __version__ = "0.1"
 __maintainer__ = "Nicholas J. Browning"
 __email__ = "nickjbrowning@gmail.com"
@@ -66,8 +66,6 @@ class cmake_ext(build_ext):
 
         os.makedirs(build_dir, exist_ok=True)
 
-        print("sys executeable: ", sys.executable)
-
         cmake_options = [
             f"-DCMAKE_INSTALL_PREFIX={install_dir}",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
@@ -90,7 +88,7 @@ class cmake_ext(build_ext):
             check=True,
         )
 
-        print(["cmake", source_dir, *cmake_options])
+        print (["cmake", source_dir, *cmake_options])
         subprocess.run(
             ["cmake", source_dir, *cmake_options],
             cwd=build_dir,

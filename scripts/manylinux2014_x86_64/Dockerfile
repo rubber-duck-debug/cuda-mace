@@ -38,7 +38,6 @@ RUN pip install torch==2.4.1+cu124 --extra-index-url https://download.pytorch.or
 RUN pip install numpy cmake
 
 RUN mkdir /workspace
-RUN mkdir /scripts
 
 # Add the remove_python.sh script to the container
 COPY remove_python.sh /scripts/remove_python.sh
