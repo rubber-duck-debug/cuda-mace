@@ -252,6 +252,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
         const int64_t element_id, const int64_t nelements,
         float *__restrict__ OUT, const int NNODES, const uint M, const uint N,
         const uint K, const uint L) {
+
 #if __CUDA_ARCH__ >= 800
   const uint cCol = blockIdx.y;
 
@@ -401,9 +402,6 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W,
       torch::zeros({NNODES, M, N},
                    torch::TensorOptions().dtype(X.dtype()).device(X.device()));
 
-#ifdef __CUDA_ARCH__
-#if __CUDA_ARCH__ >= 800
-
   dim3 blockDim;
 
   // blockDim.y = min(8, find_integer_divisor(N, WMMA_N));
@@ -484,19 +482,6 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W,
   for (int l = 0; l < streams.size(); l++) {
     cudaStreamDestroy(streams[l]);
   }
-
-#else
-  TORCH_CHECK(
-      false,
-      "This kernel requires a CUDA architecture with compute capability 8.0 or "
-      "higher. Please ensure you're targeting a compatible architecture.");
-#endif
-#else
-  // Runtime error when not compiling for CUDA (i.e., on CPU)
-  TORCH_CHECK(false,
-              "This kernel requires a CUDA device with compute capability 8.0 "
-              "or higher. CPU compilation is not supported.");
-#endif
 
   return output;
 }
