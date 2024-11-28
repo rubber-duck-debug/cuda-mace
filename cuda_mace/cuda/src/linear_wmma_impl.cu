@@ -38,7 +38,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
   extern __shared__ char buffer[];
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   float *Xs = shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &space);
   float *buffer_out =
@@ -198,7 +198,7 @@ torch::Tensor linear_wmma(torch::Tensor X, torch::Tensor W) {
     blockDim.y = 2;
   }
 
-  size_t shared_size = 0;
+  unsigned int shared_size = 0;
   void *sptr = nullptr;
 
   shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);
@@ -257,7 +257,7 @@ __global__ void __launch_bounds__(NWARPS *WARP_SIZE)
   extern __shared__ char buffer[];
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   float *Xs = shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &space);
   float *buffer_out =
@@ -414,7 +414,7 @@ torch::Tensor elemental_linear_wmma(torch::Tensor X, torch::Tensor W,
     blockDim.y = 2;
   }
 
-  size_t shared_size = 0;
+  unsigned int shared_size = 0;
   void *sptr = nullptr;
 
   shared_array<float>(K_BATCH * (K_BATCH + 1), sptr, &shared_size);

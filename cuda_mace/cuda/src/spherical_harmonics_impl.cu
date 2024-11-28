@@ -45,7 +45,7 @@ __global__ void spherical_harmonics_kernel(
   int32_t warpID = threadIdx.x / WARP_SIZE;
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   const scalar_t sqrt_4pi = 3.5449077018110318;
 
@@ -307,7 +307,7 @@ std::vector<torch::Tensor> spherical_harmonics(torch::Tensor xyz) {
 
   AT_DISPATCH_FLOATING_TYPES(
       xyz.scalar_type(), "spherical_harmonics", ([&] {
-        size_t space = 0;
+        unsigned int space = 0;
         void *sptr;
 
         shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 3, sptr, &space);
@@ -360,7 +360,7 @@ __global__ void spherical_harmonics_backward_kernel(
   int32_t warpID = threadIdx.x / 16;
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   scalar_t *buffer_sum = shared_array<scalar_t>(blockDim.x * 3, sptr, &space);
 
@@ -415,7 +415,7 @@ torch::Tensor spherical_harmonics_backward(torch::Tensor sph_deriv,
 
   AT_DISPATCH_FLOATING_TYPES(
       sph_deriv.scalar_type(), "spherical_harmonics_backward", ([&] {
-        size_t space = 0;
+        unsigned int space = 0;
         void *sptr;
 
         shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 3, sptr, &space);

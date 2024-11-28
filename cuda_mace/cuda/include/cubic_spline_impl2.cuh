@@ -1,0 +1,5 @@
+#ifndef CUBIC_SPLINE_IMPL_CUH
+#define CUBIC_SPLINE_IMPL_CUH
+
+
+#endif

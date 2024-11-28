@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.10)
 project(cuda_mace LANGUAGES CXX CUDA)
 
+include(${CMAKE_SOURCE_DIR}/cmake/MakeIncludeable.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/PrependHeadersToSource.cmake)
+
 set(LIB_INSTALL_DIR "lib" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install libraries")
 set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install DLL/binaries")
 set(INCLUDE_INSTALL_DIR "include" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install headers")
@@ -13,6 +16,7 @@ include(CheckLanguage)
 check_language(CUDA)
 if(CMAKE_CUDA_COMPILER)
     enable_language(CUDA)
+    find_package(CUDAToolkit REQUIRED)
     set(CUDA_USE_STATIC_CUDA_RUNTIME OFF CACHE BOOL "" FORCE)
 else()
     message(FATAL_ERROR "Could not find CUDA Compiler. Make sure $CUDA_HOME is set.")
@@ -39,14 +43,11 @@ find_package(Torch 1.13 REQUIRED)
 #enable relocatable device code (e.g for cuda_utils.cu)
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -rdc=true -lineinfo")
 
-include_directories(
-    ${CMAKE_SOURCE_DIR}/cuda/include
-    ${CMAKE_SOURCE_DIR}/include
-)
+
 
 add_library(cuda_mace SHARED
     "cuda/include/cuda_utils.cuh"
-    "cuda/src/cuda_utils.cu"
+    #"cuda/src/cuda_utils.cu"
 
     "cuda/include/torch_utils.cuh"
     "cuda/src/torch_utils.cu"
@@ -66,6 +67,11 @@ add_library(cuda_mace SHARED
     "cuda/include/spherical_harmonics_impl.cuh"
     "cuda/src/spherical_harmonics_impl.cu"
 
+    "jit_wrappers/include/cuda_cache.hpp"
+    "jit_wrappers/include/dynamic_cuda.hpp"
+    "jit_wrappers/include/cubic_spline_wrapper.hpp"
+    "jit_wrappers/src/cubic_spline_wrapper.cpp"
+
     "src/linear_wmma.cpp"
     "src/invariant_message_passing.cpp"
     "src/symmetric_contraction.cpp"
@@ -73,7 +79,48 @@ add_library(cuda_mace SHARED
     "src/spherical_harmonics.cpp"
 )
 
-target_link_libraries(cuda_mace "${TORCH_LIBRARIES}")
+set(CUDA_MACE_SHARED_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/cuda/include/cuda_utils.cuh")
+
+set(cuda_sources cubic_spline_impl2.cu)
+set(cuda_headers cubic_spline_impl2.cuh)
+
+list(LENGTH cuda_sources len_list)
+math(EXPR len "${len_list} -1")
+
+# Enumerate through both lists
+foreach(i RANGE 0 ${len})
+    list(GET cuda_sources ${i} file)
+    list(GET cuda_headers ${i} header)
+
+    set (tmp_src file)
+    set(tmp_header "${CMAKE_CURRENT_SOURCE_DIR}/cuda/include/${header}")
+
+    list (APPEND tmp_header ${CUDA_MACE_SHARED_HEADERS})
+
+    prepend_headers_to_source(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cuda/src/${file}"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/tmp.cu" 
+        "${tmp_header}"
+        )
+
+    make_includeable(
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/tmp.cu"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/wrapped_${file}"
+        )
+    
+    message(STATUS "Processing file: ${CMAKE_CURRENT_SOURCE_DIR}/cuda/src/${file} with headers: ${tmp_header}")
+    # Add your logic here
+endforeach()
+
+target_include_directories(cuda_mace PRIVATE
+    ${CMAKE_SOURCE_DIR}/cuda/include
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/jit_wrappers/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
+
+target_link_libraries(cuda_mace PRIVATE "${TORCH_LIBRARIES}" ${CMAKE_DL_LIBS})
 
 target_compile_features(cuda_mace PRIVATE cxx_std_17)
 

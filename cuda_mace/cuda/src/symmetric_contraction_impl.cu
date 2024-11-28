@@ -54,7 +54,7 @@ symmetric_contraction_L0_forwards_kernel(
 
   extern __shared__ char buffer[];
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   const int natoms = X.size(0);
   const int nl = 16;
@@ -275,7 +275,7 @@ std::vector<torch::Tensor> symmetric_contraction_L0_forwards_gpu(
   AT_DISPATCH_FLOATING_TYPES(
       X.type(), "symmetric_contraction_L0_forwards_gpu", ([&]
                                                           {
-        size_t shared_size = 0;
+        unsigned int shared_size = 0;
 
         void *sptr = nullptr;
 
@@ -401,7 +401,7 @@ __global__ void symmetric_contraction_LGT0_forwards_kernel(
   const int u3_maxn_nonsparse = U3_values_1.size(1);
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   volatile scalar_t *buffer_X =
       shared_array<scalar_t>(blockDim.z * blockDim.x * nl, sptr, &space);
@@ -783,7 +783,7 @@ std::vector<torch::Tensor> symmetric_contraction_LGT0_forwards_gpu(
   AT_DISPATCH_FLOATING_TYPES(
       X.type(), "symmetric_contraction_LGT0_forwards_gpu", ([&]
                                                             {
-        size_t shared_size = 0;
+        unsigned int shared_size = 0;
         void *sptr = nullptr;
 
         shared_array<scalar_t>(nthreadX * nl, sptr, &shared_size);
@@ -939,7 +939,7 @@ __global__ void symm_contraction_backward_kernel(
   const int nl = grad_X.size(2);
   const int nchannels = grad_X.size(3);
 
-  size_t offset = 0;
+  unsigned int offset = 0;
 
   scalar_t *buffer_grad = reinterpret_cast<scalar_t *>(buffer + offset);
   offset += blockDim.x * nl * sizeof(scalar_t);
@@ -996,7 +996,7 @@ torch::Tensor symm_contraction_backward(torch::Tensor gradX,
   AT_DISPATCH_FLOATING_TYPES(
       gradX.type(), "symm_contraction_backward", ([&]
                                                   {
-        size_t shared_mem_amount =
+        unsigned int shared_mem_amount =
             nthreadX * nl * sizeof(scalar_t); // buffer_grad storage
 
         symm_contraction_backward_kernel<<<block_dim, grid,
@@ -1030,7 +1030,7 @@ int64_t LGT0_shared_memory_required(int64_t nthreadsX, int64_t nthreadsY,
                                     int64_t W1_size,
                                     torch::ScalarType scalar_type)
 {
-  size_t shared_size = 0;
+  unsigned int shared_size = 0;
   void *sptr = nullptr;
 
   switch (scalar_type)
@@ -1088,7 +1088,7 @@ bool set_shared_mem_size(int64_t amount, torch::ScalarType scalar_type)
   cudaDeviceProp deviceProp;
   cudaGetDeviceProperties(&deviceProp, currentDevice);
 
-  size_t dtype = torch::elementSize(scalar_type);
+  unsigned int dtype = torch::elementSize(scalar_type);
 
   bool accepted = amount <= deviceProp.sharedMemPerBlockOptin;
 

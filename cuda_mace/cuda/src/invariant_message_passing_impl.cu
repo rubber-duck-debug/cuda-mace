@@ -47,7 +47,7 @@ __global__ void inv_tp_kernel(
   extern __shared__ char buffer[];
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   int32_t *buffer_sender = shared_array<int32_t>(512, sptr, &space);
 
@@ -161,7 +161,7 @@ forward_gpu(torch::Tensor X, torch::Tensor Y, torch::Tensor radial,
   AT_DISPATCH_FLOATING_TYPES(
       X.type(), "forward_gpu",
       ([&] {
-        size_t space = 0;
+        unsigned int space = 0;
         void *sptr;
         shared_array<int32_t>(512, sptr, &space);
         // shared_array<int32_t>(512, sptr, &space);
@@ -257,7 +257,7 @@ __global__ void backward_edge_inv_tp_kernel(
   extern __shared__ char buffer[];
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   scalar_t *buffer_grad_in =
       shared_array<scalar_t>(16 * X.size(1), sptr, &space);
@@ -398,7 +398,7 @@ __global__ void backward_node_inv_tp_kernel(
   extern __shared__ char buffer[];
 
   void *sptr = buffer;
-  size_t space = 0;
+  unsigned int space = 0;
 
   scalar_t regY[TM] = {0.0};
   scalar_t regRadial[TM * TN] = {0.0};
@@ -559,14 +559,14 @@ backward_gpu(torch::Tensor X, torch::Tensor Y, torch::Tensor radial,
         dim3 gridDim(nnodes, 1);
 
         void *sptr = nullptr;
-        size_t space = 0;
+        unsigned int space = 0;
 
         shared_array<scalar_t>(16 * X.size(1), sptr, &space);
         shared_array<scalar_t>(2 * NWARPS_PER_BLOCK * 16, sptr,
                                &space); // buffer_Y, buffer_dY
 
         void *sptr_node = nullptr;
-        size_t space_node = 0;
+        unsigned int space_node = 0;
 
         shared_array<scalar_t>(NWARPS_PER_BLOCK * WARP_SIZE, sptr_node,
                                &space_node);
