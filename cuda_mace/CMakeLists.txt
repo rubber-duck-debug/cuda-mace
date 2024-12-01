@@ -9,6 +9,8 @@ set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX wher
 set(INCLUDE_INSTALL_DIR "include" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install headers")
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
+message(STATUS "Python Version: ${Python_VERSION}")
+message (STATUS "Python Path: ${Python_EXECUTABLE}")
 
 include(CheckLanguage)
 check_language(CUDA)
