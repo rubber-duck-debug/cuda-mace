@@ -26,8 +26,8 @@ jobs:
     
     - name: Github Actions Envs Setup
       run: |
-        CUVERSION=${{ matrix.cuda-version }}
-        PYTHONVERSION=${{ matrix.python-version }}
+        CUVERSION="${{ matrix.cuda-version }}"
+        PYTHONVERSION="${{ matrix.python-version }}"
 
         CU_VERSION_NO_DOT=${CUVERSION//./}
         echo CU_VERSION_NO_DOT=${CU_VERSION_NO_DOT} >> $GITHUB_ENV
@@ -42,20 +42,20 @@ jobs:
     - name: Build Manylinux Docker Image
       run: |
         docker build --no-cache \
-        -t manylinux2014_${{ matrix.cibw-arch }} \
-        --build-arg PYTHON_VER=${{ matrix.python-version }} \
-        --build-arg PYTHON_VER_NO_DOT=${{ env.PYTHON_VER_NO_DOT }} \
-        --build-arg CUDA_VER=${{ matrix.cuda-version }} \
-        --build-arg CUDA_VER_NO_DOT=${{ env.CU_VERSION_NO_DOT }} \
-        --build-arg CUDA_VER_DASH=${{ env.CU_VERSION_DASH }} \
-        --build-arg PYTORCH_VERSION=${{ matrix.pytorch-version }} \
-        scripts/manylinux2014_${{ matrix.cibw-arch }}
+        -t manylinux2014_"${{ matrix.cibw-arch }}" \
+        --build-arg PYTHON_VER="${{ matrix.python-version }}" \
+        --build-arg PYTHON_VER_NO_DOT="${{ env.PYTHON_VER_NO_DOT }}" \
+        --build-arg CUDA_VER="${{ matrix.cuda-version }}" \
+        --build-arg CUDA_VER_NO_DOT="${{ env.CU_VERSION_NO_DOT }}" \
+        --build-arg CUDA_VER_DASH="${{ env.CU_VERSION_DASH }}" \
+        --build-arg PYTORCH_VERSION="${{ matrix.pytorch-version }}" \
+        scripts/manylinux2014_"${{ matrix.cibw-arch }}"
     
     # Set up Python environment
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: "${{ matrix.python-version }}"
 
     # Install cibuildwheel and other required tools
     - name: Install Dependencies
@@ -67,13 +67,12 @@ jobs:
       uses: pypa/cibuildwheel@v2.22.0
       env:
         CUDA_HOME: /usr/local/cuda
-        PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu${{  env.CUVERSION }}
+        PIP_EXTRA_INDEX_URL: "https://download.pytorch.org/whl/cu${{  env.CUVERSION }}"
         CIBW_BUILD_VERBOSITY: 3
-        CIBW_BUILD: ${{ matrix.cibw-python }}
         CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
         CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
-        CIBW_ARCHS: ${{ matrix.cibw-arch }}
-        CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014_${{ matrix.cibw-arch }}
+        CIBW_ARCHS: "${{ matrix.cibw-arch }}"
+        CIBW_MANYLINUX_X86_64_IMAGE: "manylinux2014_${{ matrix.cibw-arch }}"
         #CIBW_ENVIRONMENT: >
         #  CUDA_HOME=/usr/local/cuda
         #  PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${{ matrix.cuda-version.replace('.', '') }}
