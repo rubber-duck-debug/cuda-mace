@@ -1,6 +1,5 @@
 #include "cubic_spline.h"
-#include "cubic_spline_impl.cuh"
-#include "torch_utils.cuh"
+#include "cubic_spline_wrapper.hpp"
 
 #include <iostream>
 #include <torch/script.h>
@@ -16,7 +15,7 @@ torch::Tensor CubicSplineAutograd::forward(AutogradContext *ctx,
                                            torch::Tensor coeffs, double r_width,
                                            double r_max) {
 
-  auto result = evaluate_spline(r, r_knots, coeffs, r_width, r_max);
+  auto result = jit_evaluate_spline(r, r_knots, coeffs, r_width, r_max);
 
   if (r.requires_grad()) {
     ctx->save_for_backward({result[1]});
@@ -31,7 +30,7 @@ variable_list CubicSplineAutograd::backward(AutogradContext *ctx,
 
   torch::Tensor R_deriv = saved_variables[0];
 
-  torch::Tensor result = backward_spline(grad_outputs[0].contiguous(), R_deriv);
+  torch::Tensor result = jit_backward_spline(grad_outputs[0].contiguous(), R_deriv);
 
   torch::Tensor undef;
 

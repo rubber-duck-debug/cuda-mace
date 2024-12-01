@@ -1,3 +1,14 @@
+#include "cuda_runtime.h"
+#include <cuda.h>
+
+#include "cuda_utils.hpp"
+#include "spherical_harmonics_impl.cuh"
+#include <c10/cuda/CUDAStream.h>
+
+using namespace std;
+using namespace torch::autograd;
+using namespace torch::indexing;
+
 #define FULL_MASK 0xffffffff
 #define WARP_SIZE 32
 #define NWARPS_PER_BLOCK 4
@@ -19,16 +30,19 @@ Ceriotti, Michele}, journal={J. Chem. Phys.}, year={2023}, number={159},
 */
 
 template <typename scalar_t>
-__global__ void spherical_harmonics_kernel_ptr(
-
-    const scalar_t *__restrict__ xyz, scalar_t *__restrict__ sph,
-    scalar_t *__restrict__ sph_deriv, const int nsamples, const bool normalize,
-    const bool requires_grad) {
+__global__ void spherical_harmonics_kernel(
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits>
+        xyz,
+    torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits> sph,
+    torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits>
+        sph_deriv,
+    bool normalize, bool requires_grad) {
 
   extern __shared__ char buffer[];
+  const int32_t nsamples = xyz.size(0);
 
-  int laneID = threadIdx.x % WARP_SIZE;
-  int warpID = threadIdx.x / WARP_SIZE;
+  int32_t laneID = threadIdx.x % WARP_SIZE;
+  int32_t warpID = threadIdx.x / WARP_SIZE;
 
   void *sptr = buffer;
   unsigned int space = 0;
@@ -48,13 +62,12 @@ __global__ void spherical_harmonics_kernel_ptr(
     buffer_sph_deriv_z = shared_array<scalar_t>(blockDim.x * 16, sptr, &space);
   }
 
-  int edge_start = blockIdx.x * blockDim.x;
+  int32_t edge_start = blockIdx.x * blockDim.x;
 
   for (int i = 0; i < 3; i++) {
     buffer_xyz[i * blockDim.x + threadIdx.x] =
-        (edge_start + threadIdx.x < nsamples)
-            ? xyz[(edge_start + threadIdx.x) * 3 + i]
-            : 0.0;
+        (edge_start + threadIdx.x < nsamples) ? xyz[edge_start + threadIdx.x][i]
+                                              : 0.0;
   }
 
   __syncthreads();
@@ -120,9 +133,8 @@ __global__ void spherical_harmonics_kernel_ptr(
   for (int i = warpID; i < 16; i += NWARPS_PER_BLOCK) {
     for (int j = laneID; j < blockDim.x; j += WARP_SIZE) {
 
-      if (edge_start + j < nsamples) {
-        sph[i * nsamples + edge_start + j] =
-            sqrt_4pi * buffer_sph[i * blockDim.x + j];
+      if (edge_start + j < xyz.size(0)) {
+        sph[i][edge_start + j] = sqrt_4pi * buffer_sph[i * blockDim.x + j];
       }
     }
   }
@@ -226,7 +238,7 @@ __global__ void spherical_harmonics_kernel_ptr(
 
     for (int j = laneID; j < blockDim.x; j += WARP_SIZE) {
 
-      if (edge_start + j < nsamples) {
+      if (edge_start + j < xyz.size(0)) {
 
         for (int i = warpID; i < 16; i += NWARPS_PER_BLOCK) {
 
@@ -260,20 +272,14 @@ __global__ void spherical_harmonics_kernel_ptr(
             scalar_t new_tmp_dy = (tmp_dy - y * tmp_n) * ir;
             scalar_t new_tmp_dz = (tmp_dz - z * tmp_n) * ir;
 
-            sph_deriv[i * 3 * nsamples + 0 * nsamples + edge_start + j] =
-                sqrt_4pi * new_tmp_dx;
-            sph_deriv[i * 3 * nsamples + 1 * nsamples + edge_start + j] =
-                sqrt_4pi * new_tmp_dy;
-            sph_deriv[i * 3 * nsamples + 2 * nsamples + edge_start + j] =
-                sqrt_4pi * new_tmp_dz;
+            sph_deriv[i][0][edge_start + j] = sqrt_4pi * new_tmp_dx;
+            sph_deriv[i][1][edge_start + j] = sqrt_4pi * new_tmp_dy;
+            sph_deriv[i][2][edge_start + j] = sqrt_4pi * new_tmp_dz;
 
           } else {
-            sph_deriv[i * 3 * nsamples + 0 * nsamples + edge_start + j] =
-                sqrt_4pi * tmp_dx;
-            sph_deriv[i * 3 * nsamples + 1 * nsamples + edge_start + j] =
-                sqrt_4pi * tmp_dy;
-            sph_deriv[i * 3 * nsamples + 2 * nsamples + edge_start + j] =
-                sqrt_4pi * tmp_dz;
+            sph_deriv[i][0][edge_start + j] = sqrt_4pi * tmp_dx;
+            sph_deriv[i][1][edge_start + j] = sqrt_4pi * tmp_dy;
+            sph_deriv[i][2][edge_start + j] = sqrt_4pi * tmp_dz;
           }
         }
       }
@@ -281,16 +287,77 @@ __global__ void spherical_harmonics_kernel_ptr(
   }
 }
 
+std::vector<torch::Tensor> spherical_harmonics(torch::Tensor xyz) {
+  const int32_t nsamples = xyz.size(0);
+
+  torch::Tensor sph_harmonics = torch::empty(
+      {16, nsamples},
+      torch::TensorOptions().dtype(xyz.dtype()).device(xyz.device()));
+
+  // if (xyz.requires_grad()) {
+  torch::Tensor sph_harmonics_deriv = torch::empty(
+      {16, 3, nsamples},
+      torch::TensorOptions().dtype(xyz.dtype()).device(xyz.device()));
+  //}
+
+  cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+  dim3 gridDim(find_integer_divisor(nsamples, WARP_SIZE * NWARPS_PER_BLOCK));
+
+  dim3 blockDim(WARP_SIZE * NWARPS_PER_BLOCK, 1, 1);
+
+  AT_DISPATCH_FLOATING_TYPES(
+      xyz.scalar_type(), "spherical_harmonics", ([&] {
+        unsigned int space = 0;
+        void *sptr;
+
+        shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 3, sptr, &space);
+        shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 16, sptr, &space);
+
+        if (xyz.requires_grad()) {
+
+          shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 16 * 3, sptr,
+                                 &space);
+          spherical_harmonics_kernel<
+              scalar_t><<<gridDim, blockDim, space, stream>>>(
+              xyz.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+              sph_harmonics
+                  .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+              sph_harmonics_deriv
+                  .packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+              true, true);
+        } else {
+          spherical_harmonics_kernel<
+              scalar_t><<<gridDim, blockDim, space, stream>>>(
+              xyz.packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+              sph_harmonics
+                  .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+              sph_harmonics_deriv
+                  .packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+              true, false);
+        }
+      }));
+
+  if (xyz.requires_grad()) {
+    return {sph_harmonics, sph_harmonics_deriv};
+  } else {
+    return {sph_harmonics};
+  }
+}
+
 template <typename scalar_t>
-__global__ void spherical_harmonics_backward_kernel_ptr(
-    const scalar_t *__restrict__ sph_deriv,
-    const scalar_t *__restrict__ grad_output, const int nsamples,
-    scalar_t *__restrict__ xyz_grad) {
+__global__ void spherical_harmonics_backward_kernel(
+    const torch::PackedTensorAccessor64<scalar_t, 3, torch::RestrictPtrTraits>
+        sph_deriv,
+    const torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits>
+        grad_output,
+    torch::PackedTensorAccessor64<scalar_t, 2, torch::RestrictPtrTraits>
+        xyz_grad) {
 
   extern __shared__ char buffer[];
+  const int32_t nsamples = sph_deriv.size(2);
 
-  int laneID = threadIdx.x % 16;
-  int warpID = threadIdx.x / 16;
+  int32_t laneID = threadIdx.x % 16;
+  int32_t warpID = threadIdx.x / 16;
 
   void *sptr = buffer;
   unsigned int space = 0;
@@ -301,22 +368,20 @@ __global__ void spherical_harmonics_backward_kernel_ptr(
   // grad: 16, nsamples
   //  xyz: nsamples, 3
 
-  int k_to_idx[3] = {2, 0, 1};
+  int32_t k_to_idx[3] = {2, 0, 1};
 
-  int edge_start = blockIdx.x * blockDim.x;
+  int32_t edge_start = blockIdx.x * blockDim.x;
 
   for (int j = warpID; j < blockDim.x; j += 8) {
 
-    scalar_t g = (edge_start + j < nsamples)
-                     ? grad_output[laneID * nsamples + edge_start + j]
-                     : 0.0;
+    scalar_t g =
+        (edge_start + j < nsamples) ? grad_output[laneID][edge_start + j] : 0.0;
 
     for (int k = 0; k < 3; k++) {
 
-      scalar_t sph =
-          (edge_start + j < nsamples)
-              ? sph_deriv[laneID * 3 * nsamples + k * nsamples + edge_start + j]
-              : 0.0;
+      scalar_t sph = (edge_start + j < nsamples)
+                         ? sph_deriv[laneID][k][edge_start + j]
+                         : 0.0;
 
       scalar_t prod = sph * g;
 
@@ -327,8 +392,42 @@ __global__ void spherical_harmonics_backward_kernel_ptr(
 
       if (laneID == 0) {
         if (edge_start + j < nsamples)
-          xyz_grad[(edge_start + j) * 3 + k_to_idx[k]] = prod;
+          xyz_grad[edge_start + j][k_to_idx[k]] = prod;
       }
     }
   }
+}
+
+torch::Tensor spherical_harmonics_backward(torch::Tensor sph_deriv,
+                                           torch::Tensor grad_output) {
+  const int32_t nsamples = sph_deriv.size(2);
+
+  torch::Tensor xyz_grad =
+      torch::empty({nsamples, 3}, torch::TensorOptions()
+                                      .dtype(sph_deriv.dtype())
+                                      .device(sph_deriv.device()));
+
+  cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+
+  dim3 gridDim(find_integer_divisor(nsamples, WARP_SIZE * NWARPS_PER_BLOCK));
+
+  dim3 blockDim(WARP_SIZE * NWARPS_PER_BLOCK, 1, 1);
+
+  AT_DISPATCH_FLOATING_TYPES(
+      sph_deriv.scalar_type(), "spherical_harmonics_backward", ([&] {
+        unsigned int space = 0;
+        void *sptr;
+
+        shared_array<scalar_t>(WARP_SIZE * NWARPS_PER_BLOCK * 3, sptr, &space);
+        spherical_harmonics_backward_kernel<scalar_t>
+            <<<gridDim, blockDim, space, stream>>>(
+                sph_deriv
+                    .packed_accessor64<scalar_t, 3, torch::RestrictPtrTraits>(),
+                grad_output
+                    .packed_accessor64<scalar_t, 2, torch::RestrictPtrTraits>(),
+                xyz_grad.packed_accessor64<scalar_t, 2,
+                                           torch::RestrictPtrTraits>());
+      }));
+
+  return xyz_grad;
 }
