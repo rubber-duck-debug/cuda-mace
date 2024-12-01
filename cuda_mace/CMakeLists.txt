@@ -30,15 +30,12 @@ if (NOT ${TORCH_CMAKE_PATH_RESULT} EQUAL 0)
 message(FATAL_ERROR "failed to find your pytorch installation, error: ${TORCH_CMAKE_PATH_ERROR}\n")
 endif()
 
+string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
+set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
+
 message(STATUS "TORCH_CMAKE_PATH_OUTPUT: ${TORCH_CMAKE_PATH_OUTPUT}")
 
 find_package(Torch 2.0 REQUIRED)
-
-string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
-
-
-
-set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 
 add_library(cuda_mace SHARED
     "jit_wrappers/src/cubic_spline_wrapper.cpp"
