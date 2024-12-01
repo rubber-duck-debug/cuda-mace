@@ -1,5 +1,5 @@
-#include "linear_wmma_impl.cuh"
-#include "linear_wmma.h"
+#include "linear.h"
+#include "linear_wrapper.hpp"
 
 using namespace std;
 using namespace torch::autograd;
@@ -16,7 +16,7 @@ torch::Tensor LinearAutograd::forward(
         ctx->save_for_backward({W_transposed});
     }
 
-    torch::Tensor result = linear_wmma(X, W);
+    torch::Tensor result = jit_linear(X, W);
 
     return result;
 }
@@ -27,12 +27,7 @@ variable_list LinearAutograd::backward(AutogradContext *ctx, variable_list grad_
 
     auto W_T = saved_variables[0];
 
-    if (!grad_outputs[0].is_contiguous())
-    {
-        grad_outputs[0] = grad_outputs[0].contiguous();
-    }
-
-    torch::Tensor dX = linear_wmma(grad_outputs[0], W_T);
+    torch::Tensor dX = jit_linear(grad_outputs[0].contiguous(), W_T);
 
     torch::Tensor undef;
 
@@ -61,7 +56,7 @@ torch::Tensor ElementalLinearAutograd::forward(
         ctx->save_for_backward({one_hot_embedding, W_transposed});
     }
 
-    torch::Tensor result = elemental_linear_wmma(X, W, one_hot_embedding);
+    torch::Tensor result = jit_elemental_linear(X, W, one_hot_embedding);
 
     return result;
 }
@@ -73,12 +68,7 @@ variable_list ElementalLinearAutograd::backward(AutogradContext *ctx, variable_l
     auto one_hot_embedding = saved_variables[0];
     auto W_T = saved_variables[1];
 
-    if (!grad_outputs[0].is_contiguous())
-    {
-        grad_outputs[0] = grad_outputs[0].contiguous();
-    }
-
-    torch::Tensor dX = elemental_linear_wmma(grad_outputs[0], W_T, one_hot_embedding);
+    torch::Tensor dX = jit_elemental_linear(grad_outputs[0].contiguous(), W_T, one_hot_embedding);
 
     torch::Tensor undef;
 

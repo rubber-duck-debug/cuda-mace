@@ -16,7 +16,7 @@ std::vector<torch::Tensor> jit_evaluate_spline(torch::Tensor r,
                                            torch::Tensor coeffs, double r_width,
                                            double r_max) {
   static const char* CUDA_CODE =
-#include "generated/wrapped_cubic_spline_impl2.cu"
+#include "generated/wrapped_cubic_spline_impl.cu"
         ;
 
   int nsamples = r.size(0);
@@ -74,16 +74,16 @@ auto find_integer_divisor = [](int x, int y) -> int {
         };
 
         std::string kernel_name;
-          if (r.requires_grad()) {
-         kernel_name= getKernelName<scalar_t, std::integral_constant<bool, true>>("evaluate_spline_kernel_ptr");
-          } else {
+        if (r.requires_grad()) {
+          kernel_name= getKernelName<scalar_t, std::integral_constant<bool, true>>("evaluate_spline_kernel_ptr");
+        } else {
           kernel_name =  getKernelName<scalar_t, std::integral_constant<bool, false>>("evaluate_spline_kernel_ptr");
-    }
+        }
 
     auto& kernel_factory = KernelFactory::instance();
 
     CachedKernel* kernel = kernel_factory.create(
-        kernel_name, std::string(CUDA_CODE), "wrapped_cubic_spline_impl2.cu", {"--std=c++17"}
+        kernel_name, std::string(CUDA_CODE), "wrapped_cubic_spline_impl.cu", {"--std=c++17", "-lineinfo"}
     );
 
         kernel->launch(gdim, bdim, 0, 0, args);
@@ -100,7 +100,7 @@ torch::Tensor jit_backward_spline(torch::Tensor grad_output,
                               torch::Tensor R_deriv) {
 
   static const char* CUDA_CODE =
-#include "generated/wrapped_cubic_spline_impl2.cu"
+#include "generated/wrapped_cubic_spline_impl.cu"
         ;
 
   auto find_integer_divisor = [](int x, int y) -> int {
@@ -136,14 +136,14 @@ torch::Tensor jit_backward_spline(torch::Tensor grad_output,
           &nsamples,
           &noutputs,
         };
-        
+
         std::string kernel_name = getKernelName<scalar_t>("backward_spline_kernel_ptr");
 
-    auto& kernel_factory = KernelFactory::instance();
+        auto& kernel_factory = KernelFactory::instance();
 
-    CachedKernel* kernel = kernel_factory.create(
-        kernel_name, std::string(CUDA_CODE), "wrapped_cubic_spline_impl2.cu", {"--std=c++17"}
-    );
+        CachedKernel* kernel = kernel_factory.create(
+          kernel_name, std::string(CUDA_CODE), "wrapped_cubic_spline_impl.cu", {"--std=c++17", "-lineinfo"}
+        );
 
         kernel->launch(gdim, bdim, 0, 0, args);
 

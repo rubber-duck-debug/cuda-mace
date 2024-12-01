@@ -1,7 +1,5 @@
 #include "cubic_spline.h"
-//#include "cubic_spline_impl.cuh"
 #include "cubic_spline_wrapper.hpp"
-#include "torch_utils.cuh"
 
 #include <iostream>
 #include <torch/script.h>

@@ -12,11 +12,23 @@
 #include <nvrtc.h>
 #include <cuda.h>
 #include <cxxabi.h>
+#include <iostream>
+#include <filesystem>
 
 #include "dynamic_cuda.hpp"
 
+std::string inline findCudaIncludePath() {
+    const char* cuda_home_env = std::getenv("CUDA_HOME");
+    if (cuda_home_env) {
+        std::string include_path = std::string(cuda_home_env) + "/include";
+        return include_path;
+    }
+    throw std::runtime_error("Error: CUDA_HOME is not set (e.g export CUDA_HOME=/usr/local/cuda in ~/.bashrc)");
+    return "";
+}
+
 // Helper function to demangle the type name if necessary
-std::string demangleTypeName(const std::string& name) {
+std::string inline demangleTypeName(const std::string& name) {
 #if defined(__GNUC__) || defined(__clang__)
     int status = 0;
     std::unique_ptr<char, void (*)(void*)> demangled_name(
@@ -29,7 +41,7 @@ std::string demangleTypeName(const std::string& name) {
 }
 
 // Base case: No template arguments, return function name without any type information
-std::string getKernelName(const std::string& fn_name) { return fn_name; }
+std::string inline getKernelName(const std::string& fn_name) { return fn_name; }
 
 // Function to get type name of a single type
 template <typename T>
@@ -88,7 +100,7 @@ std::string buildTemplateParams() {
 Function to get the kernel name with the list of templated parameters:
 */
 template <typename... Args>
-std::string getKernelName(const std::string& fn_name) {
+std::string inline getKernelName(const std::string& fn_name) {
     if constexpr (sizeof...(Args) > 0) {
         std::string param_list = buildTemplateParams<Args...>();
         return fn_name + "<" + param_list + ">";
@@ -98,7 +110,7 @@ std::string getKernelName(const std::string& fn_name) {
 }
 
 // Function to load CUDA source code from a file
-std::string load_cuda_source(const std::string& filename) {
+std::string inline load_cuda_source(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {
         throw std::runtime_error("Failed to open file: " + filename);
@@ -155,7 +167,7 @@ class CachedKernel {
         size_t shared_mem_size,
         void* cuda_stream,
         std::vector<void*> args,
-        bool synchronize = true
+        bool synchronize = false
     ) {
 
         if (!compiled) {
@@ -176,7 +188,7 @@ class CachedKernel {
 
         this->checkAndAdjustSharedMem(shared_mem_size);
 
-        cudaStream_t cstream = reinterpret_cast<cudaStream_t>(cuda_stream);
+        CUstream cstream = reinterpret_cast<CUstream>(cuda_stream);
 
         CUDADRIVER_SAFE_CALL(CUDA_DRIVER_INSTANCE.cuLaunchKernel(
             function,
@@ -296,11 +308,14 @@ class CachedKernel {
 
         NVRTC_SAFE_CALL(NVRTC_INSTANCE.nvrtcAddNameExpression(prog, this->kernel_name.c_str()));
 
+        std::string cuda_include_path = "--include-path=" + findCudaIncludePath();
+
         std::vector<const char*> c_options;
         c_options.reserve(this->options.size());
         for (const auto& option : this->options) {
             c_options.push_back(option.c_str());
         }
+        c_options.push_back(cuda_include_path.c_str());
 
         int major = 0;
         int minor = 0;
@@ -311,7 +326,8 @@ class CachedKernel {
             &minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, cuDevice
         ));
         int arch = major * 10 + minor;
-        std::string smbuf = "--gpu-architecture=sm_" + std::to_string(arch);
+        std::string smbuf = "--gpu-architecture=compute_" + std::to_string(arch);
+
         c_options.push_back(smbuf.c_str());
 
         nvrtcResult compileResult =
@@ -333,7 +349,7 @@ class CachedKernel {
         NVRTC_SAFE_CALL(NVRTC_INSTANCE.nvrtcGetPTX(prog, ptxCode.data()));
 
         CUmodule module;
-
+        
         CUresult cuResult =
             CUDA_DRIVER_INSTANCE.cuModuleLoadDataEx(&module, ptxCode.data(), 0, 0, 0);
 
@@ -350,6 +366,7 @@ class CachedKernel {
         NVRTC_SAFE_CALL(
             NVRTC_INSTANCE.nvrtcGetLoweredName(prog, this->kernel_name.c_str(), &lowered_name)
         );
+
         CUfunction kernel;
         CUDADRIVER_SAFE_CALL(CUDA_DRIVER_INSTANCE.cuModuleGetFunction(&kernel, module, lowered_name)
         );
