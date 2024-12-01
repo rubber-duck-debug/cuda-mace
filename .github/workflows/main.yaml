@@ -22,7 +22,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     # Build the custom Manylinux Docker image
     - name: Build Manylinux Docker Image
@@ -43,15 +43,16 @@ jobs:
         python -m pip install cibuildwheel build
 
     - name: Build wheels
-      run: |
-        which nvcc
-        ls -l /usr/local/cuda
-        echo "CUDA_HOME=$CUDA_HOME"
-        echo "CIBW_ENVIRONMENT: $CIBW_ENVIRONMENT"
-        echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
-        python -m cibuildwheel --platform linux .
-        mkdir -p dist
-        cp wheelhouse/*.whl dist/
+      uses: pypa/cibuildwheel@v2.22.0
+        #run: |
+        #  which nvcc
+        #  ls -l /usr/local/cuda
+        #  echo "CUDA_HOME=$CUDA_HOME"
+        #  echo "CIBW_ENVIRONMENT: $CIBW_ENVIRONMENT"
+        #  echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
+        #  python -m cibuildwheel --platform linux .
+        #  mkdir -p dist
+        #  cp wheelhouse/*.whl dist/
       env:
         CUDA_HOME: /usr/local/cuda
         PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
