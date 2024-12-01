@@ -35,10 +35,10 @@ jobs:
       run: |
         docker build --no-cache \
         -t manylinux2014_${{ matrix.cibw-arch }} \
-          --build-arg PYTHON_VER=${{ matrix.python-version }} \
-          --build-arg CUDA_VER=${{ matrix.cuda-version }} \
-          --build-arg PYTORCH_VERSION=${{ matrix.pytorch-version }} \
-          scripts/manylinux2014_${{ matrix.cibw-arch }}
+        --build-arg PYTHON_VER=${{ matrix.python-version }} \
+        --build-arg CUDA_VER=${{ matrix.cuda-version }} \
+        --build-arg PYTORCH_VERSION=${{ matrix.pytorch-version }} \
+        scripts/manylinux2014_${{ matrix.cibw-arch }}
     
     # Set up Python environment
     - name: Set up Python
