@@ -219,14 +219,15 @@ def benchmark(
     torch.cuda.synchronize()
 
     rng = nvtx.start_range(message="model_opt", color="blue")
+    nbench = 1
     start = time()
-    for i in range(1):
+    for i in range(nbench):
         output_opt = model_opt(
             batch.to_dict(), training=False, compute_force=True)
     torch.cuda.synchronize()
     print(
         "optimized model time:  %.2e (ms)" % (
-            (time() - start) * (1000 / 1))
+            (time() - start) * (1000 / nbench))
     )
     nvtx.end_range(rng)
 

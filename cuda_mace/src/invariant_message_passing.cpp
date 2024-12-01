@@ -1,5 +1,4 @@
-#include "invariant_message_passing_impl.cuh"
-#include "torch_utils.cuh"
+#include "invariant_message_passing_wrapper.hpp"
 #include "invariant_message_passing.h"
 
 #include <torch/script.h>
@@ -18,10 +17,10 @@ torch::Tensor InvariantMessagePassingTPAutograd::forward(
     torch::Tensor receiver_list,
     const int64_t nnodes)
 {
+    torch::Tensor first_occurences = jit_calculate_first_occurences(receiver_list, nnodes);
 
-    torch::Tensor first_occurences = calculate_first_occurences_gpu(receiver_list, nnodes, 128);
-
-    auto result  = forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences, nnodes);
+    //auto result  = forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences, nnodes);
+    std::vector<torch::Tensor> result = jit_forward_message_passing(X, Y, radial, sender_list, receiver_list, first_occurences, nnodes);
     
     if (X.requires_grad() || Y.requires_grad() || radial.requires_grad())
     {
@@ -47,7 +46,8 @@ variable_list InvariantMessagePassingTPAutograd::backward(AutogradContext *ctx, 
 
     int64_t nnodes = ctx->saved_data["nnodes"].toInt();
 
-    auto result = backward_gpu(X, Y, radial, grad_outputs[0], sender_list, receiver_list, first_occurences, node_edge_index, nnodes);
+    //auto result = backward_gpu(X, Y, radial, grad_outputs[0], sender_list, receiver_list, first_occurences, node_edge_index, nnodes);
+    std::vector<torch::Tensor> result = jit_backward_message_passing(X, Y, radial, grad_outputs[0], sender_list, receiver_list, first_occurences, node_edge_index, nnodes);
 
     torch::Tensor undef;
 

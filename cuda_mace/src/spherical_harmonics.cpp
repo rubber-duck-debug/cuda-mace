@@ -1,6 +1,5 @@
-#include "spherical_harmonics_impl.cuh"
-#include "torch_utils.cuh"
 #include "spherical_harmonics.h"
+#include "spherical_harmonics_wrapper.hpp"
 
 #include <torch/script.h>
 #include <iostream>
@@ -13,12 +12,11 @@ torch::Tensor SphericalHarmonicsAutograd::forward(
         AutogradContext *ctx,
         torch::Tensor xyz)
 {
-    auto result = spherical_harmonics(xyz);
+    auto result = jit_spherical_harmonics(xyz);
 
     if (xyz.requires_grad())
     {
         ctx->save_for_backward({result[1]});
-        //std::cout << result[1] << std::endl;
     }
 
     return result[0];
@@ -30,7 +28,7 @@ variable_list SphericalHarmonicsAutograd::backward(AutogradContext *ctx, variabl
 
     torch::Tensor sph_deriv = saved_variables[0];
     
-    torch::Tensor result = spherical_harmonics_backward(sph_deriv, grad_outputs[0].contiguous());
+    torch::Tensor result = jit_spherical_harmonics_backward(sph_deriv, grad_outputs[0].contiguous());
     
     return {result};
 }

@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
-project(cuda_mace LANGUAGES CXX CUDA)
+project(cuda_mace LANGUAGES CXX)
+
+include(${CMAKE_SOURCE_DIR}/cmake/MakeIncludeable.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/PrependHeadersToSource.cmake)
 
 set(LIB_INSTALL_DIR "lib" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install libraries")
 set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install DLL/binaries")
 set(INCLUDE_INSTALL_DIR "include" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install headers")
-
-SET(CUDA_SEPARABLE_COMPILATION ON)
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
 
@@ -17,14 +18,6 @@ if(CMAKE_CUDA_COMPILER)
 else()
     message(FATAL_ERROR "Could not find CUDA Compiler. Make sure $CUDA_HOME is set.")
 endif()
-
-execute_process(
-    COMMAND which ${Python_EXECUTABLE}
-)
-
-execute_process(
-    COMMAND ${Python_EXECUTABLE} --version
-)
 
 execute_process(
     COMMAND ${Python_EXECUTABLE} -c "import torch.utils; print(torch.utils.cmake_prefix_path)"
@@ -41,91 +34,76 @@ string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
 
 set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH};${TORCH_CMAKE_PATH_OUTPUT}")
 
-execute_process(
-    COMMAND sh -c "grep -q 'set(CUDA_ALL_GPU_ARCHITECTURES \"3.5\" \"5.0\")' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
-    RESULT_VARIABLE grep_result
-    OUTPUT_VARIABLE grep_output
-    ERROR_VARIABLE grep_error
-)
-# set(CUDA_ALL_GPU_ARCHITECTURES "3.5" "5.0")
-#TORCH_CMAKE_PATH_OUTPUT: /opt/python/cp311-cp311/lib/python3.11/site-packages/torch/share/cmake
-if (grep_result EQUAL 0)
-    execute_process(
-        COMMAND sh -c "sed -i -E 's/set\\(CUDA_COMMON_GPU_ARCHITECTURES \"3\\.5\" \"5\\.0\"\\)/set(CUDA_COMMON_GPU_ARCHITECTURES \"\")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
-        RESULT_VARIABLE result
-        OUTPUT_VARIABLE output
-        ERROR_VARIABLE error
-    )
-
-    if (NOT ${result} EQUAL 0)
-        message(FATAL_ERROR "Error running sed: ${error}")
-    else()
-        message(STATUS "sed command ran successfully.")
-    endif()
-    
-    execute_process(
-        COMMAND sh -c "sed -i -E 's/set\\(CUDA_ALL_GPU_ARCHITECTURES \"3\\.5\" \"5\\.0\"\\)/set(CUDA_ALL_GPU_ARCHITECTURES \"\")/' ${TORCH_CMAKE_PATH_OUTPUT}/Caffe2/Modules_CUDA_fix/upstream/FindCUDA/select_compute_arch.cmake"
-        RESULT_VARIABLE result
-        OUTPUT_VARIABLE output
-        ERROR_VARIABLE error
-    )
-
-    if (NOT ${result} EQUAL 0)
-        message(FATAL_ERROR "Error running sed: ${error}")
-    else()
-        message(STATUS "sed command ran successfully.")
-    endif()
-
-endif()
-
-find_package(Torch 1.13 REQUIRED)
-
-#enable relocatable device code (e.g for cuda_utils.cu)
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -rdc=true -lineinfo")
-
-include_directories(
-    ${CMAKE_SOURCE_DIR}/cuda/include
-    ${CMAKE_SOURCE_DIR}/include
-)
-
 add_library(cuda_mace SHARED
-    "cuda/include/cuda_utils.cuh"
-    "cuda/src/cuda_utils.cu"
+    "jit_wrappers/src/cubic_spline_wrapper.cpp"
+    "jit_wrappers/src/invariant_message_passing_wrapper.cpp"
+    "jit_wrappers/src/spherical_harmonics_wrapper.cpp"
+    "jit_wrappers/src/linear_wrapper.cpp"
+    "jit_wrappers/src/symmetric_contraction_wrapper.cpp"
 
-    "cuda/include/torch_utils.cuh"
-    "cuda/src/torch_utils.cu"
-
-    "cuda/include/invariant_message_passing_impl.cuh"
-    "cuda/src/invariant_message_passing_impl.cu"
-
-    "cuda/include/linear_wmma_impl.cuh"
-    "cuda/src/linear_wmma_impl.cu"
-
-    "cuda/include/symmetric_contraction_impl.cuh"
-    "cuda/src/symmetric_contraction_impl.cu"
-
-    "cuda/include/cubic_spline_impl.cuh"
-    "cuda/src/cubic_spline_impl.cu"
-
-    "cuda/include/spherical_harmonics_impl.cuh"
-    "cuda/src/spherical_harmonics_impl.cu"
-
-    "src/linear_wmma.cpp"
+    "src/linear.cpp"
     "src/invariant_message_passing.cpp"
     "src/symmetric_contraction.cpp"
     "src/cubic_spline.cpp"
     "src/spherical_harmonics.cpp"
 )
 
-target_link_libraries(cuda_mace "${TORCH_LIBRARIES}")
+set(CUDA_MACE_SHARED_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/cuda/include/cuda_utils.hpp")
+
+set(cuda_sources 
+    "cubic_spline_impl.cu" 
+    "invariant_message_passing_impl.cu" 
+    "spherical_harmonics_impl.cu" 
+    "linear_impl.cu"
+    "symmetric_contraction_impl.cu"
+)
+
+set(cuda_headers 
+    "cubic_spline_impl.cuh" 
+    "invariant_message_passing_impl.cuh" 
+    "spherical_harmonics_impl.cuh" 
+    "linear_impl.cuh"
+    "symmetric_contraction_impl.cuh"
+)
+
+list(LENGTH cuda_sources len_list)
+math(EXPR len "${len_list} -1")
+
+# Enumerate through both lists
+foreach(i RANGE 0 ${len})
+    list(GET cuda_sources ${i} file)
+    list(GET cuda_headers ${i} header)
+
+    set (tmp_src file)
+    set(tmp_header "${CMAKE_CURRENT_SOURCE_DIR}/cuda/include/${header}")
+
+    list (APPEND tmp_header ${CUDA_MACE_SHARED_HEADERS})
+
+    prepend_headers_to_source(
+        "${CMAKE_CURRENT_SOURCE_DIR}/cuda/src/${file}"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/tmp.cu" 
+        "${tmp_header}"
+        )
+
+    make_includeable(
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/tmp.cu"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/wrapped_${file}"
+        )
+    
+    message(STATUS "Processing file: ${CMAKE_CURRENT_SOURCE_DIR}/cuda/src/${file} with headers: ${tmp_header}")
+endforeach()
+
+target_include_directories(cuda_mace PRIVATE
+    ${CMAKE_SOURCE_DIR}/cuda/include
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/jit_wrappers/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}
+)
+
+target_link_libraries(cuda_mace PRIVATE "${TORCH_LIBRARIES}" ${CMAKE_DL_LIBS})
 
 target_compile_features(cuda_mace PRIVATE cxx_std_17)
-
-set_target_properties(cuda_mace PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-set_target_properties(cuda_mace PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-set_target_properties(cuda_mace PROPERTIES CUDA_ARCHITECTURES "80;86;89;90")
-
-set(CMAKE_CUDA_STANDARD 17)
 
 install(TARGETS cuda_mace
     LIBRARY DESTINATION "lib"

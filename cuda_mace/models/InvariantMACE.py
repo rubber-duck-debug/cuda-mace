@@ -11,8 +11,6 @@ from time import time
 import inspect
 from math import sqrt
 
-from mace.modules.blocks import SphericalHarmonics
-
 from mace.tools.scatter import scatter_sum
 
 from mace.modules.utils import (
@@ -105,8 +103,8 @@ class InvariantInteraction(torch.nn.Module):
         edge_index: torch.Tensor,
     ) -> Tuple[torch.Tensor, None]:
 
-        sender = edge_index[0]
-        receiver = edge_index[1]
+        sender = edge_index[1]
+        receiver = edge_index[0]
         num_nodes = torch.tensor(node_feats.shape[0])
 
         node_feats = self.linear_up(node_feats)
@@ -151,8 +149,8 @@ class InvariantResidualInteraction(torch.nn.Module):
         edge_index: torch.Tensor,
     ) -> Tuple[torch.Tensor, None]:
 
-        sender = edge_index[0]
-        receiver = edge_index[1]
+        sender = edge_index[1]
+        receiver = edge_index[0]
         num_nodes = torch.tensor(node_feats.shape[0])
 
         sc = self.skip_tp(node_feats, node_attrs)
@@ -247,9 +245,6 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 coupling_irreps,
                 irreps_out,
                 all_weights,
-                nthreadX=32,
-                nthreadY=4,
-                nthreadZ=1,
                 dtype=torch.float32,
             )
             self.products[i].symmetric_contractions = SymmetricContractionWrapper(
@@ -260,7 +255,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
 
         r, h = np.linspace(1e-12, self.r_max.item() + 1.0, 256, retstep=True)
         r = torch.tensor(r, dtype=torch.float64).to("cuda")
-        bessel_j = self.radial_embedding(r.unsqueeze(-1))
+        bessel_j = self.radial_embedding(r.unsqueeze(-1), None, None, None)
 
         self.edge_splines = []
         for i, interaction in enumerate(mace_model.interactions):
@@ -285,7 +280,16 @@ class OptimizedInvariantMACE(torch.nn.Module):
         # Setup
         data["positions"].requires_grad_(True)
         data["node_attrs"].requires_grad_(True)
+
+        node_heads = (
+            data["head"][data["batch"]]
+            if "head" in data
+            else torch.zeros_like(data["batch"])
+        )
+
+        num_atoms_arange = torch.arange(data["positions"].shape[0])
         num_graphs = data["ptr"].numel() - 1
+
         displacement = torch.zeros(
             (num_graphs, 3, 3),
             dtype=data["positions"].dtype,
@@ -305,11 +309,13 @@ class OptimizedInvariantMACE(torch.nn.Module):
                 batch=data["batch"],
             )
 
-        # Atomic energies
-        node_e0 = self.atomic_energies_fn(data["node_attrs"].double())
-        # node_e0 = self.atomic_energies_fn(data["node_attrs"])
+        node_e0 = self.atomic_energies_fn(data["node_attrs"].double())[
+            num_atoms_arange, node_heads
+        ]
+
         e0 = scatter_sum(
-            src=node_e0, index=data["batch"], dim=-1, dim_size=num_graphs)  # [n_graphs,]
+            src=node_e0, index=data["batch"], dim=0, dim_size=num_graphs
+        )  # [n_graphs, num_heads]
 
         node_feats = self.node_embedding(data["node_attrs"].double())
 
@@ -360,13 +366,17 @@ class OptimizedInvariantMACE(torch.nn.Module):
                     readout.linear.weight.double())
 
             node_feats_list.append(node_feats)
-            node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
+            # node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
+            node_es_list.append(
+                readout(node_feats, node_heads)[num_atoms_arange, node_heads]
+            )
 
-            node_es_list.append(node_energies)
+            # node_es_list.append(node_energies)
 
+        node_feats_out = torch.cat(node_feats_list, dim=-1)
         node_inter_es = torch.sum(torch.stack(
             node_es_list, dim=0), dim=0)  # [n_nodes, ]
-        node_inter_es = self.scale_shift(node_inter_es)
+        node_inter_es = self.scale_shift(node_inter_es, node_heads)
         inter_e = scatter_sum(
             src=node_inter_es.double(), index=data["batch"], dim=-1, dim_size=num_graphs
         )  # [n_graphs,]
@@ -376,7 +386,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
 
         node_energy = node_e0 + node_inter_es
 
-        forces, virials, stress = get_outputs(
+        forces, virials, stress, hessian = get_outputs(
             energy=inter_e,
             positions=data["positions"],
             displacement=displacement,
@@ -385,6 +395,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
             compute_force=compute_force,
             compute_virials=compute_virials,
             compute_stress=compute_stress,
+            compute_hessian=False,
         )
 
         output = {
@@ -394,7 +405,9 @@ class OptimizedInvariantMACE(torch.nn.Module):
             "forces": forces,
             "virials": virials,
             "stress": stress,
+            "hessian": hessian,
             "displacement": displacement,
+            "node_feats": node_feats_out,
         }
 
         return output
