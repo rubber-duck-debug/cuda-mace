@@ -12,22 +12,32 @@ jobs:
     strategy:
       matrix:
         cibw-arch: ["x86_64"]
-        cibw-python: ['cp311-*']
-        python-version: [3.11]
-        pytorch-version: [2.4.1]
-        cuda-version: [12.4.0]
-        cuversion: [124]
+        cibw-python: ['cp310-*', 'cp311-*', 'cp312-*']
+        python-version: [3.10, 3.11]
+        pytorch-version: [2.4.0, 2.5.0]
+        cuda-version: [12.1, 12.4]
+        cuversion: [121, 124]
     env:
-      CIBW_SKIP: cp36-* cp37-* cp38-* cp39-* cp310-*
-
+      CIBW_SKIP: cp36-* cp37-* cp38-* cp39-*
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+    
+    - name: Github Actions Envs Setup
+      run: |
+        CUVERSION=${{matrix.cuda-version}}
+        CUVERSION=${CUVERSION//.}
+        echo CUVERSION=${CUVERSION} >> $GITHUB_ENV
 
     # Build the custom Manylinux Docker image
     - name: Build Manylinux Docker Image
       run: |
-        docker build --no-cache -t manylinux2014_${{ matrix.cibw-arch }} \
+        docker build --no-cache \
+        -t manylinux2014_${{ matrix.cibw-arch }} \
+          --build-arg PYTHON_VER=${{ matrix.python-version }} \
+          --build-arg CUDA_VER=${{ matrix.cuda-version }}
+          --build-arg PYTORCH_VERSION=${{ matrix.pytorch-version }} \
           scripts/manylinux2014_${{ matrix.cibw-arch }}
     
     # Set up Python environment
@@ -35,7 +45,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-    
+
     # Install cibuildwheel and other required tools
     - name: Install Dependencies
       run: |
@@ -44,31 +54,22 @@ jobs:
 
     - name: Build wheels
       uses: pypa/cibuildwheel@v2.22.0
-        #run: |
-        #  which nvcc
-        #  ls -l /usr/local/cuda
-        #  echo "CUDA_HOME=$CUDA_HOME"
-        #  echo "CIBW_ENVIRONMENT: $CIBW_ENVIRONMENT"
-        #  echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
-        #  python -m cibuildwheel --platform linux .
-        #  mkdir -p dist
-        #  cp wheelhouse/*.whl dist/
       env:
         CUDA_HOME: /usr/local/cuda
-        PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
+        PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu${{  env.CUVERSION }}
         CIBW_BUILD_VERBOSITY: 3
         CIBW_BUILD: ${{ matrix.cibw-python }}
         CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
         CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
         CIBW_ARCHS: ${{ matrix.cibw-arch }}
         CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014_${{ matrix.cibw-arch }}
-        CIBW_ENVIRONMENT: >
-          CUDA_HOME=/usr/local/cuda
-          PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
+        #CIBW_ENVIRONMENT: >
+        #  CUDA_HOME=/usr/local/cuda
+        #  PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${{ matrix.cuda-version.replace('.', '') }}
         CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
           auditwheel repair --exclude libcuda.so --exclude libcuda.so.1 --exclude libc10.so --exclude libtorch.so --exclude libtorch_cpu.so --exclude libtorch_cuda.so --exclude libc10_cuda.so  --exclude libcudart.so --exclude libnvToolsExt.so  --exclude libnvrtc.so --exclude libnvrtc.so.12 -w {dest_dir} {wheel}
 
     - uses: actions/upload-artifact@v4
       with:
-        name: cibw-wheels-${{ matrix.cibw-arch }}-${{ strategy.job-index }}
+        name: "cuda_mace-py-${{ matrix.python-version }}-torch-${{matrix.pytorch-version}}+cu${{ env.CUVERSION }}-${{ matrix.cibw-arch }}"
         path: ./wheelhouse/*.whl
