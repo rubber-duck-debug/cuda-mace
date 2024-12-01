@@ -5,9 +5,17 @@ ARG PYTHON_VER="3.11"
 ARG CUDA_VER="12.4"
 ARG PYTORCH_VERSION="2.4.1"
 
-RUN CUDA_VER_DASH=${CUDA_VER//./-}
-RUN CUDA_VER_NO_DOT=${CUDA_VER//./}
-RUN PYTHON_VER_NO_DOT=${PYTHON_VER//./}
+RUN CUDA_VER_DASH=${CUDA_VER//./-} && \
+    echo "CUDA_VER_DASH=${CUDA_VER_DASH}" >> /etc/environment
+ENV CUDA_VER_DASH=${CUDA_VER_DASH}
+
+RUN CUDA_VER_NO_DOT=${CUDA_VER//./}&& \
+echo "CUDA_VER_NO_DOT=${CUDA_VER_NO_DOT}" >> /etc/environment
+ENV CUDA_VER_NO_DOT=${CUDA_VER_NO_DOT}
+
+RUN PYTHON_VER_NO_DOT=${PYTHON_VER//./}&& \
+echo "PYTHON_VER_NO_DOT=${PYTHON_VER_NO_DOT}" >> /etc/environment
+ENV PYTHON_VER_NO_DOT=${PYTHON_VER_NO_DOT}
 
 # Install system dependencies and CUDA
 RUN yum install -y yum-utils gcc gcc-c++ make zlib-devel bzip2-devel libffi-devel \
