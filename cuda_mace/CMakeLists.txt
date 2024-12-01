@@ -9,7 +9,6 @@ set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX wher
 set(INCLUDE_INSTALL_DIR "include" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install headers")
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
-find_package(Torch 2.0 REQUIRED)
 
 include(CheckLanguage)
 check_language(CUDA)
@@ -30,6 +29,8 @@ execute_process(
 if (NOT ${TORCH_CMAKE_PATH_RESULT} EQUAL 0)
 message(FATAL_ERROR "failed to find your pytorch installation, error: ${TORCH_CMAKE_PATH_ERROR}\n")
 endif()
+
+find_package(Torch 2.0 REQUIRED)
 
 string(STRIP ${TORCH_CMAKE_PATH_OUTPUT} TORCH_CMAKE_PATH_OUTPUT)
 
