@@ -9,6 +9,7 @@ set(BIN_INSTALL_DIR "bin" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX wher
 set(INCLUDE_INSTALL_DIR "include" CACHE PATH "Path relative to CMAKE_INSTALL_PREFIX where to install headers")
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
+find_package(Torch 2.0 REQUIRED)
 
 include(CheckLanguage)
 check_language(CUDA)
