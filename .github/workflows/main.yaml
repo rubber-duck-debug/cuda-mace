@@ -27,11 +27,16 @@ jobs:
     - name: Github Actions Envs Setup
       run: |
         CUVERSION=${{matrix.cuda-version}}
-        CUVERSION=${CUVERSION//.}
-        echo CUVERSION=${CUVERSION} >> $GITHUB_ENV
-        PYVERSION=${{matrix.python-version}}
-        PYVERSION=${PYVERSION//.}
-        echo PYVERSION=${PYVERSION} >> $GITHUB_ENV
+        PYTHONVERSION=${{matrix.python-version}}
+
+        CU_VERSION_NO_DOT=${CUVERSION//./}
+        echo CU_VERSION_NO_DOT=${CU_VERSION_NO_DOT} >> $GITHUB_ENV
+
+        CU_VERSION_DASH=${CUVERSION//./-}
+        echo CU_VERSION_DASH=${CU_VERSION_DASH} >> $GITHUB_ENV
+
+        PYTHON_VER_NO_DOT=${PYTHONVERSION//./}
+        echo PYTHON_VER_NO_DOT=${PYTHON_VER_NO_DOT} >> $GITHUB_ENV
 
     # Build the custom Manylinux Docker image
     - name: Build Manylinux Docker Image
@@ -39,7 +44,10 @@ jobs:
         docker build --no-cache \
         -t manylinux2014_${{ matrix.cibw-arch }} \
         --build-arg PYTHON_VER=${{ matrix.python-version }} \
+        --build-arg PYTHON_VER_NO_DOT=${{ env.PYTHON_VER_NO_DOT }} \
         --build-arg CUDA_VER=${{ matrix.cuda-version }} \
+        --build-arg CUDA_VER_NO_DOT=${{ env.CU_VERSION_NO_DOT }} \
+        --build-arg CUDA_VER_DASH=${{ env.CU_VERSION_DASH }} \
         --build-arg PYTORCH_VERSION=${{ matrix.pytorch-version }} \
         scripts/manylinux2014_${{ matrix.cibw-arch }}
     
