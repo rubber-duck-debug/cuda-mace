@@ -26,8 +26,8 @@ jobs:
     
     - name: Github Actions Envs Setup
       run: |
-        CUVERSION=${{matrix.cuda-version}}
-        PYTHONVERSION=${{matrix.python-version}}
+        CUVERSION=${{ matrix.cuda-version }}
+        PYTHONVERSION=${{ matrix.python-version }}
 
         CU_VERSION_NO_DOT=${CUVERSION//./}
         echo CU_VERSION_NO_DOT=${CU_VERSION_NO_DOT} >> $GITHUB_ENV
