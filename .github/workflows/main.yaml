@@ -44,15 +44,17 @@ jobs:
 
     - name: Build wheels
       run: |
+        which nvcc
         ls -l /usr/local/cuda
         echo "CUDA_HOME=$CUDA_HOME"
         echo "CIBW_ENVIRONMENT: $CIBW_ENVIRONMENT"
         echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
-        CUDA_HOME=/usr/local/cuda python -m cibuildwheel --platform linux .
+        python -m cibuildwheel --platform linux .
         mkdir -p dist
         cp wheelhouse/*.whl dist/
       env:
         CUDA_HOME: /usr/local/cuda
+        PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
         CIBW_BUILD_VERBOSITY: 3
         CIBW_BUILD: ${{ matrix.cibw-python }}
         CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
