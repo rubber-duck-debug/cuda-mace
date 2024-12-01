@@ -82,5 +82,5 @@ jobs:
 
     - uses: actions/upload-artifact@v4
       with:
-        name: "cuda_mace-py-${{ matrix.python-version }}-torch-${{matrix.pytorch-version}}+cu${{ env.CUVERSION }}-${{ matrix.cibw-arch }}"
+        name: "cuda_mace-py-${{ env.PYTHON_VER_NO_DOT }}-torch-${{matrix.pytorch-version}}+cu${{ env.CU_VERSION_NO_DOT }}-${{ matrix.cibw-arch }}"
         path: ./wheelhouse/*.whl
