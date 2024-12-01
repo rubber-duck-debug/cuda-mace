@@ -2,7 +2,9 @@ FROM quay.io/pypa/manylinux2014_x86_64
 
 # Set environment variables for Python and CUDA versions
 ARG PYTHON_VER="3.11"
+ARG PY_VER="311"
 ARG CUDA_VER="12.4"
+ARG CU_VER="124"
 ARG PYTORCH_VERSION="2.4.1"
 
 # Install system dependencies and CUDA
@@ -19,8 +21,8 @@ RUN yum install -y yum-utils gcc gcc-c++ make zlib-devel bzip2-devel libffi-deve
 #RUN ln -sf /opt/python/cp311-cp311/bin/python3.11 /opt/python/cp311-cp311/bin/python
 
 # Set Python version environment variables dynamically
-ENV PATH="/opt/python/cp${PYTHON_VER//.}-cp${PYTHON_VER//.}/bin:${PATH}"
-RUN ln -sf /opt/python/cp${PYTHON_VER//.}-cp${PYTHON_VER//.}/bin/python${PYTHON_VER} /opt/python/cp${PYTHON_VER//.}-cp${PYTHON_VER//.}/bin/python
+ENV PATH="/opt/python/cp${PY_VER}-cp${PY_VER}/bin:${PATH}"
+RUN ln -sf /opt/python/cp${PY_VER}-cp${PY_VER}/bin/python${PYTHON_VER} /opt/python/cp${PY_VER}-cp${PY_VER}/bin/python
 
 RUN python -m ensurepip --upgrade
 
@@ -40,7 +42,7 @@ RUN echo "CUDA_HOME: ${CUDA_HOME}" && \
 
 #RUN pip install torch==2.4.1+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
 #RUN pip install numpy cmake
-RUN pip install torch==${PYTORCH_VERSION}+cu${CUDA_VER//.} --extra-index-url https://download.pytorch.org/whl/cu${CUDA_VER//.}
+RUN pip install torch==${PYTORCH_VERSION}+cu${CU_VER} --extra-index-url https://download.pytorch.org/whl/cu${CU_VER}
 RUN pip install numpy cmake
 
 RUN mkdir /workspace
