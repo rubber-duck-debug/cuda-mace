@@ -66,7 +66,7 @@ std::vector<torch::Tensor> jit_symmetric_contraction_forward(
   dim3 bdim(WARP_SIZE, NWARPS_PER_BLOCK, 1);
 
   AT_DISPATCH_FLOATING_TYPES(
-      X.type(), "symmetric_contraction_forwards", ([&] {
+      X.scalar_type(), "symmetric_contraction_forwards", ([&] {
         unsigned int shared_size = 0;
 
         void *sptr = nullptr;
@@ -173,7 +173,7 @@ torch::Tensor jit_symmetric_contraction_backward(torch::Tensor gradX,
   dim3 bdim(WARP_SIZE, 4, 1);
 
   AT_DISPATCH_FLOATING_TYPES(
-      gradX.type(), "symm_contraction_backward", ([&] {
+      gradX.scalar_type(), "symm_contraction_backward", ([&] {
         unsigned int space =
             WARP_SIZE * 16 * sizeof(scalar_t); // buffer_grad storage
 

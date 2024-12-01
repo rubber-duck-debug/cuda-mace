@@ -100,7 +100,7 @@ jit_forward_message_passing(torch::Tensor X, torch::Tensor Y, torch::Tensor radi
   dim3 bdim(NWARPS_PER_BLOCK * WARP_SIZE, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(
-      X.type(), "forward_gpu",
+      X.scalar_type(), "forward_gpu",
       ([&] {
         unsigned int space = 0;
         void *sptr;
@@ -187,7 +187,7 @@ jit_backward_message_passing(torch::Tensor X, torch::Tensor Y, torch::Tensor rad
       Y, torch::TensorOptions().dtype(Y.dtype()).device(Y.device()));
 
   AT_DISPATCH_FLOATING_TYPES(
-      X.type(), "backward_gpu", ([&] {
+      X.scalar_type(), "backward_gpu", ([&] {
         dim3 bdim(NWARPS_PER_BLOCK * WARP_SIZE, 1, 1);
         dim3 gdim(nnodes, 1);
 

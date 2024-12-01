@@ -44,11 +44,15 @@ jobs:
 
     - name: Build wheels
       run: |
+        ls -l /usr/local/cuda
+        echo "CUDA_HOME=$CUDA_HOME"
+        echo "CIBW_ENVIRONMENT: $CIBW_ENVIRONMENT"
         echo "Building wheels with CUDA ${{ matrix.cuversion}} and PyTorch ${{ matrix.pytorch-version }}"
-        python -m cibuildwheel --platform linux .
+        CUDA_HOME=/usr/local/cuda python -m cibuildwheel --platform linux .
         mkdir -p dist
         cp wheelhouse/*.whl dist/
       env:
+        CUDA_HOME: /usr/local/cuda
         CIBW_BUILD_VERBOSITY: 3
         CIBW_BUILD: ${{ matrix.cibw-python }}
         CIBW_SKIP: "*-musllinux* *-win32 *-manylinux_i686"
@@ -58,7 +62,7 @@ jobs:
           CUDA_HOME=/usr/local/cuda
           PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cu${{ matrix.cuversion }}
         CIBW_REPAIR_WHEEL_COMMAND_LINUX: |
-          auditwheel repair --exclude libcuda.so --exclude libcuda.so.1 --exclude libc10.so --exclude libtorch_cuda.so --exclude libc10_cuda.so --exclude libtorch_cpu.so --exclude libcudart.so --exclude libnvToolsExt.so  --exclude libnvrtc.so -w {dest_dir} {wheel}
+          auditwheel repair --exclude libcuda.so --exclude libcuda.so.1 --exclude libc10.so --exclude libtorch_cuda.so --exclude libc10_cuda.so --exclude libtorch_cpu.so --exclude libcudart.so --exclude libnvToolsExt.so  --exclude libnvrtc.so --exclude libnvrtc.so.12 -w {dest_dir} {wheel}
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
