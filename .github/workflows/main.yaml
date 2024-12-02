@@ -76,9 +76,3 @@ jobs:
       with:
         name: "cuda_mace-py-${{ env.PYTHON_VER_NO_DOT }}-torch-${{matrix.pytorch-version}}+cu${{ env.CU_VERSION_NO_DOT }}-${{ matrix.cibw-arch }}"
         path: ./wheelhouse/*.whl
-
-    - name: Publish to PyPI
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: pypa/gh-action-pypi-publish@v1.8.6
-      with:
-        password: ${{ secrets.PYPI_API_TOKEN }}
