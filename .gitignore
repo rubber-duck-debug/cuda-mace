@@ -1,0 +1,9 @@
+build/*
+local/*
+tests/*
+dist/*
+*.pyc
+*.pt
+.vscode
+cuda_mace.egg-info/
+*.model

@@ -1,0 +1,24 @@
+[project]
+name = "cuda_mace"
+requires-python = ">=3.10"
+dependencies = [
+    "torch >= 2.0", 
+    "nvtx",
+]
+version= "0.1"
+
+### ======================================================================== ###
+
+[build-system]
+requires = [
+    "setuptools >=44",
+    "wheel >=0.36",
+    "cmake >=3.30",
+    "torch >= 2.0",
+]
+
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+zip-safe = false
+packages = ["cuda_mace.ops", "cuda_mace.models"]
