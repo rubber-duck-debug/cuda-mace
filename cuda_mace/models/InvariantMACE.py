@@ -49,6 +49,7 @@ class linear_matmul(torch.nn.Module):
         )
 
     def forward(self, x):
+        self.weights = self.weights.to(x.device)
         return torch.matmul(x, self.weights)
 
 
@@ -147,7 +148,7 @@ class InvariantResidualInteraction(torch.nn.Module):
         edge_attrs: torch.Tensor,
         edge_feats: torch.Tensor,
         edge_index: torch.Tensor,
-    ) -> Tuple[torch.Tensor, None]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
 
         sender = edge_index[1]
         receiver = edge_index[0]
@@ -200,22 +201,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
             mace_model), InvariantResidualInteraction(mace_model)])
         self.products = deepcopy(mace_model.products)
 
-        readouts = []
-
-        for i in range(len(mace_model.readouts)):
-            readout_i = mace_model.readouts[i]
-            if (isinstance(readout_i, NonLinearReadoutBlock)):
-                readout_i.linear_1.weight = mace_model.readouts[i].linear_1.weight.double(
-                )
-                readout_i.linear_2.weight = mace_model.readouts[i].linear_2.weight.double(
-                )
-            else:
-                readout_i.linear.weight = mace_model.readouts[i].linear.weight.double(
-                )
-
-            readouts.append(readout_i)
-
-        self.readouts = torch.nn.ModuleList(readouts)
+        self.readouts = mace_model.readouts.to(torch.float64)
 
         for i in range(mace_model.num_interactions):
             symm_contract = mace_model.products[i].symmetric_contractions
@@ -257,12 +243,14 @@ class OptimizedInvariantMACE(torch.nn.Module):
         r = torch.tensor(r, dtype=torch.float64).to("cuda")
         bessel_j = self.radial_embedding(r.unsqueeze(-1), None, None, None)
 
-        self.edge_splines = []
+        edge_splines = []
         for i, interaction in enumerate(mace_model.interactions):
             R = interaction.conv_tp_weights(bessel_j)
             spline = CubicSpline(
                 r.cuda().float(), R.cuda().float(), h, self.r_max.item())
-            self.edge_splines.append(spline)
+            edge_splines.append(spline)
+
+        self.edge_splines = torch.nn.ModuleList(edge_splines)
 
         self.scale_shift = deepcopy(mace_model.scale_shift.double())
 
@@ -339,7 +327,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
             if (len(lengths.shape) == 2):
                 lengths = lengths.squeeze(-1)
 
-            if (lengths.device != torch.float64):
+            if (lengths.dtype!= torch.float64):
                 lengths = lengths.double()
 
             edge_feats = edge_spline.forward(lengths.float())
@@ -355,15 +343,6 @@ class OptimizedInvariantMACE(torch.nn.Module):
             node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"].float()
                                  ).double()
 
-            if (isinstance(readout, NonLinearReadoutBlock)):
-
-                readout.linear_1.weight = torch.nn.Parameter(
-                    readout.linear_1.weight.double())
-                readout.linear_2.weight = torch.nn.Parameter(
-                    readout.linear_2.weight.double())
-            else:
-                readout.linear.weight = torch.nn.Parameter(
-                    readout.linear.weight.double())
 
             node_feats_list.append(node_feats)
             # node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
