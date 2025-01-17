@@ -127,11 +127,15 @@ def accuracy(
 
         abs_error = torch.abs(output_org["energy"] - output_opt["energy"])
 
+        print ("F64 forces")
+        print (output_org["forces"])
+        print ("Opt forces")
+        print (output_opt["forces"])
+        
         print("---F64:F32_Opt absolute energy error (mean, max)---")
         print("%.5f %.5f" % (abs_error.mean().item(), abs_error.max().item()))
 
         abs_error = torch.abs(output_org["forces"] - output_opt["forces"])
-
         print("---F64:F32_Opt absolute force error (mean, max)---")
         print("%.5f %.5f" % (abs_error.mean().item(), abs_error.max().item()))
 
