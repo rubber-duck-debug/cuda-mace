@@ -60,9 +60,6 @@ original_model = torch.load("your_model.pt")
 
 # Create optimized CUDA version
 optimized_model = OptimizedInvariantMACE(deepcopy(original_model.double()))
-
-# Use the optimized model for predictions
-# optimized_model now runs on GPU with significant speedup
 ```
 
 ### Command-Line Model Surgery
