@@ -84,6 +84,7 @@ If you use CUDA-MACE in your research, please cite:
 ```bibtex
 @software{cuda_mace,
   title={CUDA-MACE: High-Performance GPU-Accelerated MACE Implementation},
+  author={Nicholas J. Browning},
   url={https://github.com/rubber-duck-debug/cuda_mace},
   year={2024}
 }
