@@ -1,6 +1,5 @@
 build/*
 local/*
-tests/*
 dist/*
 *.pyc
 *.pt

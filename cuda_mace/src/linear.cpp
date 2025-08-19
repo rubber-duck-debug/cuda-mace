@@ -1,5 +1,6 @@
 #include "linear.h"
 #include "linear_wrapper.hpp"
+#include "utils.h"
 
 using namespace std;
 using namespace torch::autograd;
@@ -11,6 +12,8 @@ torch::Tensor LinearAutograd::forward(
     torch::Tensor W,
     torch::Tensor W_transposed)
 {
+    PUSH_RANGE("cuda_mace", 2)
+
     if (X.requires_grad())
     {
         ctx->save_for_backward({W_transposed});
@@ -18,11 +21,15 @@ torch::Tensor LinearAutograd::forward(
 
     torch::Tensor result = jit_linear(X, W);
 
+    POP_RANGE
+
     return result;
 }
 
 variable_list LinearAutograd::backward(AutogradContext *ctx, variable_list grad_outputs)
 {
+    PUSH_RANGE("cuda_mace", 2)
+
     auto saved_variables = ctx->get_saved_variables();
 
     auto W_T = saved_variables[0];
@@ -30,6 +37,8 @@ variable_list LinearAutograd::backward(AutogradContext *ctx, variable_list grad_
     torch::Tensor dX = jit_linear(grad_outputs[0].contiguous(), W_T);
 
     torch::Tensor undef;
+
+    POP_RANGE
 
     return {dX, undef, undef};
 }
@@ -51,6 +60,8 @@ torch::Tensor ElementalLinearAutograd::forward(
     torch::Tensor one_hot_embedding)
 {
 
+    PUSH_RANGE("cuda_mace", 3)
+
     if (X.requires_grad())
     {
         ctx->save_for_backward({one_hot_embedding, W_transposed});
@@ -58,11 +69,15 @@ torch::Tensor ElementalLinearAutograd::forward(
 
     torch::Tensor result = jit_elemental_linear(X, W, one_hot_embedding);
 
+    POP_RANGE
+
     return result;
 }
 
 variable_list ElementalLinearAutograd::backward(AutogradContext *ctx, variable_list grad_outputs)
 {
+    PUSH_RANGE("cuda_mace", 3)
+
     auto saved_variables = ctx->get_saved_variables();
 
     auto one_hot_embedding = saved_variables[0];
@@ -71,6 +86,8 @@ variable_list ElementalLinearAutograd::backward(AutogradContext *ctx, variable_l
     torch::Tensor dX = jit_elemental_linear(grad_outputs[0].contiguous(), W_T, one_hot_embedding);
 
     torch::Tensor undef;
+
+    POP_RANGE
 
     return {dX, undef, undef, undef};
 }

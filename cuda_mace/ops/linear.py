@@ -6,24 +6,19 @@ from typing import List
 
 class Linear(torch.nn.Module):
 
-    def __init__(self,
-                 irreps_in: o3.Irreps,
-                 irreps_out: o3.Irreps,
-                 e3nn_instructions: List,
-                 e3nn_weights: torch.Tensor):
+    def __init__(self, linear: o3.Linear):
 
         super().__init__()
 
         self.cuda_obj = torch.classes.linear_wmma.Linear()
 
-        self.irreps_in = irreps_in
-        self.irreps_out = irreps_out
-
-        self.e3nn_instructions = e3nn_instructions
-        self.e3nn_weights = e3nn_weights
-
-        self.out_lmax = int(irreps_out.lmax)
-        self.out_dim = int(irreps_out.dim / (self.out_lmax + 1) ** 2)
+        self.irreps_out = linear.irreps_out
+        self.irreps_in = linear.irreps_in.simplify()
+        self.e3nn_instructions = linear.instructions  # e3nn_instructions
+        self.e3nn_weights = linear.weight.clone().detach()  # e3nn_weights
+        
+        self.out_lmax = int(self.irreps_out.lmax)
+        self.out_dim = int(self.irreps_out.dim / (self.out_lmax + 1) ** 2)
 
         l_start = []
         l_end = []
@@ -32,11 +27,11 @@ class Linear(torch.nn.Module):
 
         flat_weight_index = 0
 
-        for ins in e3nn_instructions:
+        for ins in self.e3nn_instructions:
             path_nweight = prod(ins.path_shape)
-            mul_ir_out = irreps_out[ins.i_out]
+            mul_ir_out = self.irreps_out[ins.i_out]
             # extract the weights for the current path
-            w = e3nn_weights.narrow(-1, flat_weight_index, path_nweight)
+            w = self.e3nn_weights.narrow(-1, flat_weight_index, path_nweight)
             w = w.reshape(ins.path_shape)
             # 0 | 1 2 3 | 4 5 6
             start = ins.i_in ** 2

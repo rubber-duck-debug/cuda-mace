@@ -1,5 +1,6 @@
 #include "invariant_message_passing_wrapper.hpp"
 #include "invariant_message_passing.h"
+#include "utils.h"
 
 #include <torch/script.h>
 #include <iostream>
@@ -17,6 +18,7 @@ torch::Tensor InvariantMessagePassingTPAutograd::forward(
     torch::Tensor receiver_list,
     const int64_t nnodes)
 {
+    PUSH_RANGE("cuda_mace", 1)
     torch::Tensor first_occurences = jit_calculate_first_occurences(receiver_list, nnodes);
 
     //auto result  = forward_gpu(X, Y, radial, sender_list, receiver_list, first_occurences, nnodes);
@@ -27,13 +29,14 @@ torch::Tensor InvariantMessagePassingTPAutograd::forward(
         ctx->saved_data["nnodes"] = nnodes;
         ctx->save_for_backward({X, Y, radial, sender_list, receiver_list, first_occurences, result[1]});
     }
+    POP_RANGE
     
     return result[0];
 }
 
 variable_list InvariantMessagePassingTPAutograd::backward(AutogradContext *ctx, variable_list grad_outputs)
 {
-
+    PUSH_RANGE("cuda_mace", 1)
     auto saved_variables = ctx->get_saved_variables();
 
     auto X = saved_variables[0];
@@ -51,6 +54,7 @@ variable_list InvariantMessagePassingTPAutograd::backward(AutogradContext *ctx, 
 
     torch::Tensor undef;
 
+    POP_RANGE
     return {result[0], result[1], result[2], undef, undef, undef};
 }
 

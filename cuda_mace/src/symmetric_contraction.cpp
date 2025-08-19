@@ -1,5 +1,7 @@
 #include "symmetric_contraction_wrapper.hpp"
 #include "symmetric_contraction.h"
+#include "utils.h"
+
 #include <torch/script.h>
 #include <iostream>
 
@@ -28,6 +30,8 @@ torch::Tensor SymmetricContractionAutograd::forward(
     const int64_t W1_size)
 {
 
+    PUSH_RANGE("cuda_mace", 5)
+
     std::vector<torch::Tensor> result;
 
     result = jit_symmetric_contraction_forward(
@@ -54,19 +58,25 @@ torch::Tensor SymmetricContractionAutograd::forward(
         ctx->save_for_backward({result[1]});
     }
 
+    POP_RANGE
+
     return result[0];
 }
 
 variable_list SymmetricContractionAutograd::backward(AutogradContext *ctx, variable_list grad_outputs)
 {
-    auto saved_variables = ctx->get_saved_variables();
 
+    PUSH_RANGE("cuda_mace", 5)
+
+    auto saved_variables = ctx->get_saved_variables();
 
     auto gradX = saved_variables[0];
 
     torch::Tensor result = jit_symmetric_contraction_backward(gradX, grad_outputs[0]);
 
     torch::Tensor undef;
+
+    POP_RANGE
 
     return {result,
             undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef, undef};
