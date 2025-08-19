@@ -1,39 +1,64 @@
 import torch
 from e3nn import o3
 from mace.tools.cg import U_matrix_real
-
+from mace.modules.symmetric_contraction import SymmetricContraction
 
 class SymmetricContraction(torch.nn.Module):
 
-    def __init__(self, irreps_in: o3.Irreps, irreps_out: o3.Irreps, W_tensors, correlation=3, device="cuda", dtype=torch.float32):
+    def __init__(self, symm_contract: SymmetricContraction, device="cuda", dtype=torch.float32):
         super().__init__()
 
         self.cuda_obj = torch.classes.symm_contract.SymmetricContraction()
         self.device = device
         self.dtype = dtype
-        self.irreps_in = irreps_in
-        self.irreps_out = irreps_out
-        self.correlation = correlation
+        self.irreps_in = o3.Irreps([irrep.ir for irrep in symm_contract.irreps_in])
+        self.irreps_out = symm_contract.irreps_out
+        self.correlation = 3
 
-        self.nlout = (irreps_out.lmax + 1) ** 2
+        self.nlout = (self.irreps_out.lmax + 1) ** 2
 
-        assert correlation == 3, "CUDASymmetricContraction exclusively supports correlation=3"
+        assert self.correlation == 3, "CUDASymmetricContraction exclusively supports correlation=3"
 
         self.U_matrices = {}
-
-        for nu in range(1, correlation + 1):
+        self.W_tensors = {}
+        
+        for nu in range(1, self.correlation + 1):
             self.U_matrices[nu] = {}
 
-            for ir_id, ir_out in enumerate(irreps_out):
+            for ir_id, ir_out in enumerate(self.irreps_out):
                 U_matrix = U_matrix_real(
-                    irreps_in=irreps_in,
+                    irreps_in=self.irreps_in,
                     irreps_out=o3.Irreps(str(ir_out.ir)),
                     correlation=nu,
                     dtype=torch.float32
                 )[-1].to(self.device)
                 self.U_matrices[nu][ir_id] = U_matrix
 
-        self.W_tensors = W_tensors
+        for j in range(len(symm_contract.contractions)):
+            self.W_tensors[str(j)] = {}
+            self.W_tensors[str(j)][3] = (
+                symm_contract.contractions[j]
+                .weights_max.detach()
+                .clone()
+                .type(torch.float32)
+            )
+
+            self.W_tensors[str(j)][2] = (
+                symm_contract.contractions[j]
+                .weights[0]
+                .detach()
+                .clone()
+                .type(torch.float32)
+            )
+
+            self.W_tensors[str(j)][1] = (
+                symm_contract.contractions[j]
+                .weights[1]
+                .detach()
+                .clone()
+                .type(torch.float32)
+            )
+
 
         self.setup_sparse_matrices()
         self.setup_weights()

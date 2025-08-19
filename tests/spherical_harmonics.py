@@ -1,4 +1,5 @@
 import torch
+torch.serialization.add_safe_globals([slice])
 import cuda_mace.ops
 from e3nn import o3
 from time import time

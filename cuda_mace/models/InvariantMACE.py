@@ -53,15 +53,6 @@ class linear_matmul(torch.nn.Module):
         return torch.matmul(x, self.weights)
 
 
-def linear_to_cuda(linear):
-    return Linear(
-        linear.__dict__["irreps_in"],
-        linear.__dict__["irreps_out"],
-        linear.instructions,
-        linear.weight,
-    )
-
-
 def element_linear_to_cuda(skip_tp):
     # print("elementlinear", skip_tp)
     num_elements = skip_tp.__dict__["irreps_in2"].dim
@@ -89,7 +80,8 @@ class InvariantInteraction(torch.nn.Module):
         super().__init__()
         self.linear_up = linear_matmul(
             mace_model.interactions[0].linear_up.float())
-        self.linear = linear_to_cuda(mace_model.interactions[0].linear.float())
+        self.linear = Linear(
+            mace_model.interactions[0].linear.float())
         self.tp = InvariantMessagePassingTP()
         self.skip_tp = element_linear_to_cuda(
             mace_model.interactions[0].skip_tp.float())
@@ -136,7 +128,7 @@ class InvariantResidualInteraction(torch.nn.Module):
 
         self.linear_up = linear_matmul(
             mace_model.interactions[1].linear_up.float())
-        self.linear = linear_to_cuda(mace_model.interactions[1].linear.float())
+        self.linear = Linear(mace_model.interactions[1].linear.float())
         self.tp = InvariantMessagePassingTP()
         self.skip_tp = mace_model.interactions[1].skip_tp.float()
         self.avg_num_neighbors = mace_model.interactions[1].avg_num_neighbors
@@ -220,19 +212,11 @@ class OptimizedInvariantMACE(torch.nn.Module):
                     symm_contract.contractions[j].weights[1].detach(
                     ).clone().type(torch.float32)
                 )
-
-            irreps_in = o3.Irreps(
-                mace_model.products[i].symmetric_contractions.irreps_in)
-            coupling_irreps = o3.Irreps([irrep.ir for irrep in irreps_in])
-            irreps_out = o3.Irreps(
-                mace_model.products[i].symmetric_contractions.irreps_out)
-
+            
             symmetric_contractions = CUDAContraction(
-                coupling_irreps,
-                irreps_out,
-                all_weights,
-                dtype=torch.float32,
+                mace_model.products[i].symmetric_contractions
             )
+
             self.products[i].symmetric_contractions = SymmetricContractionWrapper(
                 symmetric_contractions
             )
