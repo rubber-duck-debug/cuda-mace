@@ -24,10 +24,10 @@ CUDA-MACE is an optimized implementation of the MACE (Multi-Atomic Cluster Expan
 - **Python**: 3.10 or later
 
 ### Dependencies
-- MACE 0.3.14
+- MACE: tested on 0.3.14
 - NumPy
-- SciPy
-- ASE (Atomic Simulation Environment)
+- CMake: 3.27.0 or later
+- ASE (Atomic Simulation Environment) for tests
 
 ## Installation
 
