@@ -1,5 +1,8 @@
 from typing import Dict, List, Optional, Type
 import torch
+
+torch.serialization.add_safe_globals([slice])
+
 from mace.tools import torch_geometric
 from mace import data, tools
 from time import time
@@ -139,7 +142,6 @@ def accuracy(
         print("---F64:F32_Opt absolute force error (mean, max)---")
         print("%.5f %.5f" % (abs_error.mean().item(), abs_error.max().item()))
 
-
 def benchmark(
     model, model_opt, size=4, compare=False, dtype=torch.float64
 ) -> None:
@@ -193,54 +195,51 @@ def benchmark(
     batch2["node_attrs"].requires_grad_(True)
     model = model.to(dtype)
 
-    warmup = 30
-    niter = 20
+    warmup = 50
+    niter = 100
     # warmup
-
     if compare:
         for i in range(warmup):
             output_org = model(
                 batch2.to_dict(), training=False, compute_force=True)
         torch.cuda.synchronize()
 
+        batch_inp = batch2.to_dict()
         start = time()
         for i in range(niter):
             output_org = model(
-                batch2.to_dict(), training=False, compute_force=True)
+                batch_inp, training=False, compute_force=True)
         torch.cuda.synchronize()
         print("original model time: %.2e (ms)" %
               ((time() - start) * (1000 / niter)))
 
+
+    batch_inp = batch.to_dict()
     for i in range(warmup):
         output_opt = model_opt(
-            batch.to_dict(), training=False, compute_force=True)
+            batch_inp, training=False, compute_force=True)
     torch.cuda.synchronize()
-
+    
+    batch_inp = batch.to_dict()
+    
     start = time()
-    for i in range(warmup):
+    for i in range(niter):
         output_opt = model_opt(
-            batch.to_dict(), training=False, compute_force=True)
-    torch.cuda.synchronize()
-
-    rng = nvtx.start_range(message="model_opt", color="blue")
-    nbench = 1
-    start = time()
-    for i in range(nbench):
-        output_opt = model_opt(
-            batch.to_dict(), training=False, compute_force=True)
+            batch_inp, training=False, compute_force=True)
     torch.cuda.synchronize()
     print(
         "optimized model time:  %.2e (ms)" % (
-            (time() - start) * (1000 / nbench))
+            (time() - start) * (1000 / niter))
     )
-    nvtx.end_range(rng)
+    
 
 
 if __name__ == "__main__":
     parser = build_parser()
     args = parser.parse_args()
 
-    model = torch.load(args.model).to("cuda")
+    print (torch.load(args.model, weights_only=False).to("cuda"))
+    model = torch.load(args.model, weights_only=False).to("cuda")
     model = model.to(torch.float64)
 
     opt_model = OptimizedInvariantMACE(deepcopy(model))

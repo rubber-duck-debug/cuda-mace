@@ -243,6 +243,9 @@ class OptimizedInvariantMACE(torch.nn.Module):
         r = torch.tensor(r, dtype=torch.float64).to("cuda")
         bessel_j = self.radial_embedding(r.unsqueeze(-1), None, None, None)
 
+        if isinstance(bessel_j, tuple):
+            bessel_j = bessel_j[0]
+
         edge_splines = []
         for i, interaction in enumerate(mace_model.interactions):
             R = interaction.conv_tp_weights(bessel_j)
@@ -327,7 +330,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
             if (len(lengths.shape) == 2):
                 lengths = lengths.squeeze(-1)
 
-            if (lengths.dtype!= torch.float64):
+            if (lengths.dtype != torch.float64):
                 lengths = lengths.double()
 
             edge_feats = edge_spline.forward(lengths.float())
@@ -342,7 +345,6 @@ class OptimizedInvariantMACE(torch.nn.Module):
 
             node_feats = product(node_feats=node_feats, sc=sc, node_attrs=data["node_attrs"].float()
                                  ).double()
-
 
             node_feats_list.append(node_feats)
             # node_energies = readout(node_feats).squeeze(-1)  # [n_nodes, ]
@@ -365,7 +367,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
 
         node_energy = node_e0 + node_inter_es
 
-        forces, virials, stress, hessian = get_outputs(
+        forces, virials, stress, hessian, edge_forces = get_outputs(
             energy=inter_e,
             positions=data["positions"],
             displacement=displacement,
@@ -387,6 +389,7 @@ class OptimizedInvariantMACE(torch.nn.Module):
             "hessian": hessian,
             "displacement": displacement,
             "node_feats": node_feats_out,
+            "edge_forces": edge_forces
         }
 
         return output
