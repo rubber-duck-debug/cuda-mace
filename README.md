@@ -1,7 +1,7 @@
 
 # CUDA-MACE
 
-CUDA-MACE is an optimized implementation of the MACE (Multi-Atomic Cluster Expansion) model that leverages custom CUDA code to significantly improve performance.
+CUDA-MACE is an optimized implementation of the MACE model that leverages custom CUDA code to significantly improve performance.
 
 ## Features
 
