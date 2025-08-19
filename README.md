@@ -48,7 +48,7 @@ pip install -e . --no-build-isolation
 
 ### Model Optimization
 
-Transform your existing MACE models for GPU acceleration:
+Transform your existing MACE models:
 
 ```python
 import torch
@@ -70,7 +70,7 @@ Use the provided tool to convert models:
 python tools/model_surgery.py --model path/to/your/model.pt --output optimized_model.pt [--accuracy] [--benchmark]
 ```
 
-This will create an optimized model at `optimized_model.pt` ready for GPU acceleration.
+This will create an optimized model at `optimized_model.pt` ready for use.
 
 ## Current Limitations
 
