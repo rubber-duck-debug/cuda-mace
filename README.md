@@ -7,7 +7,6 @@ CUDA-MACE is an optimized implementation of the MACE (Multi-Atomic Cluster Expan
 
 - **GPU-Accelerated Performance**: Custom CUDA kernels optimized for modern NVIDIA GPUs (Ampere architecture and later)
 - **Model Transplantation**: Convert existing MACE models to optimized CUDA implementations
-- **Seamless Integration**: Drop-in replacement for standard MACE models with minimal code changes
 - **Memory Efficiency**: Optimized memory usage patterns for large-scale molecular simulations
 - **High Precision**: Maintains numerical accuracy while delivering exceptional performance
 
