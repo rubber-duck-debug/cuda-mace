@@ -21,7 +21,7 @@ CUDA-MACE is an optimized implementation of the MACE (Multi-Atomic Cluster Expan
   - Download from [NVIDIA CUDA Downloads](https://developer.nvidia.com/cuda-downloads)
   - Ensure `CUDA_HOME` environment variable is set (typically `/usr/local/cuda`)
 - **PyTorch**: Compatible version with CUDA support
-- **Python**: 3.8 or later
+- **Python**: 3.10 or later
 
 ### Dependencies
 - MACE 0.3.14
